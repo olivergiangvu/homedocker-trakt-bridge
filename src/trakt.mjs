@@ -285,7 +285,7 @@ export class TraktClient {
   async resolveEpisode(event) {
     const videoId = String(event.videoId || '');
     if (/^(kitsu|mal|anilist|anidb):/i.test(videoId)) {
-      throw new BridgeError('Anime/absolute episode numbering is not mapped safely in v0.3.0', {
+      throw new BridgeError('Anime/absolute episode numbering is not mapped safely in v0.3.1', {
         status: 422,
         code: 'anime_numbering_unsupported',
       });
@@ -333,8 +333,52 @@ export class TraktClient {
     throw new BridgeError(`No usable ${type} provider ID`, { status: 422, code: `${type}_id_missing` });
   }
 
+  async applyBulkHistory(profileId, event, add) {
+    for (const video of event.videos) {
+      if (/^(kitsu|mal|anilist|anidb):/i.test(String(video.videoId || ''))) {
+        throw new BridgeError('Anime/absolute episode numbering is not mapped safely in v0.3.1', {
+          status: 422,
+          code: 'anime_numbering_unsupported',
+        });
+      }
+    }
+
+    const resolved = await this.resolveShow(event);
+    const watchedAt = new Date((Number(event.at) || Math.floor(Date.now() / 1000)) * 1000).toISOString();
+    const grouped = new Map();
+    for (const video of event.videos) {
+      const season = toInt(video.season);
+      const episode = toInt(video.episode);
+      if (!grouped.has(season)) grouped.set(season, new Set());
+      grouped.get(season).add(episode);
+    }
+
+    const seasons = [...grouped.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([number, episodes]) => ({
+        number,
+        episodes: [...episodes]
+          .sort((a, b) => a - b)
+          .map((episode) => add ? { number: episode, watched_at: watchedAt } : { number: episode }),
+      }));
+
+    const body = { shows: [{ ids: resolved.show.ids, seasons }] };
+    const path = add ? '/sync/history' : '/sync/history/remove';
+    await this.request(profileId, path, { method: 'POST', body });
+    return {
+      action: add ? 'history:bulk-add' : 'history:bulk-remove',
+      scope: event.scope,
+      videos: event.videos.length,
+      part: Number(event.part),
+      parts: Number(event.parts),
+    };
+  }
+
   async applyEvent(profileId, event, plan) {
     if (plan.kind === 'ignore') return { ignored: plan.reason };
+    if (plan.kind === 'bulk-history-add') return this.applyBulkHistory(profileId, event, true);
+    if (plan.kind === 'bulk-history-remove') return this.applyBulkHistory(profileId, event, false);
+
     const media = await this.resolveMedia(event);
 
     if (plan.kind === 'scrobble') {
