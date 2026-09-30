@@ -89,9 +89,10 @@ export function buildPlaybackItems(movieRows = [], episodeRows = []) {
   return [...byVideo.values()].sort((a, b) => (b.at || 0) - (a.at || 0));
 }
 
-export function stateVersionFromActivities(activities = {}) {
+export function stateVersionFromActivities(activities = {}, identityVersion = '') {
   const basis = JSON.stringify({
-    schema: 'watch-state-v0.3.3',
+    schema: 'watch-state-v0.3.4',
+    identityVersion: identityVersion || '',
     watchedMovies: activities?.movies?.watched_at || null,
     watchedEpisodes: activities?.episodes?.watched_at || null,
     watchlistMovies: activities?.movies?.watchlisted_at || null,
