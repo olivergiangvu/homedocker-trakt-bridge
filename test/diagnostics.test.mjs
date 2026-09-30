@@ -29,3 +29,15 @@ test('latest unresolved error displays retrying', () => {
   ]);
   assert.equal(event.displayStatus, 'retrying');
 });
+
+test('independent pull polls sharing the same since cursor are not grouped as retries', () => {
+  const rows = [
+    { event_id: 'pull|abc', event: 'pull', status: 'ok', detail: '{"items":99}', created_at: 30 },
+    { event_id: 'pull|abc', event: 'pull', status: 'ok', detail: '{"items":99}', created_at: 20 },
+    { event_id: 'pull|abc', event: 'pull', status: 'ok', detail: '{"items":99}', created_at: 10 },
+  ];
+  const events = summarizeRecentEvents(rows, 12);
+  assert.equal(events.length, 3);
+  assert.deepEqual(events.map((event) => event.attempts), [1, 1, 1]);
+  assert.deepEqual(events.map((event) => event.displayStatus), ['ok', 'ok', 'ok']);
+});

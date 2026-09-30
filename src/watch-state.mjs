@@ -1,3 +1,4 @@
+import { APP_VERSION } from './config.mjs';
 import { BridgeError } from './errors.mjs';
 
 export const PUSH_EVENTS = ['start', 'pause', 'stop', 'played', 'unplayed'];
@@ -5,7 +6,7 @@ export const PUSH_EVENTS = ['start', 'pause', 'stop', 'played', 'unplayed'];
 export function buildManifest(profileId, pullTtlSeconds = 300) {
   return {
     id: `homedocker.trakt.watchstate.${profileId}`,
-    version: '0.2.0',
+    version: APP_VERSION,
     name: 'HomeDocker Trakt',
     description: 'Bidirectional AIOStreams watch_state v2 ↔ Trakt bridge',
     types: ['movie', 'series'],

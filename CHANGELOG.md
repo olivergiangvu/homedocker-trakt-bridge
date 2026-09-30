@@ -2,6 +2,15 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+## [0.2.1] - 2026-09-30
+
+### Fixed
+- Repeated successful pull polls that reuse the same `since` cursor are no longer grouped together and shown as misleading `2 attempts`, `4 attempts`, etc. in Recent Events.
+- Push retry grouping remains unchanged: stable AIOStreams event IDs still collapse retries into one row and show `recovered` after a later success.
+
+### Changed
+- Release metadata, example image tag, example User-Agent, README and architecture notes were synchronized to v0.2.1.
+
 ## [0.2.0] - 2026-09-30
 
 ### Added

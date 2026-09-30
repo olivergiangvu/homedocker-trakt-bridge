@@ -1,4 +1,4 @@
-# Architecture — v0.2
+# Architecture — v0.2.1
 
 ```text
 Infuse / Swiftfin / Jellyfin-compatible client
@@ -29,7 +29,7 @@ HomeDocker Trakt Bridge ----+
 
 Trakt is the canonical long-term watched-history source. AIOStreams is the playback/state surface for Jellyfin-compatible clients.
 
-v0.2 is bidirectional:
+v0.2.x is bidirectional:
 
 - **Push:** AIOStreams playback and watched changes are written to Trakt.
 - **Pull:** Trakt playback progress and watched history are read back into AIOStreams.
@@ -93,6 +93,14 @@ The watched block is authoritative. If Trakt returns an incomplete show-progress
 ## Pagination
 
 Current Trakt watched endpoints are paginated. The bridge follows `X-Pagination-Page-Count`, requests 250 movies/page and 100 shows/page for `extended=progress`, and fails if pagination exceeds the configured safety cap.
+
+## Diagnostics model
+
+Push and pull diagnostics use different identities by design.
+
+A push event's AIOStreams `id` is an idempotency key. Retries preserve that ID, so repeated log rows with the same push ID represent delivery attempts for one event and may be grouped into `recovered` after a later success.
+
+A pull event uses `pull|<since>` only as a cursor label. Many independent successful polls may legitimately use the same unchanged cursor. v0.2.1 therefore keeps pull polls as separate Recent Events rows and never interprets repeated use of one pull cursor as retry attempts.
 
 ## Deferred to v0.3+
 

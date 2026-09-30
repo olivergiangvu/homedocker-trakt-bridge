@@ -2,7 +2,7 @@
 
 Self-hosted **bidirectional AIOStreams `watch_state` v2 ↔ Trakt bridge** for Jellyfin-compatible playback clients such as Infuse and Swiftfin.
 
-**Current release: v0.2.0 — push + pull.**
+**Current release: v0.2.1 — push + pull with diagnostics hardening.**
 
 ## What it does
 
@@ -31,7 +31,7 @@ AIOStreams currently uses a 90% watched threshold while Trakt `/scrobble/stop` c
 
 The pull-side `watched` block is authoritative. If Trakt history cannot be read completely, the bridge fails the request rather than returning an empty watched history that could clear imported state in AIOStreams.
 
-Anime/absolute episode numbering is not guessed in v0.2. Watchlist, dropped state and bulk marks are also deliberately unadvertised.
+Anime/absolute episode numbering is not guessed in v0.2.x. Watchlist, dropped state and bulk marks are also deliberately unadvertised.
 
 ## Current architecture
 
@@ -112,7 +112,7 @@ curl http://127.0.0.1:7000/health
 Expected:
 
 ```json
-{"status":"ok","app":"HomeDocker Trakt Bridge","version":"0.2.0"}
+{"status":"ok","app":"HomeDocker Trakt Bridge","version":"0.2.1"}
 ```
 
 ## 4. Reverse proxy
@@ -156,7 +156,7 @@ The profile page then displays the AIOStreams manifest URL. Treat that URL as a 
 
 ## 6. Install in AIOStreams
 
-Add the manifest as a custom addon. v0.2 advertises:
+Add the manifest as a custom addon. v0.2.x advertises:
 
 ```text
 watch_state version: 2
@@ -190,13 +190,15 @@ Watched history reads:
 /sync/watched/shows?extended=progress
 ```
 
-Pagination follows Trakt's `X-Pagination-Page-Count`; v0.2 requests 250 movie rows/page and 100 watched-show progress rows/page.
+Pagination follows Trakt's `X-Pagination-Page-Count`; v0.2.x requests 250 movie rows/page and 100 watched-show progress rows/page.
 
 ID output prefers IMDb (`tt...`), then `tmdb:`, then `tvdb:`. Standard episodes are emitted as `metaId:season:episode`, matching the IDs currently produced by AIOStreams/AIOMetadata in the HomeDocker setup.
 
 ## Diagnostics
 
-The profile UI shows push and pull activity in the configured timezone. Retried 429/5xx events are grouped by event ID and surface as `recovered` after a later successful retry.
+The profile UI shows push and pull activity in the configured timezone.
+
+Push delivery retries are grouped by stable AIOStreams event ID and surface as `recovered` after a later successful retry. Pull polling is different: repeated requests can legitimately reuse the same `since` cursor, so v0.2.1 keeps each pull request as its own row instead of incorrectly displaying repeated successful polls as multiple "attempts".
 
 Trakt error diagnostics include the upstream endpoint and `Retry-After` when available.
 
@@ -222,6 +224,7 @@ Current milestones:
 - **v0.1.0:** push MVP
 - **v0.1.1:** diagnostics hardening
 - **v0.2.0:** Trakt → AIOStreams playback + watched pull
+- **v0.2.1:** pull diagnostics correctness; independent polls are no longer shown as retry attempts
 - **v0.3:** watchlist, dropped state, next-up/ID hardening, bulk marks
 - **v1.0:** production migrations, release image workflow, broader compatibility hardening
 
@@ -243,4 +246,4 @@ npm run check
 npm test
 ```
 
-v0.2 has no runtime npm dependencies; it uses Node built-ins including `node:sqlite`.
+v0.2.1 has no runtime npm dependencies; it uses Node built-ins including `node:sqlite`.
