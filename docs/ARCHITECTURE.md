@@ -1,4 +1,4 @@
-# Architecture — v0.3.0
+# Architecture — v0.3.1
 
 ```text
 Infuse / Swiftfin / Jellyfin-compatible client
@@ -19,6 +19,8 @@ HomeDocker Trakt Bridge ----+
         |
         +-- /sync/playback/* -> Continue Watching
         +-- /sync/watched/*  -> watched history
+        +-- /sync/history    -> single + bulk played marks
+        +-- /sync/history/remove -> single + bulk unplayed marks
         +-- /sync/watchlist/* -> movie/show watchlist
         +-- /sync/last_activities -> combined state version gate
         |
@@ -36,10 +38,11 @@ HomeDocker Trakt Bridge ----+
 
 Trakt is the canonical long-term tracker source for watched history and watchlist state. AIOStreams is the playback/state surface for Jellyfin-compatible clients.
 
-v0.3.0 is bidirectional for:
+v0.3.1 is bidirectional for:
 
 - playback progress;
 - watched/unwatched state;
+- whole-season and whole-series played/unplayed marks;
 - movie/show watchlist state.
 
 CrossWatch and Remux are not part of the critical path for this bridge.
@@ -56,11 +59,30 @@ Supported events:
 - `watchlisted`
 - `unwatchlisted`
 
+The manifest advertises `watchState.push.bulk=true`.
+
 AIOStreams marks watched at 90%; Trakt `/scrobble/stop` can mark watched above 80%. Therefore `stop + played:false` is deliberately mapped to `/scrobble/pause` so progress between 80% and 89% cannot become watched accidentally.
+
+### Bulk played/unplayed marks
+
+AIOStreams uses the same push route for bulk marks, with the show/meta ID in the path and `scope: season` or `scope: series` in the body. Each request contains at most 500 changed videos and has a stable event ID; larger operations arrive as numbered `part` / `parts` requests.
+
+The bridge does **not** send a bare Trakt show or season when the AIOStreams scope is broad. It writes exactly the supplied `videos[]` by grouping them into Trakt's nested show → seasons → episodes request shape:
+
+```text
+played   -> POST /sync/history
+unplayed -> POST /sync/history/remove
+```
+
+This preserves AIOStreams' actual metadata enumeration and avoids marking episodes that were not part of the client operation. Duplicate episode rows inside a part are collapsed before the Trakt write.
+
+Bulk requests reject malformed part metadata, more than 500 videos, season-scope videos from another season, and anime/absolute-number episode IDs that the bridge cannot map safely to Trakt broadcast numbering.
+
+A successful bulk history request returns the same logical `history:add` / `history:remove` action used by single marks, with diagnostic fields `bulk:true`, scope, video count and part numbers. The existing pull-cache invalidation path therefore applies automatically.
 
 ### Watchlist push
 
-AIOStreams sends watchlist changes only for movie/show favourites. v0.3.0 accepts:
+AIOStreams sends watchlist changes only for movie/show favourites. v0.3.x accepts:
 
 ```text
 scope=movie  -> Trakt movie watchlist
@@ -142,7 +164,7 @@ AIOStreams sends the previous version as `?since=...`.
 - playback `items` continue to refresh independently;
 - matching-version repeated pulls may be served from bridge cache without touching Trakt.
 
-Upgrading from v0.2.x intentionally changes the version hash basis. v0.3.0 also changes the persisted pull-cache namespace from the v0.2.x `pull-state:` key space to `pull-state:v3:`. This prevents a still-fresh v0.2.x SQLite cache from answering the first post-upgrade request with the old cursor and delaying initial watchlist seeding. Old cache rows are harmless and expire under their original TTL.
+The v0.3 cache namespace remains `pull-state:v3:`. v0.3.1 does not change the state-version basis, so a v0.3.0 cache remains compatible across the upgrade.
 
 ## Restart-safe rate-limit hardening
 
@@ -200,13 +222,12 @@ The bridge follows Trakt `X-Pagination-Page-Count`, requests 250 watched movies/
 
 Push and pull diagnostics use different identities by design.
 
-A push event's AIOStreams `id` is an idempotency key. Retries preserve that ID, so repeated log rows with the same push ID represent delivery attempts for one event and may be grouped into `recovered` after a later success.
+A push event's AIOStreams `id` is an idempotency key. Retries preserve that ID, so repeated log rows with the same push ID represent delivery attempts for one event and may be grouped into `recovered` after a later success. Bulk parts also have distinct stable IDs, so each part is independently idempotent.
 
 A pull event uses `pull|<since>` only as a cursor label. Independent polls are never grouped as retry attempts. Fresh pull detail includes watched counts and `watchlistItems`. Cache rows include `cacheLayer` as `memory` or `sqlite`.
 
-## Deferred after v0.3.0
+## Deferred after v0.3.1
 
-- AIOStreams bulk played/unplayed marks
 - dropped/undropped state
 - richer next-up generation
 - anime/absolute-number episode mapping
