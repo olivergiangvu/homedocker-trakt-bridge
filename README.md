@@ -2,7 +2,7 @@
 
 Self-hosted **bidirectional AIOStreams `watch_state` v2 ↔ Trakt bridge** for Jellyfin-compatible playback clients such as Infuse and Swiftfin.
 
-**Current release: v0.3.1 — playback, watched history, movie/show watchlist sync and efficient whole-season/show played/unplayed bulk marks.**
+**Current release: v0.3.2 — playback, watched history, movie/show watchlist sync, efficient bulk marks, and duplicate-safe bulk/single reconciliation.**
 
 ## What it does
 
@@ -15,6 +15,7 @@ Self-hosted **bidirectional AIOStreams `watch_state` v2 ↔ Trakt bridge** for J
 - single `played` → add history
 - single `unplayed` → remove history
 - whole-season/show `played` / `unplayed` → one nested Trakt history sync request per AIOStreams bulk part
+- redundant same-kind per-episode echoes covered by a recent successful bulk mark → safely ignored
 - `watchlisted` → add movie/show to Trakt watchlist
 - `unwatchlisted` → remove movie/show from Trakt watchlist
 - stable-event idempotency and retry-safe diagnostics
@@ -46,6 +47,8 @@ Trakt assigns the timestamp when an item is added to its watchlist. The bridge t
 
 For bulk played/unplayed marks, the bridge writes only the `videos[]` AIOStreams says changed. It groups those explicit season/episode numbers under the resolved Trakt show instead of sending a bare show object, which could mark episodes the AIOStreams metadata did not list. AIOStreams splits marks larger than 500 videos into independent parts; the bridge handles each part as one idempotent push event and one Trakt sync request.
 
+Some Jellyfin-compatible clients can subsequently issue per-episode played/unplayed calls for the same season action even after AIOStreams has already delivered a supported bulk request. Those single events have new event IDs and would otherwise create redundant Trakt writes. v0.3.2 records the exact video IDs covered by each successful bulk event and, for a short bounded window, suppresses only later **same-kind** single-episode echoes whose event timestamp falls after that bulk. Opposite-state events are never suppressed, movie marks are never suppressed, and a later same-kind event outside the configured window is handled normally.
+
 Anime/absolute episode numbering is not guessed. Bulk events containing anime-spaced video IDs fail closed. Dropped state remains unadvertised.
 
 ## Current architecture
@@ -66,6 +69,7 @@ HomeDocker Trakt Bridge
    |
    +---- playback progress
    +---- watched history + bulk season/show marks
+   +---- recent bulk coverage dedupe (SQLite TTL)
    +---- movie/show watchlist
    |
    v
@@ -116,6 +120,7 @@ DISPLAY_TIMEZONE=Asia/Ho_Chi_Minh
 PULL_TTL_SECONDS=900
 PULL_STALE_IF_ERROR_SECONDS=3600
 PULL_MAX_PAGES=500
+BULK_SINGLE_DEDUPE_SECONDS=300
 ```
 
 `BRIDGE_SECRET_KEY` is DR-critical. Losing it makes stored Trakt tokens unreadable and changes all derived profile/setup/addon credentials.
@@ -123,6 +128,8 @@ PULL_MAX_PAGES=500
 `PULL_TTL_SECONDS` is the bridge's own unchanged-pull cache TTL and is also advertised in the addon manifest. AIOStreams currently has a separate global `WATCH_STATE_PULL_TTL` setting that controls when its UI triggers an on-demand read; the bridge cache prevents those reads from turning into repeated Trakt API calls.
 
 `PULL_STALE_IF_ERROR_SECONDS` is also the retention bound for the persisted safe pull cache. It only applies to a previously successful, matching-version cache entry and only for transient `429` / `5xx` failures.
+
+`BULK_SINGLE_DEDUPE_SECONDS` bounds duplicate suppression after a successful bulk season/show mark. The default is 300 seconds. Coverage is persisted in `bridge.db` using TTL rows, so a container restart during the short handoff window does not re-enable duplicate episode writes.
 
 ## 3. Start
 
@@ -139,7 +146,7 @@ curl http://127.0.0.1:7000/health
 Expected:
 
 ```json
-{"status":"ok","app":"HomeDocker Trakt Bridge","version":"0.3.1"}
+{"status":"ok","app":"HomeDocker Trakt Bridge","version":"0.3.2"}
 ```
 
 ## 4. Reverse proxy
@@ -183,7 +190,7 @@ The profile page then displays the AIOStreams manifest URL. Treat that URL as a 
 
 ## 6. Install in AIOStreams
 
-Add the manifest as a custom addon. v0.3.1 advertises:
+Add the manifest as a custom addon. v0.3.2 advertises:
 
 ```text
 watch_state version: 2
@@ -242,7 +249,7 @@ Provider IDs from AIOStreams are resolved to Trakt media first. Trakt watchlist 
 
 ### Bulk played / unplayed marks
 
-When AIOStreams marks a whole season or series it sends `scope: season` or `scope: series`, a `videos[]` list, and `part` / `parts`. The manifest advertises `bulk: true`, so AIOStreams sends at most 500 changed videos in one request instead of one push per episode.
+When AIOStreams marks a whole season or series it sends `scope: season` or `scope: series`, a `videos[]` list, and `part` / `parts`. The manifest advertises `bulk: true`, so AIOStreams sends at most 500 changed videos in one request instead of one push per episode for that bulk dispatch.
 
 The bridge resolves the parent show once and converts exactly those videos into Trakt's nested history shape:
 
@@ -269,6 +276,18 @@ unplayed -> POST /sync/history/remove
 ```
 
 For `unplayed`, `watched_at` is omitted. Duplicate season/episode rows inside a part are collapsed before the Trakt request. The bridge never sends the show alone because that could affect episodes outside AIOStreams' explicit `videos[]` set.
+
+After a successful bulk write, v0.3.2 stores one short-lived coverage marker per listed video. A later single episode event is ignored only when all of the following are true:
+
+```text
+same profile
+same event kind: played or unplayed
+same video id
+single event timestamp >= bulk event timestamp
+single event timestamp - bulk event timestamp <= BULK_SINGLE_DEDUPE_SECONDS
+```
+
+An opposite event such as `unplayed` after a `played` bulk is never suppressed. This makes the dedupe directional and state-safe.
 
 ## Pull cache
 
@@ -306,6 +325,8 @@ Push delivery retries are grouped by stable AIOStreams event ID and surface as `
 
 A successful bulk push is logged as the original `played` or `unplayed` event with detail such as `history:bulk-add` / `history:bulk-remove`, including scope, video count and `part` / `parts`.
 
+A same-kind episode echo covered by a recent successful bulk is logged as `ignored` with `ignored:"covered_by_recent_bulk"`, the covering bulk event ID, video ID and event-time delta. It is marked processed and returns `204` without touching Trakt.
+
 Fresh pull diagnostics include watched counts and `watchlistItems`. Cache hits are labeled `cached`; detail includes `cacheLayer:"memory"` or `cacheLayer:"sqlite"`. If Trakt returns a transient `429` / `5xx` and a safe matching-version cache is available, the row is labeled `stale` and includes the upstream error/path plus cache age.
 
 Trakt error diagnostics include the upstream endpoint and `Retry-After` when available.
@@ -319,7 +340,7 @@ Back up all of the following together:
 - compose definition
 - nginx site configuration
 
-The persisted pull cache lives inside `bridge.db`, but it is not DR-critical. Restoring an old/expired cache is safe because both SQLite expiry and the embedded `fetchedAt` age are rechecked before use.
+The persisted pull cache and short-lived bulk coverage markers live inside `bridge.db`, but neither is DR-critical. Restoring old/expired rows is safe because SQLite TTL and event-time checks bound their use.
 
 For a consistent SQLite backup, briefly stop/quiesce the bridge while staging the DB copy, then restart it before restic/rclone uploads the staged backup.
 
@@ -339,7 +360,8 @@ Current milestones:
 - **v0.2.3:** restart-safe SQLite persistence for the safe pull cache
 - **v0.3.0:** bidirectional movie/show watchlist sync
 - **v0.3.1:** efficient AIOStreams bulk played/unplayed marks
-- **v0.3.2:** next-up and metadata/orphan-ID hardening
+- **v0.3.2:** duplicate-safe reconciliation of bulk marks with later single-episode client echoes
+- **v0.3.3:** next-up and metadata/orphan-ID hardening
 - **v1.0:** production migrations, release image workflow and broader compatibility hardening
 
 ## Security
@@ -360,4 +382,4 @@ npm run check
 npm test
 ```
 
-v0.3.1 has no runtime npm dependencies; it uses Node built-ins including `node:sqlite`.
+v0.3.2 has no runtime npm dependencies; it uses Node built-ins including `node:sqlite`.
