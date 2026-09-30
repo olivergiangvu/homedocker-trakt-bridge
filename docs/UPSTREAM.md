@@ -1,23 +1,50 @@
-# Upstream contracts used by v0.1
+# Upstream contracts used by v0.2
 
 Reviewed 2026-09-30.
 
 ## AIOStreams
 
-- Watch State reference: https://docs.aiostreams.viren070.me/reference/addon-protocol/watch-state/
-- Contract version: `watchState.version = 2`
-- v0.1 relies on stable event IDs across retries, `positionMs`/`durationMs`, the `played` decision, and AIOStreams' documented response handling (`2xx`, `401/403`, `429/5xx`).
-- Current docs state AIOStreams uses a 90% watched threshold for the `played` field.
+Primary reference:
+
+- `packages/docs/content/docs/reference/addon-protocol/watch-state.mdx`
+- current protocol: `watchState.version = 2`
+
+v0.2 relies on these documented semantics:
+
+- push event IDs are stable across retries;
+- missing `durationMs` means unknown, never zero;
+- AIOStreams treats `200/204` as delivered, `401/403` as reconnect-required and `429/5xx` as retryable;
+- pull accepts `items`, authoritative `watched`, and an optional `version`;
+- AIOStreams sends the last version back as `?since=`;
+- an omitted `watched` block means no new watched information, while an empty authoritative block means nothing is watched;
+- current pull limits are intentionally high (`WATCH_STATE_PULL_MAX_ITEMS` 5000 and `WATCH_STATE_PULL_MAX_WATCHED` 50000 by default).
+
+The bridge therefore never substitutes an empty `watched` object for an upstream failure.
 
 ## Trakt
 
-- Developer portal: https://developer.trakt.tv/
-- Official API source: https://github.com/trakt/trakt-api
-- OAuth Authorization Code flow uses `https://auth.trakt.tv/oauth/authorize` and `https://auth.trakt.tv/oauth/token`.
-- Access tokens are currently documented as 7-day tokens; refresh tokens are single-use and must be replaced after a successful refresh.
-- Current scrobble schema requires movie details (`title`, `year`, IDs) or an episode ID. AIOStreams sends show IDs for episode playback, so the bridge resolves the Trakt episode ID before scrobbling.
-- Trakt `/scrobble/stop` marks watched above 80%, which differs from AIOStreams' 90% threshold. The bridge intentionally maps AIOStreams `stop + played:false` to Trakt `pause`.
+Primary references:
+
+- https://github.com/trakt/trakt-api
+- https://trakt.docs.apiary.io/reference/sync
+
+OAuth / push invariants retained from v0.1:
+
+- Authorization Code OAuth flow;
+- access tokens are refreshed with the latest returned single-use refresh token;
+- `/scrobble/start`, `/pause`, `/stop` provide active playback state;
+- `/scrobble/stop` has a lower watched threshold than AIOStreams, so the bridge preserves the AIOStreams `played` decision.
+
+v0.2 pull endpoints:
+
+- `/sync/last_activities`
+- `/sync/playback/movies`
+- `/sync/playback/episodes`
+- `/sync/watched/movies`
+- `/sync/watched/shows?extended=progress`
+
+As of July 2026, Trakt's watched endpoints are paginated in production. Requests without pagination return only the first page; clients must follow the pagination headers. `extended=progress` is the required form for season/episode watched progress and is capped more tightly than normal watched pages.
 
 ## Compatibility policy
 
-The bridge advertises only capabilities it implements. If an upstream contract changes incompatibly, fail closed rather than guessing media identity or watched state.
+The bridge advertises only capabilities it implements. Identity mapping and authoritative watched import are fail-closed: if a response is incomplete or cannot be mapped safely, the bridge does not guess a destructive replacement state.

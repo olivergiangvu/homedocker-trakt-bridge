@@ -39,7 +39,7 @@ async function route(req, res, ctx) {
   }
 
   if (req.method === 'GET' && path === '/') {
-    return sendHtml(res, 200, page(APP_NAME, `<div class="card"><h1>${APP_NAME}</h1><p>Self-hosted AIOStreams <code>watch_state v2</code> → Trakt bridge.</p><p class="muted">v${APP_VERSION}</p></div>`));
+    return sendHtml(res, 200, page(APP_NAME, `<div class="card"><h1>${APP_NAME}</h1><p>Self-hosted AIOStreams <code>watch_state v2</code> ↔ Trakt bridge.</p><p class="muted">v${APP_VERSION}</p></div>`));
   }
 
   if (path === '/setup') {
@@ -107,7 +107,18 @@ async function route(req, res, ctx) {
     const [, profileId, addonKey] = manifestMatch;
     requireAddonKey(config, db, profileId, addonKey);
     if (req.method !== 'GET') return methodNotAllowed(res);
-    return sendJson(res, 200, buildManifest(profileId));
+    return sendJson(res, 200, buildManifest(profileId, config.pullTtlSeconds));
+  }
+
+  const pullMatch = path.match(/^\/u\/([a-f0-9]{24})\/([A-Za-z0-9_-]{30,})\/watch_state\/pull\.json$/);
+  if (pullMatch) {
+    const [, profileId, addonKey] = pullMatch;
+    requireAddonKey(config, db, profileId, addonKey);
+    if (req.method !== 'GET') return methodNotAllowed(res);
+    const profile = db.getProfile(profileId);
+    if (!profile?.access_token_enc) throw new BridgeError('Trakt account is not connected', { status: 401, code: 'not_connected' });
+    const since = url.searchParams.get('since') || null;
+    return processPull(res, { profileId, since, db, trakt });
   }
 
   const pushMatch = path.match(/^\/u\/([a-f0-9]{24})\/([A-Za-z0-9_-]{30,})\/watch_state\/push\/(movie|series)\/(.+)\.json$/);
@@ -122,6 +133,28 @@ async function route(req, res, ctx) {
   }
 
   sendJson(res, 404, { error: 'not_found' });
+}
+
+async function processPull(res, { profileId, since, db, trakt }) {
+  const eventId = `pull|${since || 'initial'}`;
+  try {
+    const payload = await trakt.pullState(profileId, since);
+    const detail = {
+      version: payload.version,
+      items: payload.items?.length || 0,
+      watchedMovies: payload.watched?.movies?.length ?? null,
+      watchedEpisodes: payload.watched?.episodes?.length ?? null,
+      watchedChanged: Boolean(payload.watched),
+    };
+    db.logEvent({ profileId, eventId, event: 'pull', status: 'ok', detail: JSON.stringify(detail) });
+    return sendJson(res, 200, payload);
+  } catch (err) {
+    const parts = [`${err.code || 'error'}:${err.message}`];
+    if (err.upstreamPath) parts.push(`endpoint=${err.upstreamPath}`);
+    if (err.retryAfter) parts.push(`retry_after=${err.retryAfter}`);
+    db.logEvent({ profileId, eventId, event: 'pull', status: 'error', detail: parts.join(' ') });
+    throw err;
+  }
 }
 
 async function processPush(res, { profileId, body, db, trakt }) {
@@ -186,7 +219,7 @@ function renderProfile(res, { config, db }, profileId, setupKey) {
   const p = db.getProfile(profileId);
   const addonKey = deriveProfileKey(config.bridgeSecret, 'addon', profileId);
   const manifestUrl = `${config.publicBaseUrl}/u/${profileId}/${addonKey}/manifest.json`;
-  const recent = summarizeRecentEvents(db.recentEvents(profileId, 40), 12);
+  const recent = summarizeRecentEvents(db.recentEvents(profileId, 60), 16);
   const events = recent.map((e) => {
     const statusClass = e.displayStatus === 'retrying' ? 'bad' : 'ok';
     const retryText = e.attempts > 1 ? ` · ${e.attempts} attempts` : '';
@@ -194,11 +227,11 @@ function renderProfile(res, { config, db }, profileId, setupKey) {
   }).join('') || '<tr><td colspan="4" class="muted">No events yet.</td></tr>';
   const connected = Boolean(p.access_token_enc);
   return sendHtml(res, 200, page(`${p.name} - Trakt Bridge`, `
-    <div class="card"><h1>${escapeHtml(p.name)}</h1><p>Status: <span class="status ${connected ? 'ok' : 'bad'}">${connected ? 'Trakt connected' : 'Not connected'}</span></p><p class="muted">AIOStreams Watch State v2 · push-only MVP · Display time: ${escapeHtml(config.displayTimeZone)}</p>
+    <div class="card"><h1>${escapeHtml(p.name)}</h1><p>Status: <span class="status ${connected ? 'ok' : 'bad'}">${connected ? 'Trakt connected' : 'Not connected'}</span></p><p class="muted">AIOStreams Watch State v2 · bidirectional push + pull · Display time: ${escapeHtml(config.displayTimeZone)}</p>
       <div class="row"><a class="btn" href="/u/${profileId}/oauth/start?key=${encodeURIComponent(setupKey)}">${connected ? 'Reconnect Trakt' : 'Connect Trakt'}</a>${connected ? `<form method="post" action="/u/${profileId}/disconnect?key=${encodeURIComponent(setupKey)}"><button class="btn bad" type="submit">Disconnect</button></form>` : ''}</div>
     </div>
-    <div class="card"><h2>AIOStreams manifest</h2><p class="url"><code>${escapeHtml(manifestUrl)}</code></p><p class="muted">Add this URL as a custom addon in AIOStreams. The URL is a credential; do not publish it.</p></div>
-    <div class="card"><h2>v0.1 capabilities</h2><p><code>start</code> · <code>pause</code> · <code>stop</code> · <code>played</code> · <code>unplayed</code></p><p class="muted">Pull/history import and watchlist sync are intentionally not advertised yet.</p></div>
+    <div class="card"><h2>AIOStreams manifest</h2><p class="url"><code>${escapeHtml(manifestUrl)}</code></p><p class="muted">The manifest URL is a credential. v0.2 advertises pull for Continue Watching and watched history.</p></div>
+    <div class="card"><h2>v0.2 capabilities</h2><p><strong>Push:</strong> <code>start</code> · <code>pause</code> · <code>stop</code> · <code>played</code> · <code>unplayed</code></p><p><strong>Pull:</strong> <code>items</code> · <code>watched</code> · TTL ${escapeHtml(config.pullTtlSeconds)}s</p><p class="muted">Watchlist, dropped state, bulk marks and anime absolute-number mapping remain deferred.</p></div>
     <div class="card"><h2>Recent events</h2><table><thead><tr><th>Time</th><th>Event / ID</th><th>Status</th><th>Detail</th></tr></thead><tbody>${events}</tbody></table></div>
   `));
 }

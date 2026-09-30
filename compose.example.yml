@@ -1,15 +1,14 @@
 services:
   trakt-bridge:
     build: .
-    image: homedocker-trakt-bridge:0.1.1
+    image: homedocker-trakt-bridge:0.2.0
     container_name: trakt-bridge
     restart: unless-stopped
     env_file:
       - .env
     volumes:
       - trakt_bridge_data:/app/data
-    # Do not publish this port if nginx can reach the Docker network directly.
-    # For host-nginx deployments, bind to loopback only:
+    # Host nginx terminates TLS; the application port stays loopback-only.
     ports:
       - "127.0.0.1:7000:7000"
 

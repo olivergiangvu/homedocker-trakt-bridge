@@ -1,4 +1,10 @@
 import { BridgeError } from './errors.mjs';
+import {
+  buildPlaybackItems,
+  buildWatchedState,
+  includeWatchedForSince,
+  watchedVersionFromActivities,
+} from './pull-state.mjs';
 
 const AUTH_BASE = 'https://auth.trakt.tv';
 const API_BASE = 'https://api.trakt.tv';
@@ -6,6 +12,14 @@ const API_BASE = 'https://api.trakt.tv';
 function toInt(value) {
   const n = Number(value);
   return Number.isSafeInteger(n) ? n : null;
+}
+
+function withQuery(path, values) {
+  const url = new URL(path, API_BASE);
+  for (const [key, value] of Object.entries(values)) {
+    if (value != null) url.searchParams.set(key, String(value));
+  }
+  return `${url.pathname}${url.search}`;
 }
 
 export class TraktClient {
@@ -92,13 +106,62 @@ export class TraktClient {
   }
 
   async request(profileId, path, { method = 'GET', body = null, accept409 = false } = {}) {
+    const { data } = await this.requestDetailed(profileId, path, { method, body, accept409 });
+    return data;
+  }
+
+  async requestDetailed(profileId, path, { method = 'GET', body = null, accept409 = false } = {}) {
     let token = await this.refresh(profileId, false);
     let response = await this.#fetchApi(path, method, body, token);
     if (response.status === 401) {
       token = await this.refresh(profileId, true);
       response = await this.#fetchApi(path, method, body, token);
     }
-    return this.#handleResponse(response, { accept409, upstreamPath: path });
+    const data = await this.#handleResponse(response, { accept409, upstreamPath: path });
+    return { data, headers: response.headers };
+  }
+
+  async requestAllPages(profileId, path, { limit = 100, maxPages = this.config.pullMaxPages } = {}) {
+    const out = [];
+    let page = 1;
+    let pageCount = 1;
+
+    do {
+      if (page > maxPages) {
+        throw new BridgeError('Trakt pagination exceeded configured safety cap', {
+          status: 502,
+          code: 'trakt_pagination_limit',
+          upstreamPath: path,
+        });
+      }
+      const pagePath = withQuery(path, { page, limit });
+      const { data, headers } = await this.requestDetailed(profileId, pagePath);
+      if (!Array.isArray(data)) {
+        throw new BridgeError('Trakt paginated endpoint returned a non-array response', {
+          status: 502,
+          code: 'trakt_invalid_page',
+          upstreamPath: pagePath,
+        });
+      }
+      out.push(...data);
+
+      const headerPageCount = Number(headers.get('x-pagination-page-count'));
+      if (Number.isInteger(headerPageCount) && headerPageCount > 0) {
+        if (headerPageCount > maxPages) {
+          throw new BridgeError('Trakt pagination exceeded configured safety cap', {
+            status: 502,
+            code: 'trakt_pagination_limit',
+            upstreamPath: pagePath,
+          });
+        }
+        pageCount = headerPageCount;
+      } else {
+        pageCount = page;
+      }
+      page += 1;
+    } while (page <= pageCount);
+
+    return out;
   }
 
   async publicRequest(path) {
@@ -136,6 +199,42 @@ export class TraktClient {
     });
   }
 
+  async pullState(profileId, since = null) {
+    const [activities, moviePlayback, episodePlayback] = await Promise.all([
+      this.request(profileId, '/sync/last_activities'),
+      this.requestAllPages(profileId, '/sync/playback/movies?extended=full', { limit: 100 }),
+      this.requestAllPages(profileId, '/sync/playback/episodes?extended=full', { limit: 100 }),
+    ]);
+
+    const version = watchedVersionFromActivities(activities || {});
+    const payload = {
+      version,
+      items: buildPlaybackItems(moviePlayback, episodePlayback),
+    };
+
+    if (!includeWatchedForSince(since, version)) return payload;
+
+    let movieWatched;
+    let showWatched;
+    try {
+      [movieWatched, showWatched] = await Promise.all([
+        this.requestAllPages(profileId, '/sync/watched/movies', { limit: 250 }),
+        this.requestAllPages(profileId, '/sync/watched/shows?extended=progress', { limit: 100 }),
+      ]);
+      payload.watched = buildWatchedState(movieWatched, showWatched);
+    } catch (err) {
+      if (err instanceof BridgeError) throw err;
+      throw new BridgeError('Trakt watched state was incomplete', {
+        status: 502,
+        code: 'trakt_watched_incomplete',
+        cause: err,
+        upstreamPath: '/sync/watched/*',
+      });
+    }
+
+    return payload;
+  }
+
   async resolveMedia(event) {
     if (event.scope === 'episode' || Number.isInteger(Number(event.season)) || Number.isInteger(Number(event.episode))) {
       return this.resolveEpisode(event);
@@ -165,7 +264,7 @@ export class TraktClient {
   async resolveEpisode(event) {
     const videoId = String(event.videoId || '');
     if (/^(kitsu|mal|anilist|anidb):/i.test(videoId)) {
-      throw new BridgeError('Anime/absolute episode numbering is not mapped safely in v0.1', {
+      throw new BridgeError('Anime/absolute episode numbering is not mapped safely in v0.2', {
         status: 422,
         code: 'anime_numbering_unsupported',
       });

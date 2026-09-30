@@ -1,39 +1,78 @@
 # HomeDocker Trakt Bridge
 
-Self-hosted **AIOStreams `watch_state` v2 → Trakt** bridge.
+Self-hosted **bidirectional AIOStreams `watch_state` v2 ↔ Trakt bridge** for Jellyfin-compatible playback clients such as Infuse and Swiftfin.
 
-**Current release: v0.1.0 (push MVP).**
+**Current release: v0.2.0 — push + pull.**
 
-## What v0.1 does
+## What it does
 
-- Trakt OAuth 2 Authorization Code flow.
-- Encrypted access/refresh tokens (AES-256-GCM at rest).
-- Automatic refresh of Trakt access tokens; replaces single-use refresh tokens after every refresh.
-- AIOStreams `watch_state` v2 manifest.
-- Push events: `start`, `pause`, `stop`, `played`, `unplayed`.
-- Idempotency on AIOStreams event `id`.
-- Trakt movie/show/episode ID resolution with SQLite cache.
-- SQLite diagnostics and recent-event view.
-- Docker image with healthcheck.
-- Minimal setup UI; no JS framework and no runtime npm dependencies.
+### AIOStreams → Trakt
 
-Not in v0.1: Trakt → AIOStreams pull, watchlist, dropped state, viewers, bulk marks. Anime/absolute-number episode mapping is also deliberately rejected in v0.1 rather than risking a wrong Trakt episode; that resolver is planned for v0.3.
+- `start` → Trakt scrobble start
+- `pause` → Trakt scrobble pause
+- unfinished `stop` → Trakt pause
+- finished `stop` → Trakt stop
+- `played` → add history
+- `unplayed` → remove history
+- stable-event idempotency and retry-safe diagnostics
 
-## Why `stop` can become `pause`
+### Trakt → AIOStreams
 
-AIOStreams' current watch-state contract says `played` is based on a **90%** watched threshold. Trakt's `/scrobble/stop` marks an item watched above **80%**. To avoid turning an AIOStreams `played:false` event at 80–89% into a Trakt watched item, the bridge sends that stop to `/scrobble/pause` instead. If `played:true`, it uses `/scrobble/stop`.
+- paused movie/episode progress → AIOStreams Continue Watching
+- watched movies and episodes → AIOStreams watched state
+- `version` / `since` gate avoids rereading unchanged watched history
+- current Trakt pagination is followed safely
 
-## 1. Create a Trakt API application
+Trakt remains the canonical long-term watched-history source. AIOStreams is the Jellyfin-compatible playback/state surface.
 
-Create an app in Trakt Developer settings. Configure the redirect URI exactly as:
+## Safety decisions
+
+AIOStreams currently uses a 90% watched threshold while Trakt `/scrobble/stop` can mark watched above 80%. The bridge therefore maps `stop + played:false` to Trakt `/scrobble/pause` so 80–89% progress is never promoted to watched by Trakt.
+
+The pull-side `watched` block is authoritative. If Trakt history cannot be read completely, the bridge fails the request rather than returning an empty watched history that could clear imported state in AIOStreams.
+
+Anime/absolute episode numbering is not guessed in v0.2. Watchlist, dropped state and bulk marks are also deliberately unadvertised.
+
+## Current architecture
+
+```text
+Infuse / Swiftfin
+       |
+       v
+   AIOStreams
+ watch_state v2
+   |       ^
+   | push  | pull
+   v       |
+HomeDocker Trakt Bridge
+       |
+       v
+     Trakt
+```
+
+## Requirements
+
+- Node.js 24+ when running outside Docker
+- Docker / Docker Compose for the recommended deployment
+- Trakt API application
+- public HTTPS URL for OAuth callback
+- AIOStreams with Watch State v2 support
+
+## 1. Create the Trakt API app
+
+Create a Trakt API application and configure the redirect URI exactly as:
 
 ```text
 https://YOUR-BRIDGE-DOMAIN/oauth/callback
 ```
 
-Enable scrobbling permission for the application.
+If using a dedicated HTTPS port, include it exactly, for example:
 
-Record the Client ID and Client Secret.
+```text
+https://example.com:18449/oauth/callback
+```
+
+Keep the Client ID and Client Secret private.
 
 ## 2. Configure
 
@@ -43,17 +82,20 @@ openssl rand -hex 32   # BRIDGE_SECRET_KEY
 openssl rand -hex 32   # ADMIN_KEY
 ```
 
-Edit `.env` and set at minimum:
+Set at minimum:
 
 ```env
-PUBLIC_BASE_URL=https://traktbridge.example.com
+PUBLIC_BASE_URL=https://YOUR-BRIDGE-DOMAIN
 TRAKT_CLIENT_ID=...
 TRAKT_CLIENT_SECRET=...
 BRIDGE_SECRET_KEY=...
 ADMIN_KEY=...
+DISPLAY_TIMEZONE=Asia/Ho_Chi_Minh
+PULL_TTL_SECONDS=300
+PULL_MAX_PAGES=500
 ```
 
-`BRIDGE_SECRET_KEY` is **DR-critical**. Losing it makes stored Trakt tokens unreadable and changes all derived setup/addon URLs.
+`BRIDGE_SECRET_KEY` is DR-critical. Losing it makes stored Trakt tokens unreadable and changes all derived profile/setup/addon credentials.
 
 ## 3. Start
 
@@ -67,24 +109,40 @@ Health check:
 curl http://127.0.0.1:7000/health
 ```
 
-## 4. nginx
+Expected:
 
-Example host-nginx location:
+```json
+{"status":"ok","app":"HomeDocker Trakt Bridge","version":"0.2.0"}
+```
+
+## 4. Reverse proxy
+
+The recommended HomeDocker deployment keeps port 7000 loopback-only and lets host nginx terminate TLS:
 
 ```nginx
-location / {
-    proxy_pass http://127.0.0.1:7000;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
+server {
+    listen 18449 ssl;
+    server_name example.com;
+
+    ssl_certificate /path/to/fullchain.pem;
+    ssl_certificate_key /path/to/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:7000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $http_host;
+        proxy_set_header X-Forwarded-Port $server_port;
+    }
 }
 ```
 
-TLS should terminate at nginx.
+Do not expose container port 7000 directly to the Internet.
 
-## 5. Create a bridge profile
+## 5. Connect Trakt
 
 Open:
 
@@ -92,64 +150,97 @@ Open:
 https://YOUR-BRIDGE-DOMAIN/setup?key=YOUR_ADMIN_KEY
 ```
 
-Create a profile, open it, then click **Connect Trakt**.
+Create a profile → **Connect Trakt** → authorize.
 
-After OAuth succeeds, copy the generated `manifest.json` URL from the profile page.
-
-The manifest URL itself is a credential. Keep it private.
+The profile page then displays the AIOStreams manifest URL. Treat that URL as a credential.
 
 ## 6. Install in AIOStreams
 
-Add the generated manifest URL as a custom addon. AIOStreams should detect:
+Add the manifest as a custom addon. v0.2 advertises:
 
 ```text
 watch_state version: 2
 push: start, pause, stop, played, unplayed
 bulk: false
+pull: items + watched
+ttl: 300s by default
 ```
 
-If the bridge URL is a Docker-private address rather than the public HTTPS URL, AIOStreams requires `WATCH_STATE_ALLOW_PRIVATE_URLS=true`. For the recommended public-nginx URL, that setting is not required.
+AIOStreams will call:
 
-## AIOStreams protocol behavior relied on by v0.1
+```text
+GET .../watch_state/pull.json?since=<previous-version>
+```
 
-- only Jellyfin-client playback produces watch-state push events;
-- event IDs are stable across retries and should be deduplicated;
-- `200/204` means delivered;
-- `401/403` means reconnect required;
-- `429/5xx` is retried with backoff;
-- a missing `durationMs` means progress is unknown and must not be treated as zero.
+The bridge always refreshes paused playback items. It only returns the authoritative watched block when Trakt's watched activity version changed.
 
-## Backup / DR
+## Trakt pull behavior
 
-Back up:
+Continue Watching reads:
 
-- `trakt_bridge_data` (`/app/data/bridge.db`)
-- `.env` / secrets
+```text
+/sync/playback/movies?extended=full
+/sync/playback/episodes?extended=full
+```
+
+Watched history reads:
+
+```text
+/sync/watched/movies
+/sync/watched/shows?extended=progress
+```
+
+Pagination follows Trakt's `X-Pagination-Page-Count`; v0.2 requests 250 movie rows/page and 100 watched-show progress rows/page.
+
+ID output prefers IMDb (`tt...`), then `tmdb:`, then `tvdb:`. Standard episodes are emitted as `metaId:season:episode`, matching the IDs currently produced by AIOStreams/AIOMetadata in the HomeDocker setup.
+
+## Diagnostics
+
+The profile UI shows push and pull activity in the configured timezone. Retried 429/5xx events are grouped by event ID and surface as `recovered` after a later successful retry.
+
+Trakt error diagnostics include the upstream endpoint and `Retry-After` when available.
+
+## Backup / disaster recovery
+
+Back up all of the following together:
+
+- `trakt_bridge_data` / `/app/data/bridge.db`
+- `.env`
 - compose definition
+- nginx site configuration
 
-The SQLite DB is live state. For your HomeDocker backup flow, quiesce `trakt-bridge` during the short staging copy, then restart it before restic/rclone upload.
+For a consistent SQLite backup, briefly stop/quiesce the bridge while staging the DB copy, then restart it before restic/rclone uploads the staged backup.
 
-## Roadmap
+Never regenerate `BRIDGE_SECRET_KEY` during restore unless you intentionally want to invalidate the encrypted Trakt tokens and all derived addon/setup URLs.
 
-- **v0.2:** Trakt → AIOStreams pull: playback progress, watched history, version/since gate, safe pagination.
-- **v0.3:** watchlist, next-up/ID mapping hardening, bulk marks.
-- **v1.0:** production hardening, migrations, richer diagnostics, release image workflow.
+## Release history
 
-## Security notes
+See [CHANGELOG.md](CHANGELOG.md).
 
-- no raw Trakt token is placed in addon URLs;
-- Trakt tokens are AES-256-GCM encrypted at rest;
-- setup/addon keys are HMAC-derived from the DR-critical bridge secret;
-- admin/setup/manifest responses use `Cache-Control: no-store`;
-- do not expose `/setup?key=...` in screenshots, logs, bookmarks shared with others, or public issue reports.
+Current milestones:
+
+- **v0.1.0:** push MVP
+- **v0.1.1:** diagnostics hardening
+- **v0.2.0:** Trakt → AIOStreams playback + watched pull
+- **v0.3:** watchlist, dropped state, next-up/ID hardening, bulk marks
+- **v1.0:** production migrations, release image workflow, broader compatibility hardening
+
+## Security
+
+- Trakt access and refresh tokens are AES-256-GCM encrypted at rest.
+- Tokens never appear in addon URLs.
+- setup/addon keys are HMAC-derived from the DR-critical bridge secret.
+- admin/setup/manifest responses use `Cache-Control: no-store`.
+- the manifest URL itself is a credential; do not publish it.
+- query-string setup keys can appear in browser history or reverse-proxy logs; restrict access and avoid sharing screenshots/logs containing them.
 
 ## Development
 
-Requires Node 24+.
+Requires Node.js 24+.
 
 ```bash
 npm run check
 npm test
 ```
 
-No `npm install` is required for v0.1; it uses Node built-ins only, including `node:sqlite`.
+v0.2 has no runtime npm dependencies; it uses Node built-ins including `node:sqlite`.
