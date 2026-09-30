@@ -2,12 +2,12 @@ import { BridgeError } from './errors.mjs';
 
 export const PUSH_EVENTS = ['start', 'pause', 'stop', 'played', 'unplayed'];
 
-export function buildManifest(profileId) {
+export function buildManifest(profileId, pullTtlSeconds = 300) {
   return {
     id: `homedocker.trakt.watchstate.${profileId}`,
-    version: '0.1.0',
+    version: '0.2.0',
     name: 'HomeDocker Trakt',
-    description: 'AIOStreams watch_state v2 → Trakt scrobbling and watched marks',
+    description: 'Bidirectional AIOStreams watch_state v2 ↔ Trakt bridge',
     types: ['movie', 'series'],
     resources: [
       {
@@ -21,6 +21,11 @@ export function buildManifest(profileId) {
       push: {
         events: PUSH_EVENTS,
         bulk: false,
+      },
+      pull: {
+        items: true,
+        watched: true,
+        ttlSeconds: pullTtlSeconds,
       },
     },
   };
@@ -37,7 +42,7 @@ export function validatePushEvent(body) {
     throw new BridgeError('Unsupported event', { status: 422, code: 'unsupported_event' });
   }
   if (body.scope === 'season' || body.scope === 'series') {
-    throw new BridgeError('Bulk marks are not supported by v0.1', { status: 422, code: 'bulk_not_supported' });
+    throw new BridgeError('Bulk marks are not supported by v0.2', { status: 422, code: 'bulk_not_supported' });
   }
   if (!['movie', 'episode', undefined, null].includes(body.scope)) {
     throw new BridgeError('Unsupported scope', { status: 422, code: 'unsupported_scope' });
@@ -71,15 +76,10 @@ export function planEvent(event) {
     case 'stop': {
       const progress = progressPercent(event);
       if (progress == null) {
-        // AIOStreams explicitly says a missing duration means unknown, not zero.
-        // If AIOStreams already decided it is played, preserve that with history.
         return event.played === true
           ? { kind: 'history-add' }
           : { kind: 'ignore', reason: 'duration_unknown' };
       }
-      // AIOStreams uses a 90% watched threshold, while Trakt scrobble/stop uses 80%.
-      // For an AIOStreams "not played" stop, send Trakt pause so 80–89% is not
-      // accidentally marked watched at Trakt.
       if (event.played !== true) return { kind: 'scrobble', action: 'pause', progress };
       return { kind: 'scrobble', action: 'stop', progress };
     }
