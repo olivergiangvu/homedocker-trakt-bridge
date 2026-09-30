@@ -12,7 +12,7 @@ import { coveredByRecentBulk, rememberBulkCoverage } from './bulk-dedupe.mjs';
 const inflight = new Map();
 const pullInflight = new Map();
 const pullCache = new Map();
-const PULL_CACHE_PREFIX = 'pull-state:v3:';
+const PULL_CACHE_PREFIX = 'pull-state:v4:';
 
 export function createServer({ config, db, trakt }) {
   return http.createServer(async (req, res) => {
@@ -230,6 +230,7 @@ function pullDetail(payload, extra = {}) {
     items: payload.items?.length || 0,
     watchedMovies: payload.watched?.movies?.length ?? null,
     watchedEpisodes: payload.watched?.episodes?.length ?? null,
+    watchedNextUp: payload.watched?.nextUp?.length ?? null,
     watchedChanged: Boolean(payload.watched),
     watchlistItems: payload.watchlist?.length ?? null,
     watchlistChanged: Array.isArray(payload.watchlist),
@@ -332,8 +333,8 @@ function renderProfile(res, { config, db }, profileId, setupKey) {
     <div class="card"><h1>${escapeHtml(p.name)}</h1><p>Status: <span class="status ${connected ? 'ok' : 'bad'}">${connected ? 'Trakt connected' : 'Not connected'}</span></p><p class="muted">AIOStreams Watch State v2 · bidirectional push + pull · Display time: ${escapeHtml(config.displayTimeZone)}</p>
       <div class="row"><a class="btn" href="/u/${profileId}/oauth/start?key=${encodeURIComponent(setupKey)}">${connected ? 'Reconnect Trakt' : 'Connect Trakt'}</a>${connected ? `<form method="post" action="/u/${profileId}/disconnect?key=${encodeURIComponent(setupKey)}"><button class="btn bad" type="submit">Disconnect</button></form>` : ''}</div>
     </div>
-    <div class="card"><h2>AIOStreams manifest</h2><p class="url"><code>${escapeHtml(manifestUrl)}</code></p><p class="muted">The manifest URL is a credential. v0.3.2 keeps v0.3.1 bulk marks and suppresses redundant per-episode echoes covered by a recent successful bulk mark.</p></div>
-    <div class="card"><h2>v0.3.2 capabilities</h2><p><strong>Push:</strong> <code>start</code> · <code>pause</code> · <code>stop</code> · <code>played</code> · <code>unplayed</code> · <code>watchlisted</code> · <code>unwatchlisted</code> · <code>bulk=true</code></p><p><strong>Pull:</strong> <code>items</code> · <code>watched</code> · <code>watchlist</code> · cache TTL ${escapeHtml(config.pullTtlSeconds)}s</p><p class="muted">Bulk season/show marks are written as one Trakt history sync request per AIOStreams part. Same-kind single episode echoes covered by that bulk are ignored for ${escapeHtml(config.bulkSingleDedupeSeconds)}s, including across bridge restarts. Opposite-state events are never suppressed.</p></div>
+    <div class="card"><h2>AIOStreams manifest</h2><p class="url"><code>${escapeHtml(manifestUrl)}</code></p><p class="muted">The manifest URL is a credential. v0.3.3 hardens cross-ID metadata matching while retaining watchlist, bulk history and duplicate-safe reconciliation.</p></div>
+    <div class="card"><h2>v0.3.3 capabilities</h2><p><strong>Push:</strong> <code>start</code> · <code>pause</code> · <code>stop</code> · <code>played</code> · <code>unplayed</code> · <code>watchlisted</code> · <code>unwatchlisted</code> · <code>bulk=true</code></p><p><strong>Pull:</strong> <code>items</code> · <code>watched</code> · <code>watchlist</code> · alias-aware counts · safe next-up hints when supplied upstream · cache TTL ${escapeHtml(config.pullTtlSeconds)}s</p><p class="muted">IMDb/TMDb/TVDb aliases are normalized consistently. Push resolution can recover provider IDs from metaId and fall through a stale 404 alias to another known provider ID. Bulk single-echo suppression remains ${escapeHtml(config.bulkSingleDedupeSeconds)}s.</p></div>
     <div class="card"><h2>Recent events</h2><table><thead><tr><th>Time</th><th>Event / ID</th><th>Status</th><th>Detail</th></tr></thead><tbody>${events}</tbody></table></div>
   `));
 }

@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto';
+import { preferredMetaId, representableMetaIds } from './media-ids.mjs';
+
+export { preferredMetaId } from './media-ids.mjs';
 
 function int(value) {
   const n = Number(value);
@@ -11,13 +14,6 @@ export function unixSeconds(value) {
   }
   const ms = Date.parse(String(value || ''));
   return Number.isFinite(ms) ? Math.floor(ms / 1000) : undefined;
-}
-
-export function preferredMetaId(ids = {}) {
-  if (typeof ids.imdb === 'string' && /^tt\d+$/i.test(ids.imdb)) return ids.imdb;
-  if (int(ids.tmdb) != null) return `tmdb:${int(ids.tmdb)}`;
-  if (int(ids.tvdb) != null) return `tvdb:${int(ids.tvdb)}`;
-  return null;
 }
 
 function runtimeMs(media) {
@@ -95,6 +91,7 @@ export function buildPlaybackItems(movieRows = [], episodeRows = []) {
 
 export function stateVersionFromActivities(activities = {}) {
   const basis = JSON.stringify({
+    schema: 'watch-state-v0.3.3',
     watchedMovies: activities?.movies?.watched_at || null,
     watchedEpisodes: activities?.episodes?.watched_at || null,
     watchlistMovies: activities?.movies?.watchlisted_at || null,
@@ -109,10 +106,32 @@ export function watchedVersionFromActivities(activities = {}) {
   return stateVersionFromActivities(activities);
 }
 
+/**
+ * Some Trakt progress-shaped rows include next_episode. Use it when present,
+ * but never synthesize a guessed next episode or fan out to one API call/show.
+ */
+function nextUpFromWatchedRow(row, metaId) {
+  const next = row?.next_episode;
+  const season = int(next?.season);
+  const episode = int(next?.number);
+  if (!metaId || season == null || episode == null) return null;
+  const out = {
+    type: 'series',
+    metaId,
+    videoId: `${metaId}:${season}:${episode}`,
+    season,
+    episode,
+  };
+  const at = unixSeconds(row?.last_watched_at);
+  if (at != null) out.at = at;
+  return out;
+}
+
 export function buildWatchedState(movieRows = [], showRows = []) {
   const movies = new Set();
   const episodes = new Set();
   const counts = {};
+  const nextUp = [];
 
   for (const row of movieRows) {
     const metaId = preferredMetaId(row?.movie?.ids);
@@ -121,7 +140,8 @@ export function buildWatchedState(movieRows = [], showRows = []) {
 
   for (const row of showRows) {
     const show = row?.show || {};
-    const metaId = preferredMetaId(show.ids);
+    const aliases = representableMetaIds(show.ids);
+    const metaId = aliases[0] || null;
     if (!metaId) continue;
     if (!Array.isArray(row?.seasons)) {
       throw new Error(`Incomplete Trakt watched payload for show ${metaId}: seasons missing`);
@@ -146,14 +166,22 @@ export function buildWatchedState(movieRows = [], showRows = []) {
     };
     const at = unixSeconds(row?.last_watched_at);
     if (at != null) count.at = at;
-    counts[metaId] = count;
+
+    // AIOStreams explicitly accepts counts under every spelling a show answers
+    // to. This lets imported history join whichever ID space metadata uses.
+    for (const alias of aliases) counts[alias] = { ...count };
+
+    const next = nextUpFromWatchedRow(row, metaId);
+    if (next) nextUp.push(next);
   }
 
-  return {
+  const out = {
     movies: [...movies],
     episodes: [...episodes],
     counts,
   };
+  if (nextUp.length) out.nextUp = nextUp.sort((a, b) => (b.at || 0) - (a.at || 0));
+  return out;
 }
 
 export function buildWatchlistState(movieRows = [], showRows = []) {
