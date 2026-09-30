@@ -2,6 +2,29 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+## [0.3.3] - 2026-09-30
+
+### Added
+- Shared IMDb/TMDb/TVDb normalization for push and pull identity handling.
+- `metaId` fallback for push events whose shared `ids` object is absent or incomplete.
+- Provider-alias failover: a Trakt 404 for one known spelling can fall through to another known provider ID instead of dropping the event immediately.
+- Alias-aware watched `counts`, keyed under every representable show ID Trakt returned, as allowed by the AIOStreams Watch State v2 contract.
+- Safe `watched.nextUp` forwarding when the upstream Trakt watched row itself contains a usable `next_episode`.
+- Pull diagnostics now include `watchedNextUp`.
+- Unit coverage for ID parsing/normalization, metaId fallback, alias failover, alias-aware counts, and next-up forwarding.
+
+### Changed
+- The state cursor includes a v0.3.3 schema salt so AIOStreams receives the new authoritative watched representation after upgrade even when Trakt activity itself did not change.
+- Persisted pull-cache namespace advances from `pull-state:v3:` to `pull-state:v4:` so a still-fresh v0.3.2 cache cannot postpone the migration.
+- Setup UI, app/package/image/User-Agent, README, architecture and upstream notes are synchronized to v0.3.3.
+
+### Safety
+- Explicit valid event `ids` remain authoritative; `metaId` only fills missing provider IDs.
+- Only Trakt 404 alias misses are swallowed during provider failover. `429`, auth errors and `5xx` still propagate normally.
+- The bridge does not invent next-episode numbering and does not add a per-show Trakt progress fan-out, avoiding another rate-limit hotspot on large histories.
+- Trakt-only IDs without a representable IMDb/TMDb/TVDb spelling are still skipped rather than exposed as invented AIOStreams IDs.
+- Anime/absolute-number mapping remains fail-closed.
+
 ## [0.3.2] - 2026-09-30
 
 ### Added
