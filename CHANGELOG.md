@@ -2,6 +2,27 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+## [0.3.1] - 2026-09-30
+
+### Added
+- AIOStreams Watch State v2 bulk `played` / `unplayed` support for whole-season and whole-series marks.
+- Manifest now advertises `watchState.push.bulk=true`.
+- One Trakt `/sync/history` or `/sync/history/remove` request per AIOStreams bulk part instead of one request per episode.
+- Bulk diagnostics include scope, changed-video count and AIOStreams `part` / `parts` metadata.
+- Tests for bulk contract validation, nested Trakt payloads, duplicate episode collapse and anime fail-closed behavior.
+
+### Changed
+- Bulk history writes resolve the show once, group only the supplied `videos[]` by season, and use Trakt's nested show → season → episode sync shape.
+- Successful bulk played/unplayed marks reuse the existing history cache invalidation path so the next pull sees the new authoritative state.
+- App/package/image/User-Agent, README and protocol notes are synchronized to v0.3.1.
+
+### Safety
+- A series bulk mark never sends a bare show object to Trakt; only episodes explicitly listed by AIOStreams are changed.
+- Each bulk request is capped at the protocol maximum of 500 videos and validates season/episode numbers before any Trakt write.
+- Season-scoped marks reject videos from another season.
+- Kitsu/MAL/AniList/AniDB-spaced bulk episode IDs remain unsupported because absolute/anime numbering is not mapped safely to Trakt broadcast numbering.
+- Stable AIOStreams bulk-part event IDs retain the existing idempotency behavior, so a retried part cannot create a second bridge write after it has been marked processed.
+
 ## [0.3.0] - 2026-09-30
 
 ### Added
