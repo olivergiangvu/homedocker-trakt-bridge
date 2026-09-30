@@ -242,6 +242,9 @@ export class TraktClient {
       if (event.scope === 'series') return this.resolveShow(event);
       return this.resolveMovie(event);
     }
+    if ((event.event === 'played' || event.event === 'unplayed') && (event.scope === 'series' || event.scope === 'season')) {
+      return this.resolveShow(event);
+    }
     if (event.scope === 'episode' || Number.isInteger(Number(event.season)) || Number.isInteger(Number(event.episode))) {
       return this.resolveEpisode(event);
     }
@@ -285,7 +288,7 @@ export class TraktClient {
   async resolveEpisode(event) {
     const videoId = String(event.videoId || '');
     if (/^(kitsu|mal|anilist|anidb):/i.test(videoId)) {
-      throw new BridgeError('Anime/absolute episode numbering is not mapped safely in v0.3.0', {
+      throw new BridgeError('Anime/absolute episode numbering is not mapped safely in v0.3.1', {
         status: 422,
         code: 'anime_numbering_unsupported',
       });
@@ -337,6 +340,26 @@ export class TraktClient {
     if (plan.kind === 'ignore') return { ignored: plan.reason };
     const media = await this.resolveMedia(event);
 
+    if (plan.kind === 'bulk-history-add' || plan.kind === 'bulk-history-remove') {
+      if (media.kind !== 'show') {
+        throw new BridgeError('Bulk history mark did not resolve to a show', { status: 422, code: 'bulk_show_unresolved' });
+      }
+      const add = plan.kind === 'bulk-history-add';
+      const body = buildBulkHistoryBody(media.show.ids, event, add);
+      await this.request(profileId, add ? '/sync/history' : '/sync/history/remove', {
+        method: 'POST',
+        body,
+      });
+      return {
+        action: add ? 'history:add' : 'history:remove',
+        bulk: true,
+        scope: event.scope,
+        videos: event.videos.length,
+        part: Number(event.part) || 1,
+        parts: Number(event.parts) || 1,
+      };
+    }
+
     if (plan.kind === 'scrobble') {
       const payload = { progress: Number(plan.progress.toFixed(3)) };
       if (media.kind === 'movie') payload.movie = media.movie;
@@ -377,6 +400,44 @@ export class TraktClient {
     }
     throw new BridgeError('Unknown event plan', { status: 500, code: 'invalid_plan' });
   }
+}
+
+function buildBulkHistoryBody(showIds, event, add) {
+  const grouped = new Map();
+  for (const video of event.videos || []) {
+    const videoId = String(video.videoId || '');
+    if (/^(kitsu|mal|anilist|anidb):/i.test(videoId)) {
+      throw new BridgeError('Anime/absolute episode numbering is not mapped safely in v0.3.1', {
+        status: 422,
+        code: 'anime_numbering_unsupported',
+      });
+    }
+    const season = toInt(video.season);
+    const episode = toInt(video.episode);
+    if (season == null || episode == null || season < 0 || episode < 0) {
+      throw new BridgeError('Bulk mark contains invalid season/episode numbers', {
+        status: 422,
+        code: 'bulk_video_number_invalid',
+      });
+    }
+    if (!grouped.has(season)) grouped.set(season, new Set());
+    grouped.get(season).add(episode);
+  }
+
+  const watchedAt = new Date((Number(event.at) || Math.floor(Date.now() / 1000)) * 1000).toISOString();
+  const seasons = [...grouped.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([number, episodes]) => ({
+      number,
+      episodes: [...episodes]
+        .sort((a, b) => a - b)
+        .map((episode) => add ? { number: episode, watched_at: watchedAt } : { number: episode }),
+    }));
+
+  if (!seasons.length) {
+    throw new BridgeError('Bulk mark did not contain any episodes', { status: 422, code: 'bulk_videos_empty' });
+  }
+  return { shows: [{ ids: showIds, seasons }] };
 }
 
 function normalizeMovieIds(ids) {
