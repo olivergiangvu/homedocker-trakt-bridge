@@ -1,6 +1,12 @@
 import { BridgeError } from './errors.mjs';
 import { providerIdsForEvent } from './media-ids.mjs';
 import {
+  identityAliasVersion,
+  learnShowAlias,
+  loadIdentityAliases,
+  rewriteShowRows,
+} from './identity-alias.mjs';
+import {
   buildPlaybackItems,
   buildWatchedState,
   buildWatchlistState,
@@ -202,16 +208,20 @@ export class TraktClient {
   }
 
   async pullState(profileId, since = null) {
+    const aliases = loadIdentityAliases(this.db, profileId);
     const [activities, moviePlayback, episodePlayback] = await Promise.all([
       this.request(profileId, '/sync/last_activities'),
       this.requestAllPages(profileId, '/sync/playback/movies?extended=full', { limit: 100 }),
       this.requestAllPages(profileId, '/sync/playback/episodes?extended=full', { limit: 100 }),
     ]);
 
-    const version = stateVersionFromActivities(activities || {});
+    const version = stateVersionFromActivities(
+      activities || {},
+      identityAliasVersion(aliases),
+    );
     const payload = {
       version,
-      items: buildPlaybackItems(moviePlayback, episodePlayback),
+      items: buildPlaybackItems(moviePlayback, rewriteShowRows(episodePlayback, aliases)),
     };
 
     if (!includeChangedStateForSince(since, version)) return payload;
@@ -223,8 +233,14 @@ export class TraktClient {
         this.requestAllPages(profileId, '/sync/watchlist/movies/added/desc', { limit: 100 }),
         this.requestAllPages(profileId, '/sync/watchlist/shows/added/desc', { limit: 100 }),
       ]);
-      payload.watched = buildWatchedState(movieWatched, showWatched);
-      payload.watchlist = buildWatchlistState(movieWatchlist, showWatchlist);
+      payload.watched = buildWatchedState(
+        movieWatched,
+        rewriteShowRows(showWatched, aliases),
+      );
+      payload.watchlist = buildWatchlistState(
+        movieWatchlist,
+        rewriteShowRows(showWatchlist, aliases),
+      );
     } catch (err) {
       if (err instanceof BridgeError) throw err;
       throw new BridgeError('Trakt authoritative state was incomplete', {
@@ -298,16 +314,21 @@ export class TraktClient {
     if (season == null || episode == null) {
       throw new BridgeError('Episode event lacks season/episode', { status: 422, code: 'episode_number_missing' });
     }
+
+    // Resolve the parent even when the episode itself is cached. v0.3.4 needs
+    // the stable Trakt show id so a successful playback stop can learn which
+    // AIOStreams IMDb spelling should be used on future pulls.
+    const resolvedShow = await this.resolveShow(event);
+    const showTraktId = toInt(resolvedShow.show?.ids?.trakt);
+    if (showTraktId == null) {
+      throw new BridgeError('Could not resolve show to Trakt', { status: 422, code: 'show_unresolved' });
+    }
+
     const ids = providerIdsForEvent(event);
     const key = `episode:${event.metaId || ''}:${season}:${episode}:${JSON.stringify(ids)}`;
     const cached = this.db.cacheGet(key);
-    if (cached) return { kind: 'episode', episode: cached };
-
-    const hit = await this.lookupExternal(ids, 'show');
-    const show = hit?.show;
-    const showTraktId = toInt(show?.ids?.trakt);
-    if (showTraktId == null) {
-      throw new BridgeError('Could not resolve show to Trakt', { status: 422, code: 'show_unresolved' });
+    if (cached) {
+      return { kind: 'episode', episode: cached, show: resolvedShow.show };
     }
 
     const ep = await this.publicRequest(`/shows/${showTraktId}/seasons/${season}/episodes/${episode}`);
@@ -318,7 +339,7 @@ export class TraktClient {
     const normalized = { ids: { trakt: traktEpisodeId } };
     if (toInt(ep?.ids?.tvdb) != null) normalized.ids.tvdb = toInt(ep.ids.tvdb);
     this.db.cacheSet(key, normalized);
-    return { kind: 'episode', episode: normalized };
+    return { kind: 'episode', episode: normalized, show: resolvedShow.show };
   }
 
   async lookupExternal(ids, type) {
@@ -404,7 +425,29 @@ export class TraktClient {
         body: payload,
         accept409: plan.action === 'stop',
       });
-      return { action: `scrobble:${plan.action}`, progress: payload.progress };
+
+      let identityAlias = null;
+      if (plan.action === 'stop' && media.kind === 'episode') {
+        identityAlias = learnShowAlias(
+          this.db,
+          profileId,
+          media.show?.ids,
+          event.metaId,
+        );
+      }
+      return {
+        action: `scrobble:${plan.action}`,
+        progress: payload.progress,
+        ...(identityAlias?.changed ? {
+          identityAlias: {
+            traktShowId: identityAlias.traktShowId,
+            preferredMetaId: identityAlias.preferredMetaId,
+            traktImdb: identityAlias.traktImdb,
+            previousMetaId: identityAlias.previousMetaId,
+            revision: identityAlias.revision,
+          },
+        } : {}),
+      };
     }
 
     if (plan.kind === 'watchlist-add' || plan.kind === 'watchlist-remove') {
