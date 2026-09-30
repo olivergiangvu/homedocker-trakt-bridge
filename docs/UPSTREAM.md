@@ -26,6 +26,8 @@ v0.3.0 relies on these documented/current semantics:
 
 The bridge therefore never substitutes empty watched/watchlist state for an upstream failure. Cached and stale responses intentionally contain only `version + items`.
 
+The v0.3.0 state-version basis is broader than v0.2.x because it includes watchlist activity. The local persisted pull-cache namespace is therefore versioned as `pull-state:v3:`. Existing v0.2.x `pull-state:` rows are ignored after upgrade so an old cache cannot postpone the first authoritative watchlist-aware pull.
+
 ## Trakt
 
 Primary references:

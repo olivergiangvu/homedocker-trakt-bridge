@@ -11,7 +11,7 @@ import { cachedPullPayload, makePullCacheEntry, stalePullPayload } from './pull-
 const inflight = new Map();
 const pullInflight = new Map();
 const pullCache = new Map();
-const PULL_CACHE_PREFIX = 'pull-state:';
+const PULL_CACHE_PREFIX = 'pull-state:v3:';
 
 export function createServer({ config, db, trakt }) {
   return http.createServer(async (req, res) => {

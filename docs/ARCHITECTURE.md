@@ -142,7 +142,7 @@ AIOStreams sends the previous version as `?since=...`.
 - playback `items` continue to refresh independently;
 - matching-version repeated pulls may be served from bridge cache without touching Trakt.
 
-Upgrading from v0.2.x intentionally changes the version hash basis, forcing one fresh authoritative pull to seed watchlist state.
+Upgrading from v0.2.x intentionally changes the version hash basis. v0.3.0 also changes the persisted pull-cache namespace from the v0.2.x `pull-state:` key space to `pull-state:v3:`. This prevents a still-fresh v0.2.x SQLite cache from answering the first post-upgrade request with the old cursor and delaying initial watchlist seeding. Old cache rows are harmless and expire under their original TTL.
 
 ## Restart-safe rate-limit hardening
 

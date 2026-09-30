@@ -198,6 +198,10 @@ GET .../watch_state/pull.json?since=<previous-version>
 
 The bridge returns authoritative watched + watchlist blocks only when the combined Trakt state version changed. Matching-version repeated reads can be answered from the bridge cache without contacting Trakt.
 
+### Upgrading from v0.2.x
+
+v0.3.0 changes both the state-version hash and the persisted pull-cache namespace. The new cache key prefix is `pull-state:v3:`; old v0.2.x `pull-state:` entries are deliberately ignored and expire naturally. This guarantees the first post-upgrade pull is watchlist-aware instead of being temporarily answered by a still-fresh v0.2.x cache entry.
+
 ## Trakt pull behavior
 
 Continue Watching reads:
