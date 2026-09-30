@@ -19,11 +19,26 @@ export function shortenEventId(eventId, head = 24, tail = 8) {
   return `${value.slice(0, head)}…${value.slice(-tail)}`;
 }
 
+/**
+ * Group delivery retries for push events, but keep pull polls as separate rows.
+ *
+ * Push event ids are idempotency keys and remain identical across retries, so
+ * grouping them describes one delivery accurately. Pull ids instead describe
+ * the cursor (for example `pull|<since>`), and many independent successful
+ * polls can legitimately reuse the same cursor. Grouping those polls made the
+ * UI incorrectly show "2 attempts", "4 attempts", and so on.
+ */
 export function summarizeRecentEvents(rows, limit = 12) {
   const groups = new Map();
+  let rowNumber = 0;
 
   for (const row of rows || []) {
-    const key = row.event_id || `row:${row.created_at}:${row.event || ''}`;
+    const currentRow = rowNumber++;
+    const isPull = row.event === 'pull';
+    const key = isPull
+      ? `pull-row:${currentRow}:${row.created_at}:${row.event_id || ''}`
+      : (row.event_id || `row:${currentRow}:${row.created_at}:${row.event || ''}`);
+
     let group = groups.get(key);
     if (!group) {
       group = {
