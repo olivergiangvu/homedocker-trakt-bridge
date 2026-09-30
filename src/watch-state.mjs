@@ -21,7 +21,7 @@ export function buildManifest(profileId, pullTtlSeconds = 300) {
       version: 2,
       push: {
         events: PUSH_EVENTS,
-        bulk: false,
+        bulk: true,
       },
       pull: {
         items: true,
@@ -52,13 +52,66 @@ export function validatePushEvent(body) {
     return body;
   }
 
-  if (body.scope === 'season' || body.scope === 'series') {
-    throw new BridgeError('Bulk marks are not supported by v0.3.0', { status: 422, code: 'bulk_not_supported' });
+  const isBulk = body.scope === 'season' || body.scope === 'series';
+  if (isBulk) {
+    validateBulkMark(body);
+    return body;
   }
+
   if (!['movie', 'episode', undefined, null].includes(body.scope)) {
     throw new BridgeError('Unsupported scope', { status: 422, code: 'unsupported_scope' });
   }
   return body;
+}
+
+function validateBulkMark(body) {
+  if (body.event !== 'played' && body.event !== 'unplayed') {
+    throw new BridgeError('Bulk marks only support played or unplayed', { status: 422, code: 'bulk_event_invalid' });
+  }
+  if (typeof body.metaId !== 'string' || body.metaId.length < 2 || body.metaId.length > 512) {
+    throw new BridgeError('Bulk mark requires metaId', { status: 422, code: 'bulk_meta_invalid' });
+  }
+  if (!Array.isArray(body.videos) || body.videos.length < 1 || body.videos.length > 500) {
+    throw new BridgeError('Bulk mark videos must contain 1 to 500 entries', { status: 422, code: 'bulk_videos_invalid' });
+  }
+
+  const season = body.scope === 'season' ? nonNegativeInt(body.season) : null;
+  if (body.scope === 'season' && season == null) {
+    throw new BridgeError('Season bulk mark requires a valid season number', { status: 422, code: 'bulk_season_invalid' });
+  }
+
+  for (const video of body.videos) {
+    if (!video || typeof video !== 'object' || Array.isArray(video)) {
+      throw new BridgeError('Bulk mark contains an invalid video', { status: 422, code: 'bulk_video_invalid' });
+    }
+    if (typeof video.videoId !== 'string' || video.videoId.length < 3 || video.videoId.length > 512) {
+      throw new BridgeError('Bulk mark videoId is invalid', { status: 422, code: 'bulk_video_id_invalid' });
+    }
+    const videoSeason = nonNegativeInt(video.season);
+    const videoEpisode = nonNegativeInt(video.episode);
+    if (videoSeason == null || videoEpisode == null) {
+      throw new BridgeError('Bulk mark video lacks season/episode', { status: 422, code: 'bulk_video_number_invalid' });
+    }
+    if (season != null && videoSeason !== season) {
+      throw new BridgeError('Bulk season mark contains a video from another season', { status: 422, code: 'bulk_video_season_mismatch' });
+    }
+  }
+
+  const part = body.part == null ? 1 : positiveInt(body.part);
+  const parts = body.parts == null ? 1 : positiveInt(body.parts);
+  if (part == null || parts == null || part > parts) {
+    throw new BridgeError('Bulk mark part metadata is invalid', { status: 422, code: 'bulk_parts_invalid' });
+  }
+}
+
+function nonNegativeInt(value) {
+  const n = Number(value);
+  return Number.isSafeInteger(n) && n >= 0 ? n : null;
+}
+
+function positiveInt(value) {
+  const n = Number(value);
+  return Number.isSafeInteger(n) && n >= 1 ? n : null;
 }
 
 export function progressPercent(event) {
@@ -69,6 +122,13 @@ export function progressPercent(event) {
 }
 
 export function planEvent(event) {
+  if ((event.scope === 'season' || event.scope === 'series') && event.event === 'played') {
+    return { kind: 'bulk-history-add' };
+  }
+  if ((event.scope === 'season' || event.scope === 'series') && event.event === 'unplayed') {
+    return { kind: 'bulk-history-remove' };
+  }
+
   switch (event.event) {
     case 'played':
       return { kind: 'history-add' };
