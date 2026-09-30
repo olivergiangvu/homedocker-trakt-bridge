@@ -1,4 +1,5 @@
 import { BridgeError } from './errors.mjs';
+import { providerIdsForEvent } from './media-ids.mjs';
 import {
   buildPlaybackItems,
   buildWatchedState,
@@ -249,11 +250,12 @@ export class TraktClient {
   }
 
   async resolveMovie(event) {
-    const key = `movie:${event.metaId || ''}:${JSON.stringify(event.ids || {})}`;
+    const ids = providerIdsForEvent(event);
+    const key = `movie:${event.metaId || ''}:${JSON.stringify(ids)}`;
     const cached = this.db.cacheGet(key);
     if (cached) return { kind: 'movie', movie: cached };
 
-    const hit = await this.lookupExternal(event.ids || {}, 'movie');
+    const hit = await this.lookupExternal(ids, 'movie');
     const movie = hit?.movie;
     if (!movie?.ids?.trakt || !movie?.title || !Number.isInteger(Number(movie.year))) {
       throw new BridgeError('Could not resolve movie to Trakt', { status: 422, code: 'movie_unresolved' });
@@ -268,11 +270,12 @@ export class TraktClient {
   }
 
   async resolveShow(event) {
-    const key = `show:${event.metaId || ''}:${JSON.stringify(event.ids || {})}`;
+    const ids = providerIdsForEvent(event);
+    const key = `show:${event.metaId || ''}:${JSON.stringify(ids)}`;
     const cached = this.db.cacheGet(key);
     if (cached) return { kind: 'show', show: cached };
 
-    const hit = await this.lookupExternal(event.ids || {}, 'show');
+    const hit = await this.lookupExternal(ids, 'show');
     const show = hit?.show;
     if (!show?.ids?.trakt) {
       throw new BridgeError('Could not resolve show to Trakt', { status: 422, code: 'show_unresolved' });
@@ -285,7 +288,7 @@ export class TraktClient {
   async resolveEpisode(event) {
     const videoId = String(event.videoId || '');
     if (/^(kitsu|mal|anilist|anidb):/i.test(videoId)) {
-      throw new BridgeError('Anime/absolute episode numbering is not mapped safely in v0.3.1', {
+      throw new BridgeError('Anime/absolute episode numbering is not mapped safely in v0.3.x', {
         status: 422,
         code: 'anime_numbering_unsupported',
       });
@@ -295,11 +298,12 @@ export class TraktClient {
     if (season == null || episode == null) {
       throw new BridgeError('Episode event lacks season/episode', { status: 422, code: 'episode_number_missing' });
     }
-    const key = `episode:${event.metaId || ''}:${season}:${episode}:${JSON.stringify(event.ids || {})}`;
+    const ids = providerIdsForEvent(event);
+    const key = `episode:${event.metaId || ''}:${season}:${episode}:${JSON.stringify(ids)}`;
     const cached = this.db.cacheGet(key);
     if (cached) return { kind: 'episode', episode: cached };
 
-    const hit = await this.lookupExternal(event.ids || {}, 'show');
+    const hit = await this.lookupExternal(ids, 'show');
     const show = hit?.show;
     const showTraktId = toInt(show?.ids?.trakt);
     if (showTraktId == null) {
@@ -322,21 +326,31 @@ export class TraktClient {
     if (ids.imdb) candidates.push(['imdb', String(ids.imdb)]);
     if (ids.tmdb != null) candidates.push(['tmdb', String(ids.tmdb)]);
     if (type === 'show' && ids.tvdb != null) candidates.push(['tvdb', String(ids.tvdb)]);
+    if (!candidates.length) {
+      throw new BridgeError(`No usable ${type} provider ID`, { status: 422, code: `${type}_id_missing` });
+    }
 
     for (const [provider, value] of candidates) {
-      const rows = await this.publicRequest(`/search/${provider}/${encodeURIComponent(value)}?type=${type}`);
+      let rows;
+      try {
+        rows = await this.publicRequest(`/search/${provider}/${encodeURIComponent(value)}?type=${type}`);
+      } catch (err) {
+        // A stale provider spelling must not prevent trying another known alias.
+        if (err instanceof BridgeError && err.code === 'trakt_404') continue;
+        throw err;
+      }
       if (Array.isArray(rows)) {
         const row = rows.find((x) => x?.type === type && x?.[type]?.ids?.trakt) || rows.find((x) => x?.[type]?.ids?.trakt);
         if (row) return row;
       }
     }
-    throw new BridgeError(`No usable ${type} provider ID`, { status: 422, code: `${type}_id_missing` });
+    throw new BridgeError(`Could not resolve ${type} from known provider IDs`, { status: 422, code: `${type}_unresolved` });
   }
 
   async applyBulkHistory(profileId, event, add) {
     for (const video of event.videos) {
       if (/^(kitsu|mal|anilist|anidb):/i.test(String(video.videoId || ''))) {
-        throw new BridgeError('Anime/absolute episode numbering is not mapped safely in v0.3.1', {
+        throw new BridgeError('Anime/absolute episode numbering is not mapped safely in v0.3.x', {
           status: 422,
           code: 'anime_numbering_unsupported',
         });
