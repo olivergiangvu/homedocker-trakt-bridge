@@ -142,7 +142,11 @@ export class BridgeDb {
       this.db.prepare(`DELETE FROM media_cache WHERE cache_key=?`).run(key);
       return null;
     }
-    try { return JSON.parse(row.payload_json); } catch { return null; }
+    try { return JSON.parse(row.payload_json); }
+    catch {
+      this.db.prepare(`DELETE FROM media_cache WHERE cache_key=?`).run(key);
+      return null;
+    }
   }
 
   cacheSet(key, payload, ttlSeconds = 7 * 24 * 3600) {
@@ -154,8 +158,12 @@ export class BridgeDb {
     `).run(key, JSON.stringify(payload), now + ttlSeconds, now);
   }
 
+  cacheDelete(key) {
+    this.db.prepare(`DELETE FROM media_cache WHERE cache_key=?`).run(key);
+  }
+
   logEvent({ profileId = null, eventId = null, event = null, status, detail = null }) {
-    this.db.prepare(`INSERT INTO event_log (profile_id, event_id, event, status, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)`) 
+    this.db.prepare(`INSERT INTO event_log (profile_id, event_id, event, status, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
       .run(profileId, eventId, event, status, detail ? String(detail).slice(0, 1000) : null, this.now());
     this.db.exec(`DELETE FROM event_log WHERE id NOT IN (SELECT id FROM event_log ORDER BY id DESC LIMIT 1000)`);
   }

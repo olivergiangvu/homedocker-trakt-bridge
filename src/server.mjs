@@ -11,6 +11,7 @@ import { cachedPullPayload, makePullCacheEntry, stalePullPayload } from './pull-
 const inflight = new Map();
 const pullInflight = new Map();
 const pullCache = new Map();
+const PULL_CACHE_PREFIX = 'pull-state:';
 
 export function createServer({ config, db, trakt }) {
   return http.createServer(async (req, res) => {
@@ -101,7 +102,7 @@ async function route(req, res, ctx) {
     requireSetupKey(url, config, db, profileId);
     if (req.method !== 'POST') return methodNotAllowed(res);
     db.clearTokens(profileId);
-    pullCache.delete(profileId);
+    clearPullCache(db, profileId);
     redirect(res, `/u/${profileId}/setup?key=${encodeURIComponent(url.searchParams.get('key'))}`);
     return;
   }
@@ -139,16 +140,41 @@ async function route(req, res, ctx) {
   sendJson(res, 404, { error: 'not_found' });
 }
 
+function pullCacheKey(profileId) {
+  return `${PULL_CACHE_PREFIX}${profileId}`;
+}
+
+function getPullCache(db, profileId) {
+  const memory = pullCache.get(profileId);
+  if (memory) return { entry: memory, layer: 'memory' };
+
+  const persisted = db.cacheGet(pullCacheKey(profileId));
+  if (!persisted) return { entry: null, layer: null };
+  pullCache.set(profileId, persisted);
+  return { entry: persisted, layer: 'sqlite' };
+}
+
+function storePullCache(db, profileId, entry, staleSeconds) {
+  pullCache.set(profileId, entry);
+  db.cacheSet(pullCacheKey(profileId), entry, staleSeconds);
+}
+
+function clearPullCache(db, profileId) {
+  pullCache.delete(profileId);
+  db.cacheDelete(pullCacheKey(profileId));
+}
+
 async function processPull(res, { profileId, since, db, trakt, config }) {
   const eventId = `pull|${since || 'initial'}`;
   const now = Date.now();
-  const cached = cachedPullPayload(pullCache.get(profileId), since, now, config.pullTtlSeconds);
+  const cacheState = getPullCache(db, profileId);
+  const cached = cachedPullPayload(cacheState.entry, since, now, config.pullTtlSeconds);
 
   if (cached) {
-    const entry = pullCache.get(profileId);
     const detail = pullDetail(cached, {
       source: 'cache',
-      ageSeconds: Math.max(0, Math.floor((now - entry.fetchedAt) / 1000)),
+      cacheLayer: cacheState.layer,
+      ageSeconds: Math.max(0, Math.floor((now - cacheState.entry.fetchedAt) / 1000)),
     });
     db.logEvent({ profileId, eventId, event: 'pull', status: 'cached', detail: JSON.stringify(detail) });
     return sendJson(res, 200, cached);
@@ -165,21 +191,22 @@ async function processPull(res, { profileId, since, db, trakt, config }) {
   try {
     const payload = await task;
     const cacheEntry = makePullCacheEntry(payload, Date.now());
-    if (cacheEntry) pullCache.set(profileId, cacheEntry);
+    if (cacheEntry) storePullCache(db, profileId, cacheEntry, config.pullStaleIfErrorSeconds);
     const detail = pullDetail(payload, { source: coalesced ? 'coalesced' : 'trakt' });
     db.logEvent({ profileId, eventId, event: 'pull', status: 'ok', detail: JSON.stringify(detail) });
     return sendJson(res, 200, payload);
   } catch (err) {
     const mayUseStale = err?.status === 429 || Number(err?.status) >= 500;
+    const staleState = getPullCache(db, profileId);
     const stale = mayUseStale
-      ? stalePullPayload(pullCache.get(profileId), since, Date.now(), config.pullStaleIfErrorSeconds)
+      ? stalePullPayload(staleState.entry, since, Date.now(), config.pullStaleIfErrorSeconds)
       : null;
 
     if (stale) {
-      const entry = pullCache.get(profileId);
       const detail = pullDetail(stale, {
         source: 'stale-cache',
-        ageSeconds: Math.max(0, Math.floor((Date.now() - entry.fetchedAt) / 1000)),
+        cacheLayer: staleState.layer,
+        ageSeconds: Math.max(0, Math.floor((Date.now() - staleState.entry.fetchedAt) / 1000)),
         upstreamError: err.code || 'error',
         upstreamPath: err.upstreamPath || null,
         retryAfter: err.retryAfter || null,
@@ -281,7 +308,7 @@ function renderProfile(res, { config, db }, profileId, setupKey) {
       <div class="row"><a class="btn" href="/u/${profileId}/oauth/start?key=${encodeURIComponent(setupKey)}">${connected ? 'Reconnect Trakt' : 'Connect Trakt'}</a>${connected ? `<form method="post" action="/u/${profileId}/disconnect?key=${encodeURIComponent(setupKey)}"><button class="btn bad" type="submit">Disconnect</button></form>` : ''}</div>
     </div>
     <div class="card"><h2>AIOStreams manifest</h2><p class="url"><code>${escapeHtml(manifestUrl)}</code></p><p class="muted">The manifest URL is a credential. v0.2 advertises pull for Continue Watching and watched history.</p></div>
-    <div class="card"><h2>v0.2 capabilities</h2><p><strong>Push:</strong> <code>start</code> · <code>pause</code> · <code>stop</code> · <code>played</code> · <code>unplayed</code></p><p><strong>Pull:</strong> <code>items</code> · <code>watched</code> · cache TTL ${escapeHtml(config.pullTtlSeconds)}s</p><p class="muted">Repeated unchanged pulls are served from bridge cache; transient Trakt 429/5xx may use a safe stale cache for up to ${escapeHtml(config.pullStaleIfErrorSeconds)}s. Watchlist, dropped state, bulk marks and anime absolute-number mapping remain deferred.</p></div>
+    <div class="card"><h2>v0.2 capabilities</h2><p><strong>Push:</strong> <code>start</code> · <code>pause</code> · <code>stop</code> · <code>played</code> · <code>unplayed</code></p><p><strong>Pull:</strong> <code>items</code> · <code>watched</code> · cache TTL ${escapeHtml(config.pullTtlSeconds)}s</p><p class="muted">Repeated unchanged pulls are served from restart-safe bridge cache; transient Trakt 429/5xx may use a safe stale cache for up to ${escapeHtml(config.pullStaleIfErrorSeconds)}s. Watchlist, dropped state, bulk marks and anime absolute-number mapping remain deferred.</p></div>
     <div class="card"><h2>Recent events</h2><table><thead><tr><th>Time</th><th>Event / ID</th><th>Status</th><th>Detail</th></tr></thead><tbody>${events}</tbody></table></div>
   `));
 }
