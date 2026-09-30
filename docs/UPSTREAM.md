@@ -1,4 +1,4 @@
-# Upstream contracts used by v0.3.3
+# Upstream contracts used by v0.3.4
 
 Reviewed 2026-09-30.
 
@@ -9,7 +9,7 @@ Primary reference:
 - `Viren070/AIOStreams/packages/docs/content/docs/reference/addon-protocol/watch-state.mdx`
 - current protocol: `watchState.version = 2`
 
-v0.3.3 relies on these current semantics:
+v0.3.4 relies on these current semantics:
 
 - push event IDs are stable across retries;
 - push bodies carry `metaId`, `videoId`, and shared show/film `ids` when known;
@@ -31,7 +31,7 @@ The bridge therefore never substitutes empty watched/watchlist state for an upst
 
 ### Identity compatibility boundary
 
-AIOStreams deliberately supports multiple provider spellings. v0.3.3 normalizes only the shared conventional spaces used by the HomeDocker Trakt path:
+AIOStreams deliberately supports multiple provider spellings. v0.3.3+ normalizes the shared conventional spaces used by the HomeDocker Trakt path:
 
 ```text
 IMDb: tt...
@@ -43,9 +43,24 @@ A representable `metaId` can fill a missing provider field in `ids`. This is saf
 
 Anime-oriented IDs such as `kitsu:`, `mal:`, `anilist:` and `anidb:` remain outside the standard-number bridge path because episode numbering can be absolute or otherwise differ from Trakt broadcast season/episode numbering.
 
+### IMDb-to-IMDb alias boundary
+
+AIOStreams' canonical matching currently helps across supported provider spaces but does not guarantee that two distinct IMDb IDs for the same real show collapse into one watch-state identity. Production observed one show where:
+
+```text
+AIOStreams playback metaId = IMDb A
+Trakt same stable show      = IMDb B
+```
+
+Both IDs are valid, but without an explicit equivalence AIOStreams can retain two resumable rows.
+
+v0.3.4 therefore learns a profile-scoped preference only from a successful episode playback `stop`: after the bridge resolves that stop to a stable Trakt show ID, it persists `Trakt show ID -> AIOStreams metaId`. Later Trakt pull rows for that stable show rewrite only the IMDb spelling before entering the AIOStreams watch-state payload.
+
+This is intentionally evidence-based and does not infer equivalence merely from similar titles or episode numbers.
+
 ### Watched aliases and Next Up
 
-AIOStreams' current pull importer accepts watched counts keyed by each ID spelling and uses its canonical matching layer to relate compatible metadata identities. v0.3.3 therefore emits the same show count under every representable IMDb/TMDb/TVDb alias returned by Trakt.
+AIOStreams' current pull importer accepts watched counts keyed by each ID spelling and uses its canonical matching layer to relate compatible metadata identities. The bridge emits the same show count under every representable IMDb/TMDb/TVDb alias present after normalization.
 
 The bridge does **not** fabricate `nextUp`. It only forwards a next-up row when the upstream watched row already carries a usable `next_episode`. This keeps the bridge compatible with the schema while avoiding one Trakt progress request per show.
 
@@ -85,15 +100,17 @@ The bridge requests 250 watched movies/page and 100 watched shows/watchlist rows
 
 ### Next episode
 
-Trakt has a per-show `/shows/{id}/progress/watched` endpoint whose response can include `next_episode`. Calling that endpoint for hundreds of watched shows would create a large request fan-out and is intentionally **not** part of v0.3.3.
+Trakt has a per-show `/shows/{id}/progress/watched` endpoint whose response can include `next_episode`. Calling that endpoint for hundreds of watched shows would create a large request fan-out and is intentionally **not** part of v0.3.4.
 
 If a progress-shaped row already supplied to the bridge contains `next_episode`, it can be forwarded safely. Otherwise AIOStreams derives Next Up locally from the authoritative watched import and its own metadata.
 
 ### Provider-ID resolution
 
-Trakt search accepts provider IDs such as IMDb, TMDb and TVDb. v0.3.3 tries known aliases in deterministic order.
+Trakt search accepts provider IDs such as IMDb, TMDb and TVDb. v0.3.3+ tries known aliases in deterministic order.
 
 A search 404 is treated as a provider-spelling miss and may fall through to the next alias. This behavior is intentionally limited to 404. Rate limiting, auth failures and server errors are not treated as identity misses.
+
+The stable Trakt show ID returned by that resolution is also the key used by v0.3.4's learned IMDb preference. This lets two valid IMDb spellings converge without another Trakt lookup on pull.
 
 ### Watchlist writes
 
@@ -129,22 +146,25 @@ upstream status == 429 or 5xx
 
 Authentication/reconnect failures remain errors.
 
+Alias learning is performed only after a successful episode stop request. A `429` or other failed stop does not persist a new preferred IMDb spelling.
+
 ## Upgrade behavior
 
-v0.3.3 changes the authoritative watched representation by adding provider aliases to counts. Two migration guards ensure AIOStreams sees that change immediately:
+v0.3.4 changes pull identity behavior by adding learned IMDb-to-IMDb reconciliation. Migration guards ensure AIOStreams cannot receive a still-fresh pre-alias payload after upgrade:
 
 ```text
-state cursor schema: watch-state-v0.3.3
-persisted pull cache: pull-state:v4:
+state cursor schema: watch-state-v0.3.4
+identity alias revision: included in state hash
+persisted pull cache: pull-state:v5:
 ```
 
-The old v0.3.2 `pull-state:v3:` safe-cache rows are ignored and expire under their existing TTL.
+The old v0.3.3 `pull-state:v4:` safe-cache rows are ignored and expire under their existing TTL.
 
 ## Compatibility policy
 
 The bridge advertises only capabilities it implements. Identity and authoritative-state mapping are fail-closed where semantics are uncertain.
 
-v0.3.3 supports:
+v0.3.4 supports:
 
 - playback scrobble push;
 - standard movie/episode watched push;
@@ -153,6 +173,7 @@ v0.3.3 supports:
 - watched + Continue Watching pull;
 - bounded bulk/single duplicate reconciliation;
 - IMDb/TMDb/TVDb identity fallback and alias-aware watched counts;
+- persistent playback-learned IMDb-to-IMDb show reconciliation keyed by Trakt show ID;
 - safe next-up forwarding when Trakt already supplied the exact next episode.
 
 Still outside the advertised capability set:
@@ -160,4 +181,5 @@ Still outside the advertised capability set:
 - dropped state;
 - anime/absolute-number mapping;
 - guessed next-episode numbering;
-- Trakt-only IDs without a representable metadata alias.
+- Trakt-only IDs without a representable metadata alias;
+- guessed IMDb equivalence without successful playback evidence.

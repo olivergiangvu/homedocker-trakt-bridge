@@ -2,6 +2,27 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+## [0.3.4] - 2026-09-30
+
+### Added
+- Persistent, profile-scoped show identity aliases keyed by the stable Trakt show ID.
+- Successful episode `stop` events can teach the bridge which IMDb spelling AIOStreams actually used for playback when Trakt returns a different IMDb alias for the same show.
+- Pull-side rewriting for episode playback, watched-show history and show watchlist rows so the learned AIOStreams IMDb spelling is returned consistently.
+- Alias state participates in the watch-state version cursor, so learning a new preferred spelling forces a fresh authoritative representation even when Trakt watched/watchlist activity itself did not change.
+- Unit coverage for alias persistence, no-op relearning, same-Trakt-show rewrite, successful-stop learning and pull round-trip normalization.
+
+### Changed
+- State cursor schema advances to `watch-state-v0.3.4`.
+- Persisted pull-cache namespace advances from `pull-state:v4:` to `pull-state:v5:` so a pre-alias cache cannot survive the upgrade boundary.
+- App/package/image/User-Agent and setup UI are synchronized to v0.3.4.
+
+### Safety
+- No show ID is hard-coded and no additional per-show Trakt API fan-out is introduced.
+- Aliases are learned only from a successful episode playback `stop`, not from `played`, `unplayed`, bulk history or watchlist mutations.
+- Learning requires a valid IMDb `metaId` and a resolved Trakt show ID; non-IMDb identities remain untouched.
+- Rewriting changes only the IMDb spelling. Trakt, TMDb and TVDb IDs remain intact.
+- Shows without a learned alias keep v0.3.3 behavior.
+
 ## [0.3.3] - 2026-09-30
 
 ### Added
