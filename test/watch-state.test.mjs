@@ -10,7 +10,7 @@ test('manifest advertises AIOStreams watch_state v2 push and pull', () => {
   assert.deepEqual(m.watchState.push.events, [
     'start', 'pause', 'stop', 'played', 'unplayed', 'watchlisted', 'unwatchlisted',
   ]);
-  assert.equal(m.watchState.push.bulk, false);
+  assert.equal(m.watchState.push.bulk, true);
   assert.deepEqual(m.watchState.pull, { items: true, watched: true, watchlist: true, ttlSeconds: 300 });
 });
 
@@ -37,8 +37,62 @@ test('unknown duration is never treated as zero', () => {
   assert.deepEqual(planEvent({ event: 'stop', positionMs: 500, played: true }), { kind: 'history-add' });
 });
 
-test('bulk watched marks remain rejected in v0.3.0', () => {
-  assert.throws(() => validatePushEvent({ id: 'abc', event: 'played', scope: 'series' }), /Bulk marks/);
+test('season bulk mark is accepted and planned as one history mutation', () => {
+  const event = validatePushEvent({
+    id: 'b|tt0168366:2|unplayed|1757441718000|1',
+    event: 'unplayed',
+    scope: 'season',
+    metaId: 'tt0168366',
+    season: 2,
+    videos: [
+      { videoId: 'tt0168366:2:1', season: 2, episode: 1 },
+      { videoId: 'tt0168366:2:2', season: 2, episode: 2 },
+    ],
+    part: 1,
+    parts: 1,
+  });
+  assert.deepEqual(planEvent(event), { kind: 'bulk-history-remove' });
+});
+
+test('series bulk played mark is accepted', () => {
+  const event = validatePushEvent({
+    id: 'b|tt0168366|played|1757441718000|1',
+    event: 'played',
+    scope: 'series',
+    metaId: 'tt0168366',
+    videos: [
+      { videoId: 'tt0168366:1:1', season: 1, episode: 1 },
+      { videoId: 'tt0168366:2:1', season: 2, episode: 1 },
+    ],
+  });
+  assert.deepEqual(planEvent(event), { kind: 'bulk-history-add' });
+});
+
+test('bulk mark refuses mismatched season videos', () => {
+  assert.throws(
+    () => validatePushEvent({
+      id: 'bulk01',
+      event: 'played',
+      scope: 'season',
+      metaId: 'tt0168366',
+      season: 2,
+      videos: [{ videoId: 'tt0168366:3:1', season: 3, episode: 1 }],
+    }),
+    /another season/,
+  );
+});
+
+test('bulk mark refuses more than 500 videos', () => {
+  assert.throws(
+    () => validatePushEvent({
+      id: 'bulk02',
+      event: 'played',
+      scope: 'series',
+      metaId: 'tt0168366',
+      videos: Array.from({ length: 501 }, (_, i) => ({ videoId: `tt0168366:1:${i + 1}`, season: 1, episode: i + 1 })),
+    }),
+    /1 to 500/,
+  );
 });
 
 test('watchlist movie and series events are accepted and planned', () => {
