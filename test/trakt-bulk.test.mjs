@@ -36,10 +36,10 @@ test('bulk played writes one nested show history request', async () => {
     shows: [{
       ids: { trakt: 42, imdb: 'tt0168366' },
       seasons: [
-        { number: 1, episodes: [{ number: 1, watched_at: '2025-09-09T16:55:18.000Z' }] },
+        { number: 1, episodes: [{ number: 1, watched_at: '2025-09-09T18:15:18.000Z' }] },
         { number: 2, episodes: [
-          { number: 1, watched_at: '2025-09-09T16:55:18.000Z' },
-          { number: 2, watched_at: '2025-09-09T16:55:18.000Z' },
+          { number: 1, watched_at: '2025-09-09T18:15:18.000Z' },
+          { number: 2, watched_at: '2025-09-09T18:15:18.000Z' },
         ] },
       ],
     }],
