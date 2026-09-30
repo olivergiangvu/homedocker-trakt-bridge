@@ -2,6 +2,31 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+## [0.3.0] - 2026-09-30
+
+### Added
+- Bidirectional movie/show watchlist sync between AIOStreams and Trakt.
+- AIOStreams push events `watchlisted` and `unwatchlisted`.
+- Trakt watchlist pull mapping into AIOStreams `watchlist[]`.
+- Combined watched + watchlist activity cursor so watchlist-only changes advance the same `version` / `since` gate.
+- Movie/show watchlist provider-ID resolution and Trakt sync writes.
+- Unit tests for watchlist manifest capabilities, pull mapping, cursor changes and Trakt add/remove payloads.
+
+### Changed
+- Manifest now advertises `pull.watchlist=true` and the two watchlist push events.
+- Fresh authoritative pulls fetch supported movie/show watchlist state together with watched state.
+- Meaningful watched/watchlist push mutations invalidate the safe pull cache so Trakt auto-removals and new activity converge on the next pull.
+- Ignored playback events no longer resolve media before returning, avoiding unnecessary upstream lookups.
+- Trakt watchlist-limit response `420` is treated as non-retryable bridge `422` instead of a retrying 5xx.
+- App/package/image/User-Agent, setup UI, README, architecture and upstream notes are synchronized to v0.3.0.
+
+### Safety
+- `watched` and `watchlist` are returned atomically only after the complete changed authoritative state was read successfully.
+- Cached/stale responses still contain only `version + items`, never authoritative watched/watchlist state.
+- AIOStreams watchlist pushes are limited to movie/show scope; episode/season favourites are not invented.
+- Trakt assigns watchlist timestamps, so the bridge does not claim to preserve the AIOStreams event timestamp when adding to Trakt.
+- Bulk played/unplayed marks, dropped state and anime absolute-number mapping remain unadvertised.
+
 ## [0.2.3] - 2026-09-30
 
 ### Added

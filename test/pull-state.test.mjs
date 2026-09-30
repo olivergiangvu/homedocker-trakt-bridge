@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import {
   buildPlaybackItems,
   buildWatchedState,
-  includeWatchedForSince,
+  buildWatchlistState,
+  includeChangedStateForSince,
   preferredMetaId,
-  watchedVersionFromActivities,
+  stateVersionFromActivities,
 } from '../src/pull-state.mjs';
 
 test('prefers IMDb, then TMDB, then TVDB ids', () => {
@@ -49,14 +50,21 @@ test('maps Trakt episode playback into standard AIOStreams episode ids', () => {
   assert.equal(item.durationMs, 2400000);
 });
 
-test('watched version is stable and changes with Trakt watched activity', () => {
-  const a = watchedVersionFromActivities({ movies: { watched_at: '2026-09-30T01:00:00Z' }, episodes: { watched_at: '2026-09-30T02:00:00Z' } });
-  const b = watchedVersionFromActivities({ movies: { watched_at: '2026-09-30T01:00:00Z' }, episodes: { watched_at: '2026-09-30T02:00:00Z' } });
-  const c = watchedVersionFromActivities({ movies: { watched_at: '2026-09-30T01:00:00Z' }, episodes: { watched_at: '2026-09-30T03:00:00Z' } });
+test('state version is stable and changes with watched or watchlist activity', () => {
+  const base = {
+    movies: { watched_at: '2026-09-30T01:00:00Z', watchlisted_at: '2026-09-30T01:30:00Z' },
+    episodes: { watched_at: '2026-09-30T02:00:00Z' },
+    shows: { watchlisted_at: '2026-09-30T02:30:00Z' },
+  };
+  const a = stateVersionFromActivities(base);
+  const b = stateVersionFromActivities(structuredClone(base));
+  const watchedChanged = stateVersionFromActivities({ ...base, episodes: { watched_at: '2026-09-30T03:00:00Z' } });
+  const watchlistChanged = stateVersionFromActivities({ ...base, shows: { watchlisted_at: '2026-09-30T03:30:00Z' } });
   assert.equal(a, b);
-  assert.notEqual(a, c);
-  assert.equal(includeWatchedForSince(a, a), false);
-  assert.equal(includeWatchedForSince(null, a), true);
+  assert.notEqual(a, watchedChanged);
+  assert.notEqual(a, watchlistChanged);
+  assert.equal(includeChangedStateForSince(a, a), false);
+  assert.equal(includeChangedStateForSince(null, a), true);
 });
 
 test('maps authoritative Trakt watched movies and show episodes', () => {
@@ -78,6 +86,25 @@ test('maps authoritative Trakt watched movies and show episodes', () => {
   assert.deepEqual(watched.movies, ['tt1111111']);
   assert.deepEqual(watched.episodes, ['tt2222222:1:1', 'tt2222222:1:3']);
   assert.deepEqual(watched.counts.tt2222222, { watched: 2, total: 10, at: 1790737200 });
+});
+
+test('maps Trakt movie and show watchlist into AIOStreams watchlist rows', () => {
+  const watchlist = buildWatchlistState(
+    [{ listed_at: '2026-09-30T02:00:00Z', movie: { ids: { imdb: 'tt1111111' } } }],
+    [{ listed_at: '2026-09-30T03:00:00Z', show: { ids: { tmdb: 222 } } }],
+  );
+  assert.deepEqual(watchlist, [
+    { type: 'series', metaId: 'tmdb:222', at: 1790737200 },
+    { type: 'movie', metaId: 'tt1111111', at: 1790733600 },
+  ]);
+});
+
+test('watchlist mapping drops rows that cannot be represented in AIOStreams id space', () => {
+  const watchlist = buildWatchlistState(
+    [{ listed_at: '2026-09-30T02:00:00Z', movie: { ids: { trakt: 123 } } }],
+    [],
+  );
+  assert.deepEqual(watchlist, []);
 });
 
 test('refuses incomplete watched-show payload instead of returning destructive empty history', () => {

@@ -2,7 +2,7 @@
 
 Self-hosted **bidirectional AIOStreams `watch_state` v2 ↔ Trakt bridge** for Jellyfin-compatible playback clients such as Infuse and Swiftfin.
 
-**Current release: v0.2.3 — push + pull with restart-safe rate-limit hardening.**
+**Current release: v0.3.0 — playback, watched history and movie/show watchlist sync.**
 
 ## What it does
 
@@ -14,29 +14,36 @@ Self-hosted **bidirectional AIOStreams `watch_state` v2 ↔ Trakt bridge** for J
 - finished `stop` → Trakt stop
 - `played` → add history
 - `unplayed` → remove history
+- `watchlisted` → add movie/show to Trakt watchlist
+- `unwatchlisted` → remove movie/show from Trakt watchlist
 - stable-event idempotency and retry-safe diagnostics
 
 ### Trakt → AIOStreams
 
 - paused movie/episode progress → AIOStreams Continue Watching
 - watched movies and episodes → AIOStreams watched state
-- `version` / `since` gate avoids rereading unchanged watched history
+- movie/show Trakt watchlist → AIOStreams watchlist/favourites surface
+- one `version` / `since` cursor covers watched + supported watchlist activity
 - current Trakt pagination is followed safely
 - repeated unchanged pulls are served from a matching-version bridge cache
 - safe pull cache survives container restarts through SQLite
 - transient Trakt `429` / `5xx` can fall back to bounded stale cache when the caller's `since` still matches the cached version
 
-Trakt remains the canonical long-term watched-history source. AIOStreams is the Jellyfin-compatible playback/state surface.
+Trakt remains the canonical long-term tracker source for watched history and watchlist state. AIOStreams is the Jellyfin-compatible playback/state surface.
 
 ## Safety decisions
 
 AIOStreams currently uses a 90% watched threshold while Trakt `/scrobble/stop` can mark watched above 80%. The bridge therefore maps `stop + played:false` to Trakt `/scrobble/pause` so 80–89% progress is never promoted to watched by Trakt.
 
-The pull-side `watched` block is authoritative. If Trakt history cannot be read completely, the bridge fails the request rather than returning an empty watched history that could clear imported state in AIOStreams.
+The pull-side `watched` and `watchlist` blocks are authoritative. If the complete changed state cannot be read from Trakt, the bridge fails the pull rather than returning destructive empty state.
 
-The v0.2.x cache only serves a cached response when AIOStreams sends the same `since` version. Cached and stale-cache responses contain `version + items` only; they never fabricate an authoritative `watched` block. Initial pulls and version mismatches always go back to Trakt.
+The bridge cache only serves when AIOStreams sends the same `since` version. Cached and stale-cache responses contain `version + items` only; they never fabricate authoritative `watched` or `watchlist` blocks. Initial pulls and version mismatches always go back to Trakt.
 
-Anime/absolute episode numbering is not guessed in v0.2.x. Watchlist, dropped state and bulk marks are also deliberately unadvertised.
+Successful pushes that can alter authoritative history/watchlist state invalidate the pull cache. This is especially important because Trakt automatically removes watchlist entries when an item becomes watched.
+
+Trakt assigns the timestamp when an item is added to its watchlist. v0.3.0 therefore does not pretend that the AIOStreams event timestamp can be preserved on a Trakt watchlist add.
+
+Anime/absolute episode numbering is not guessed. Dropped state and bulk marks are deliberately unadvertised in v0.3.0.
 
 ## Current architecture
 
@@ -53,6 +60,10 @@ HomeDocker Trakt Bridge
    |   ^
    |   +-- matching-version cache
    |       memory hot path + SQLite persistence
+   |
+   +---- playback progress
+   +---- watched history
+   +---- movie/show watchlist
    |
    v
  Trakt API
@@ -125,7 +136,7 @@ curl http://127.0.0.1:7000/health
 Expected:
 
 ```json
-{"status":"ok","app":"HomeDocker Trakt Bridge","version":"0.2.3"}
+{"status":"ok","app":"HomeDocker Trakt Bridge","version":"0.3.0"}
 ```
 
 ## 4. Reverse proxy
@@ -169,23 +180,23 @@ The profile page then displays the AIOStreams manifest URL. Treat that URL as a 
 
 ## 6. Install in AIOStreams
 
-Add the manifest as a custom addon. v0.2.x advertises:
+Add the manifest as a custom addon. v0.3.0 advertises:
 
 ```text
 watch_state version: 2
-push: start, pause, stop, played, unplayed
+push: start, pause, stop, played, unplayed, watchlisted, unwatchlisted
 bulk: false
-pull: items + watched
+pull: items + watched + watchlist
 ttl: 900s by default
 ```
 
-AIOStreams will call:
+AIOStreams calls:
 
 ```text
 GET .../watch_state/pull.json?since=<previous-version>
 ```
 
-The bridge only returns the authoritative watched block when Trakt's watched activity version changed. Matching-version repeated reads can be answered from the bridge cache without contacting Trakt.
+The bridge returns authoritative watched + watchlist blocks only when the combined Trakt state version changed. Matching-version repeated reads can be answered from the bridge cache without contacting Trakt.
 
 ## Trakt pull behavior
 
@@ -196,16 +207,33 @@ Continue Watching reads:
 /sync/playback/episodes?extended=full
 ```
 
-Watched history reads:
+Changed watched/watchlist state reads:
 
 ```text
 /sync/watched/movies
 /sync/watched/shows?extended=progress
+/sync/watchlist/movies/added/desc
+/sync/watchlist/shows/added/desc
 ```
 
-Pagination follows Trakt's `X-Pagination-Page-Count`; v0.2.x requests 250 movie rows/page and 100 watched-show progress rows/page.
+The combined state cursor is derived from Trakt `/sync/last_activities` watched timestamps plus movie/show watchlist timestamps. A watchlist-only change therefore advances the same AIOStreams `since` cursor and triggers a safe authoritative refresh.
+
+Pagination follows Trakt's `X-Pagination-Page-Count`; v0.3.0 requests 250 watched-movie rows/page and 100 rows/page for watched shows and watchlists.
 
 ID output prefers IMDb (`tt...`), then `tmdb:`, then `tvdb:`. Standard episodes are emitted as `metaId:season:episode`, matching the IDs currently produced by AIOStreams/AIOMetadata in the HomeDocker setup.
+
+## Trakt push behavior
+
+Watchlist events are accepted only for AIOStreams `scope: movie` and `scope: series`. They map to:
+
+```text
+watchlisted   -> POST /sync/watchlist
+unwatchlisted -> POST /sync/watchlist/remove
+```
+
+Provider IDs from AIOStreams are resolved to Trakt media first. Trakt watchlist limit responses are treated as non-retryable client-state errors rather than converted into a retrying 5xx loop.
+
+AIOStreams whole-season/whole-series played/unplayed bulk marks remain disabled until the bridge implements the v2 bulk contract safely.
 
 ## Pull cache
 
@@ -217,7 +245,7 @@ items
 fetchedAt
 ```
 
-The hot copy lives in memory. v0.2.3 also persists the same non-authoritative cache entry in `bridge.db` under the existing bounded cache store. After a container recreate, a matching `since` can therefore still be answered without immediately hitting Trakt.
+The hot copy lives in memory. The same non-authoritative cache entry is persisted in `bridge.db`. After a container recreate, a matching `since` can therefore still be answered without immediately hitting Trakt.
 
 A fresh cache hit requires:
 
@@ -233,7 +261,7 @@ cache age < PULL_STALE_IF_ERROR_SECONDS
 upstream status == 429 or 5xx
 ```
 
-Neither cache path ever returns an authoritative `watched` block.
+Neither cache path ever returns authoritative `watched` or `watchlist` state.
 
 ## Diagnostics
 
@@ -241,7 +269,7 @@ The profile UI shows push and pull activity in the configured timezone.
 
 Push delivery retries are grouped by stable AIOStreams event ID and surface as `recovered` after a later successful retry. Pull polling is different: repeated requests can legitimately reuse the same `since` cursor, so each pull request stays as its own Recent Events row.
 
-Cache hits are labeled `cached`; detail includes `cacheLayer:"memory"` or `cacheLayer:"sqlite"`. If Trakt returns a transient `429` / `5xx` and a safe matching-version cache is available, the row is labeled `stale` and includes the upstream error/path plus cache age.
+Fresh pull diagnostics include watched counts and `watchlistItems`. Cache hits are labeled `cached`; detail includes `cacheLayer:"memory"` or `cacheLayer:"sqlite"`. If Trakt returns a transient `429` / `5xx` and a safe matching-version cache is available, the row is labeled `stale` and includes the upstream error/path plus cache age.
 
 Trakt error diagnostics include the upstream endpoint and `Retry-After` when available.
 
@@ -272,8 +300,10 @@ Current milestones:
 - **v0.2.1:** pull diagnostics correctness
 - **v0.2.2:** bridge-side pull cache, request coalescing and safe stale-on-transient-error fallback
 - **v0.2.3:** restart-safe SQLite persistence for the safe pull cache
-- **v0.3:** watchlist, dropped state, next-up/ID hardening, bulk marks
-- **v1.0:** production migrations, release image workflow, broader compatibility hardening
+- **v0.3.0:** bidirectional movie/show watchlist sync
+- **v0.3.1:** AIOStreams bulk played/unplayed marks
+- **v0.3.2:** next-up and metadata/orphan-ID hardening
+- **v1.0:** production migrations, release image workflow and broader compatibility hardening
 
 ## Security
 
@@ -293,4 +323,4 @@ npm run check
 npm test
 ```
 
-v0.2.3 has no runtime npm dependencies; it uses Node built-ins including `node:sqlite`.
+v0.3.0 has no runtime npm dependencies; it uses Node built-ins including `node:sqlite`.

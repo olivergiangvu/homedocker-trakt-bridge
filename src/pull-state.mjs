@@ -93,12 +93,20 @@ export function buildPlaybackItems(movieRows = [], episodeRows = []) {
   return [...byVideo.values()].sort((a, b) => (b.at || 0) - (a.at || 0));
 }
 
-export function watchedVersionFromActivities(activities = {}) {
+export function stateVersionFromActivities(activities = {}) {
   const basis = JSON.stringify({
-    movies: activities?.movies?.watched_at || null,
-    episodes: activities?.episodes?.watched_at || null,
+    watchedMovies: activities?.movies?.watched_at || null,
+    watchedEpisodes: activities?.episodes?.watched_at || null,
+    watchlistMovies: activities?.movies?.watchlisted_at || null,
+    watchlistShows: activities?.shows?.watchlisted_at || null,
   });
   return createHash('sha256').update(basis).digest('hex').slice(0, 16);
+}
+
+// Kept as a compatibility export for older local tests/tools; v0.3 uses the
+// broader state version so one AIOStreams `since` cursor covers watched + watchlist.
+export function watchedVersionFromActivities(activities = {}) {
+  return stateVersionFromActivities(activities);
 }
 
 export function buildWatchedState(movieRows = [], showRows = []) {
@@ -148,6 +156,34 @@ export function buildWatchedState(movieRows = [], showRows = []) {
   };
 }
 
-export function includeWatchedForSince(since, version) {
+export function buildWatchlistState(movieRows = [], showRows = []) {
+  const byItem = new Map();
+
+  for (const row of movieRows) {
+    const metaId = preferredMetaId(row?.movie?.ids);
+    if (!metaId) continue;
+    const item = { type: 'movie', metaId };
+    const at = unixSeconds(row?.listed_at ?? row?.watchlisted_at);
+    if (at != null) item.at = at;
+    byItem.set(`movie:${metaId}`, item);
+  }
+
+  for (const row of showRows) {
+    const metaId = preferredMetaId(row?.show?.ids);
+    if (!metaId) continue;
+    const item = { type: 'series', metaId };
+    const at = unixSeconds(row?.listed_at ?? row?.watchlisted_at);
+    if (at != null) item.at = at;
+    byItem.set(`series:${metaId}`, item);
+  }
+
+  return [...byItem.values()].sort((a, b) => (b.at || 0) - (a.at || 0));
+}
+
+export function includeChangedStateForSince(since, version) {
   return !since || since !== version;
+}
+
+export function includeWatchedForSince(since, version) {
+  return includeChangedStateForSince(since, version);
 }

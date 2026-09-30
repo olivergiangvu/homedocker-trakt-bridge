@@ -1,7 +1,7 @@
 import { APP_VERSION } from './config.mjs';
 import { BridgeError } from './errors.mjs';
 
-export const PUSH_EVENTS = ['start', 'pause', 'stop', 'played', 'unplayed'];
+export const PUSH_EVENTS = ['start', 'pause', 'stop', 'played', 'unplayed', 'watchlisted', 'unwatchlisted'];
 
 export function buildManifest(profileId, pullTtlSeconds = 300) {
   return {
@@ -26,6 +26,7 @@ export function buildManifest(profileId, pullTtlSeconds = 300) {
       pull: {
         items: true,
         watched: true,
+        watchlist: true,
         ttlSeconds: pullTtlSeconds,
       },
     },
@@ -42,8 +43,17 @@ export function validatePushEvent(body) {
   if (!PUSH_EVENTS.includes(body.event)) {
     throw new BridgeError('Unsupported event', { status: 422, code: 'unsupported_event' });
   }
+
+  const isWatchlist = body.event === 'watchlisted' || body.event === 'unwatchlisted';
+  if (isWatchlist) {
+    if (!['movie', 'series'].includes(body.scope)) {
+      throw new BridgeError('Watchlist events require movie or series scope', { status: 422, code: 'watchlist_scope_invalid' });
+    }
+    return body;
+  }
+
   if (body.scope === 'season' || body.scope === 'series') {
-    throw new BridgeError('Bulk marks are not supported by v0.2', { status: 422, code: 'bulk_not_supported' });
+    throw new BridgeError('Bulk marks are not supported by v0.3.0', { status: 422, code: 'bulk_not_supported' });
   }
   if (!['movie', 'episode', undefined, null].includes(body.scope)) {
     throw new BridgeError('Unsupported scope', { status: 422, code: 'unsupported_scope' });
@@ -64,6 +74,10 @@ export function planEvent(event) {
       return { kind: 'history-add' };
     case 'unplayed':
       return { kind: 'history-remove' };
+    case 'watchlisted':
+      return { kind: 'watchlist-add' };
+    case 'unwatchlisted':
+      return { kind: 'watchlist-remove' };
     case 'start': {
       const progress = progressPercent(event);
       if (progress == null) return { kind: 'ignore', reason: 'duration_unknown' };

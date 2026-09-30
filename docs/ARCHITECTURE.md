@@ -1,4 +1,4 @@
-# Architecture — v0.2.3
+# Architecture — v0.3.0
 
 ```text
 Infuse / Swiftfin / Jellyfin-compatible client
@@ -19,7 +19,8 @@ HomeDocker Trakt Bridge ----+
         |
         +-- /sync/playback/* -> Continue Watching
         +-- /sync/watched/*  -> watched history
-        +-- /sync/last_activities -> watched version gate
+        +-- /sync/watchlist/* -> movie/show watchlist
+        +-- /sync/last_activities -> combined state version gate
         |
         +-- validate + idempotency
         +-- provider-ID -> Trakt resolver/cache
@@ -33,12 +34,13 @@ HomeDocker Trakt Bridge ----+
 
 ## Authority
 
-Trakt is the canonical long-term watched-history source. AIOStreams is the playback/state surface for Jellyfin-compatible clients.
+Trakt is the canonical long-term tracker source for watched history and watchlist state. AIOStreams is the playback/state surface for Jellyfin-compatible clients.
 
-v0.2.x is bidirectional:
+v0.3.0 is bidirectional for:
 
-- **Push:** AIOStreams playback and watched changes are written to Trakt.
-- **Pull:** Trakt playback progress and watched history are read back into AIOStreams.
+- playback progress;
+- watched/unwatched state;
+- movie/show watchlist state.
 
 CrossWatch and Remux are not part of the critical path for this bridge.
 
@@ -51,8 +53,30 @@ Supported events:
 - `stop`
 - `played`
 - `unplayed`
+- `watchlisted`
+- `unwatchlisted`
 
 AIOStreams marks watched at 90%; Trakt `/scrobble/stop` can mark watched above 80%. Therefore `stop + played:false` is deliberately mapped to `/scrobble/pause` so progress between 80% and 89% cannot become watched accidentally.
+
+### Watchlist push
+
+AIOStreams sends watchlist changes only for movie/show favourites. v0.3.0 accepts:
+
+```text
+scope=movie  -> Trakt movie watchlist
+scope=series -> Trakt show watchlist
+```
+
+Writes are:
+
+```text
+watchlisted   -> POST /sync/watchlist
+unwatchlisted -> POST /sync/watchlist/remove
+```
+
+The bridge resolves shared provider IDs to Trakt media before writing. It does not copy the AIOStreams event timestamp into Trakt because the Trakt sync endpoint assigns the watchlist timestamp server-side.
+
+A successful `history:add`, `history:remove`, `watchlist:add`, `watchlist:remove`, or completed `scrobble:stop` invalidates the pull cache. The next pull therefore observes Trakt-side automatic watchlist removal and the new state version instead of replaying a now-obsolete cache entry.
 
 ## Pull semantics
 
@@ -63,6 +87,7 @@ The manifest advertises:
   "pull": {
     "items": true,
     "watched": true,
+    "watchlist": true,
     "ttlSeconds": 900
   }
 }
@@ -72,33 +97,54 @@ The manifest advertises:
 
 ### Continue Watching
 
-A fresh bridge read calls:
+Every fresh bridge read calls:
 
 - `/sync/playback/movies?extended=full`
 - `/sync/playback/episodes?extended=full`
 
-It returns standard AIOStreams IDs, preferring IMDb and falling back to `tmdb:` then `tvdb:`. When Trakt supplies runtime, the bridge returns both `durationMs` and calculated `positionMs`; otherwise it still returns `progressPercent` for AIOStreams to combine with an existing local duration.
+It returns standard AIOStreams IDs, preferring IMDb and falling back to `tmdb:` then `tvdb:`. When Trakt supplies runtime, the bridge returns both `durationMs` and calculated `positionMs`; otherwise it still returns `progressPercent`.
 
-### Watched history
+### Authoritative watched + watchlist state
 
-When the caller's `since` no longer matches the Trakt watched version, the bridge reads:
+When the caller's `since` no longer matches the current combined state version, the bridge reads all supported authoritative state atomically:
 
 - `/sync/watched/movies`
 - `/sync/watched/shows?extended=progress`
+- `/sync/watchlist/movies/added/desc`
+- `/sync/watchlist/shows/added/desc`
 
-Movie IDs are returned directly in the chosen AIOStreams ID space. Show season/episode progress is converted to video IDs such as `tt0903747:3:10`.
+Movie watched IDs are returned directly in the chosen AIOStreams ID space. Show season/episode progress is converted to video IDs such as `tt0903747:3:10`.
 
-The watched block is authoritative. If Trakt returns an incomplete show-progress payload, the bridge returns an error instead of an empty history, preventing AIOStreams from deleting previously imported watched state.
+Watchlist rows become:
+
+```json
+{ "type": "movie", "metaId": "tt0111161", "at": 1788900000 }
+{ "type": "series", "metaId": "tt0903747", "at": 1788800000 }
+```
+
+Rows that have only a Trakt-internal ID and no representable IMDb/TMDb/TVDb ID are skipped instead of inventing an AIOStreams ID.
+
+`watched` and `watchlist` are treated as authoritative together. If any changed-state read is incomplete or fails, the pull fails rather than returning a partially empty replacement that could remove local state incorrectly.
 
 ### Version / since gate
 
-`/sync/last_activities` is reduced to a stable watched-history version based on movie and episode watched timestamps. AIOStreams sends the previous version as `?since=...`.
+`/sync/last_activities` is reduced to a stable state version based on:
 
-- if `since` differs from the current Trakt version, the bridge fetches and returns authoritative watched history;
-- if `since` matches, `watched` is omitted;
+- movie watched timestamp;
+- episode watched timestamp;
+- movie watchlist timestamp;
+- show watchlist timestamp.
+
+AIOStreams sends the previous version as `?since=...`.
+
+- if `since` differs, the bridge fetches and returns authoritative watched + watchlist state;
+- if `since` matches, both authoritative blocks are omitted;
+- playback `items` continue to refresh independently;
 - matching-version repeated pulls may be served from bridge cache without touching Trakt.
 
-## v0.2.3 restart-safe rate-limit hardening
+Upgrading from v0.2.x intentionally changes the version hash basis, forcing one fresh authoritative pull to seed watchlist state.
+
+## Restart-safe rate-limit hardening
 
 ### Cache model
 
@@ -118,7 +164,7 @@ memory hot copy
     +-- miss -> SQLite media_cache (bridge.db)
 ```
 
-SQLite retention is bounded by `PULL_STALE_IF_ERROR_SECONDS`. The embedded `fetchedAt` timestamp is still checked independently before a response can be treated as fresh or stale, so restoring an old database cannot revive an expired cache entry.
+SQLite retention is bounded by `PULL_STALE_IF_ERROR_SECONDS`. The embedded `fetchedAt` timestamp is checked independently before a response can be treated as fresh or stale.
 
 A cache hit is allowed only when:
 
@@ -128,13 +174,7 @@ and
 cache age < PULL_TTL_SECONDS
 ```
 
-The cached response contains only `version + items`. It never contains or invents `watched`.
-
-### Restart behavior
-
-v0.2.2 lost its memory cache whenever the container was recreated. v0.2.3 reloads a still-valid matching entry from SQLite, then promotes it back into the in-memory hot copy. A deploy therefore does not automatically force the next unchanged AIOStreams poll to hit Trakt.
-
-Disconnecting a profile clears both cache layers.
+Cached responses never contain or invent authoritative `watched` or `watchlist` state.
 
 ### In-flight coalescing
 
@@ -150,11 +190,11 @@ and
 cache age < PULL_STALE_IF_ERROR_SECONDS
 ```
 
-Authentication/reconnect failures do not use stale fallback. A stale response still contains only `version + items`, so it cannot erase watched history.
+Authentication/reconnect failures do not use stale fallback. A stale response still contains only `version + items`, so it cannot erase watched history or watchlist state.
 
 ## Pagination
 
-Current Trakt watched endpoints are paginated. The bridge follows `X-Pagination-Page-Count`, requests 250 movies/page and 100 shows/page for `extended=progress`, and fails if pagination exceeds the configured safety cap.
+The bridge follows Trakt `X-Pagination-Page-Count`, requests 250 watched movies/page and 100 rows/page for watched shows and watchlists, and fails if pagination exceeds the configured safety cap.
 
 ## Diagnostics model
 
@@ -162,13 +202,12 @@ Push and pull diagnostics use different identities by design.
 
 A push event's AIOStreams `id` is an idempotency key. Retries preserve that ID, so repeated log rows with the same push ID represent delivery attempts for one event and may be grouped into `recovered` after a later success.
 
-A pull event uses `pull|<since>` only as a cursor label. Independent polls are never grouped as retry attempts. Pull diagnostics record the source as `trakt`, `coalesced`, `cache`, or `stale-cache`. Cache rows also include `cacheLayer` as `memory` or `sqlite`.
+A pull event uses `pull|<since>` only as a cursor label. Independent polls are never grouped as retry attempts. Fresh pull detail includes watched counts and `watchlistItems`. Cache rows include `cacheLayer` as `memory` or `sqlite`.
 
-## Deferred to v0.3+
+## Deferred after v0.3.0
 
-- Trakt watchlist
+- AIOStreams bulk played/unplayed marks
 - dropped/undropped state
-- AIOStreams bulk marks
 - richer next-up generation
 - anime/absolute-number episode mapping
 - deeper metadata/orphan-ID reconciliation

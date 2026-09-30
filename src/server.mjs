@@ -230,6 +230,8 @@ function pullDetail(payload, extra = {}) {
     watchedMovies: payload.watched?.movies?.length ?? null,
     watchedEpisodes: payload.watched?.episodes?.length ?? null,
     watchedChanged: Boolean(payload.watched),
+    watchlistItems: payload.watchlist?.length ?? null,
+    watchlistChanged: Array.isArray(payload.watchlist),
     ...extra,
   };
 }
@@ -246,6 +248,7 @@ async function processPush(res, { profileId, body, db, trakt }) {
     try {
       const plan = planEvent(body);
       const result = plan.kind === 'ignore' ? { ignored: plan.reason } : await trakt.applyEvent(profileId, body, plan);
+      if (invalidatesPullCache(result)) clearPullCache(db, profileId);
       db.markProcessed(profileId, body.id, JSON.stringify(result));
       db.logEvent({ profileId, eventId: body.id, event: body.event, status: result.ignored ? 'ignored' : 'ok', detail: JSON.stringify(result) });
     } catch (err) {
@@ -259,6 +262,10 @@ async function processPush(res, { profileId, body, db, trakt }) {
   inflight.set(inflightKey, task);
   await task;
   return noContent(res);
+}
+
+function invalidatesPullCache(result) {
+  return ['history:add', 'history:remove', 'watchlist:add', 'watchlist:remove', 'scrobble:stop'].includes(result?.action);
 }
 
 function requireAdmin(url, config) {
@@ -307,8 +314,8 @@ function renderProfile(res, { config, db }, profileId, setupKey) {
     <div class="card"><h1>${escapeHtml(p.name)}</h1><p>Status: <span class="status ${connected ? 'ok' : 'bad'}">${connected ? 'Trakt connected' : 'Not connected'}</span></p><p class="muted">AIOStreams Watch State v2 · bidirectional push + pull · Display time: ${escapeHtml(config.displayTimeZone)}</p>
       <div class="row"><a class="btn" href="/u/${profileId}/oauth/start?key=${encodeURIComponent(setupKey)}">${connected ? 'Reconnect Trakt' : 'Connect Trakt'}</a>${connected ? `<form method="post" action="/u/${profileId}/disconnect?key=${encodeURIComponent(setupKey)}"><button class="btn bad" type="submit">Disconnect</button></form>` : ''}</div>
     </div>
-    <div class="card"><h2>AIOStreams manifest</h2><p class="url"><code>${escapeHtml(manifestUrl)}</code></p><p class="muted">The manifest URL is a credential. v0.2 advertises pull for Continue Watching and watched history.</p></div>
-    <div class="card"><h2>v0.2 capabilities</h2><p><strong>Push:</strong> <code>start</code> · <code>pause</code> · <code>stop</code> · <code>played</code> · <code>unplayed</code></p><p><strong>Pull:</strong> <code>items</code> · <code>watched</code> · cache TTL ${escapeHtml(config.pullTtlSeconds)}s</p><p class="muted">Repeated unchanged pulls are served from restart-safe bridge cache; transient Trakt 429/5xx may use a safe stale cache for up to ${escapeHtml(config.pullStaleIfErrorSeconds)}s. Watchlist, dropped state, bulk marks and anime absolute-number mapping remain deferred.</p></div>
+    <div class="card"><h2>AIOStreams manifest</h2><p class="url"><code>${escapeHtml(manifestUrl)}</code></p><p class="muted">The manifest URL is a credential. v0.3.0 adds bidirectional movie/show watchlist sync on top of Continue Watching and watched history.</p></div>
+    <div class="card"><h2>v0.3.0 capabilities</h2><p><strong>Push:</strong> <code>start</code> · <code>pause</code> · <code>stop</code> · <code>played</code> · <code>unplayed</code> · <code>watchlisted</code> · <code>unwatchlisted</code></p><p><strong>Pull:</strong> <code>items</code> · <code>watched</code> · <code>watchlist</code> · cache TTL ${escapeHtml(config.pullTtlSeconds)}s</p><p class="muted">Repeated unchanged pulls are served from restart-safe bridge cache; transient Trakt 429/5xx may use a safe stale cache for up to ${escapeHtml(config.pullStaleIfErrorSeconds)}s. Dropped state, bulk marks and anime absolute-number mapping remain deferred.</p></div>
     <div class="card"><h2>Recent events</h2><table><thead><tr><th>Time</th><th>Event / ID</th><th>Status</th><th>Detail</th></tr></thead><tbody>${events}</tbody></table></div>
   `));
 }
