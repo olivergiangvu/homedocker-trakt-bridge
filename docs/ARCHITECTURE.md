@@ -1,4 +1,4 @@
-# Architecture — v0.3.3
+# Architecture — v0.3.4
 
 ```text
 Infuse / Swiftfin / Jellyfin-compatible client
@@ -22,6 +22,9 @@ HomeDocker Trakt Bridge ----+
         |     +-- IMDb / TMDb / TVDb alias set
         |     +-- 404 alias failover
         |
+        +-- learned show alias store
+        |     profile + Trakt show id -> preferred AIOStreams IMDb
+        |
         +-- /scrobble/* -> playback transitions
         +-- /sync/history -> single + bulk watched state
         +-- recent bulk coverage -> suppress duplicate single echoes
@@ -38,7 +41,7 @@ HomeDocker Trakt Bridge ----+
 
 Trakt is the canonical long-term tracker source for watched history and watchlist state. AIOStreams is the Jellyfin-compatible playback/state surface.
 
-v0.3.3 is bidirectional for playback progress, watched/unwatched state, movie/show watchlist state, and whole-season/show watched/unwatched bulk marks.
+v0.3.4 is bidirectional for playback progress, watched/unwatched state, movie/show watchlist state, and whole-season/show watched/unwatched bulk marks. It also remembers which IMDb spelling AIOStreams actually used for successful episode playback when Trakt returns another IMDb alias for the same stable Trakt show.
 
 CrossWatch and Remux are not part of the critical path.
 
@@ -71,31 +74,40 @@ For movie/show resolution the bridge tries known aliases in deterministic order:
 IMDb -> TMDb -> TVDb (shows only for TVDb)
 ```
 
-A Trakt search 404 means only that provider spelling missed, so v0.3.3 continues to the next known alias. Authentication failures, `429`, and `5xx` are not swallowed and keep their existing retry/reconnect semantics.
+A Trakt search 404 means only that provider spelling missed, so v0.3.3+ continues to the next known alias. Authentication failures, `429`, and `5xx` are not swallowed and keep their existing retry/reconnect semantics.
+
+### Learned IMDb aliases
+
+A real title can have two IMDb IDs that both resolve to the same stable Trakt show. AIOStreams cannot currently infer that two different `tt...` values are aliases, so a local playback row under IMDb A and a Trakt pull row under IMDb B can appear as two resumable episodes.
+
+v0.3.4 learns only from a successful episode playback stop:
+
+```text
+AIOStreams stop metaId = IMDb A
+        |
+        v
+Bridge resolves Trakt show X
+Trakt show X reports IMDb B
+        |
+        v
+persist profile + X -> preferredMetaId IMDb A
+```
+
+The alias record also remembers Trakt's IMDb spelling for diagnostics. It lives in the existing SQLite-backed `media_cache` store with a long TTL.
+
+Learning is deliberately excluded from `played`, `unplayed`, bulk-history and watchlist operations. Those library-level operations may arrive through a different metadata spelling and must not override the identity confirmed by real playback.
 
 ### Pull aliases
 
-The preferred output spelling remains:
+Without a learned show preference, the preferred output spelling remains:
 
 ```text
 IMDb -> TMDb -> TVDb
 ```
 
-A single watched episode list therefore stays compact and deterministic. However AIOStreams explicitly permits `watched.counts` to be keyed by every ID a show answers to. v0.3.3 emits the same advisory count under every representable alias returned by Trakt.
+When a learned alias exists for the Trakt show ID, pull rows rewrite only `show.ids.imdb` to the AIOStreams-preferred IMDb before building playback, watched and watchlist state. Trakt/TMDb/TVDb IDs remain unchanged.
 
-Example:
-
-```json
-{
-  "counts": {
-    "tt0903747": { "watched": 37, "total": 62, "at": 1788974000 },
-    "tmdb:1396": { "watched": 37, "total": 62, "at": 1788974000 },
-    "tvdb:81189": { "watched": 37, "total": 62, "at": 1788974000 }
-  }
-}
-```
-
-This reduces raw-ID/orphan presentation when the imported history spelling and the active metadata spelling differ.
+A single watched episode list therefore stays compact and deterministic. AIOStreams explicitly permits `watched.counts` to be keyed by every ID a show answers to; after normalization v0.3.4 emits the advisory count under every representable alias still present on the row.
 
 Trakt-only IDs without a representable IMDb/TMDb/TVDb alias are still skipped rather than invented.
 
@@ -103,7 +115,7 @@ Trakt-only IDs without a representable IMDb/TMDb/TVDb alias are still skipped ra
 
 AIOStreams computes the real Next Up episode locally from imported watched rows and metadata. Its Watch State pull contract also allows `watched.nextUp` hints.
 
-v0.3.3 is deliberately conservative:
+The bridge remains deliberately conservative:
 
 - if the Trakt watched row itself contains a valid `next_episode`, the bridge forwards that exact episode plus `last_watched_at`;
 - otherwise `nextUp` is omitted for that show;
@@ -130,6 +142,8 @@ unwatchlisted
 Manifest: `watchState.push.bulk=true`.
 
 AIOStreams marks watched at 90%; Trakt `/scrobble/stop` can mark watched above 80%. `stop + played:false` is therefore mapped to Trakt pause so 80–89% cannot become watched accidentally.
+
+A successful episode `stop` is also the only event allowed to teach or change a learned IMDb alias. Learning occurs after Trakt accepts the scrobble request; a failed/429 stop does not commit a new preference.
 
 ### Bulk history
 
@@ -172,6 +186,8 @@ When the state cursor changed, authoritative state additionally reads all pages 
 /sync/watchlist/shows/added/desc
 ```
 
+Before the builders run, episode-playback, watched-show and show-watchlist rows are rewritten through the profile's learned Trakt-show aliases. No extra Trakt call is made for this normalization.
+
 `watched` and `watchlist` are treated atomically. An incomplete changed-state read fails rather than returning a destructive partial replacement.
 
 ### Version / migration gate
@@ -179,20 +195,23 @@ When the state cursor changed, authoritative state additionally reads all pages 
 The state hash includes:
 
 ```text
-schema = watch-state-v0.3.3
+schema = watch-state-v0.3.4
+identityAliasVersion
 movies.watched_at
 episodes.watched_at
 movies.watchlisted_at
 shows.watchlisted_at
 ```
 
-The schema salt intentionally changes the cursor once at upgrade. Persisted safe pull cache also moves to:
+The alias version is a deterministic representation of the profile's learned show aliases plus a monotonic revision. Learning or changing a preference therefore changes the cursor even when Trakt watched/watchlist activity timestamps did not move.
+
+Persisted safe pull cache moves to:
 
 ```text
-pull-state:v4:<profile>
+pull-state:v5:<profile>
 ```
 
-Old v0.3.2 `pull-state:v3:` rows are ignored and expire naturally. Together these guarantee the first v0.3.3 pull returns the new alias-aware authoritative representation instead of an old cached shape.
+Old v0.3.3 `pull-state:v4:` rows are ignored and expire naturally. Together with the new schema salt, this guarantees the first v0.3.4 pull cannot return an old pre-alias cached shape.
 
 ## Restart-safe rate-limit hardening
 
@@ -222,6 +241,8 @@ upstream status == 429 or 5xx
 
 Cached responses never contain authoritative watched/watchlist blocks.
 
+Successful `scrobble:stop` already invalidates the pull cache. Because alias learning happens only after that stop succeeds, the next pull sees both the new alias state and the changed v0.3.4 cursor immediately.
+
 ## Pagination
 
 The bridge follows Trakt `X-Pagination-Page-Count`, requests 250 watched movies/page and 100 rows/page for watched shows/watchlists, and enforces `PULL_MAX_PAGES`.
@@ -242,10 +263,21 @@ source
 
 Cache rows identify `memory` vs `sqlite`. Push retry IDs keep existing recovered/retrying grouping. Bulk duplicate suppression is logged as `ignored: covered_by_recent_bulk`.
 
-## Deferred after v0.3.3
+When a successful stop learns a preference, the push result includes:
+
+```text
+Trakt show id
+preferred AIOStreams IMDb
+Trakt IMDb spelling
+previous preference, if any
+alias revision
+```
+
+## Deferred after v0.3.4
 
 - dropped/undropped state
 - active per-show Trakt progress fan-out for richer Next Up (not planned unless rate-limit economics change)
 - anime/absolute-number episode mapping
 - deeper metadata hydration for Trakt-only IDs
+- generalized non-IMDb duplicate-entity reconciliation if a real production case requires it
 - release image workflow / v1.0 migration framework
