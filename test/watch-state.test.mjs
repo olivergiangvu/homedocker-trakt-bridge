@@ -42,8 +42,8 @@ test('bulk watched marks remain rejected in v0.3.0', () => {
 });
 
 test('watchlist movie and series events are accepted and planned', () => {
-  const movie = validatePushEvent({ id: 'w1', event: 'watchlisted', scope: 'movie' });
-  const show = validatePushEvent({ id: 'w2', event: 'unwatchlisted', scope: 'series' });
+  const movie = validatePushEvent({ id: 'w01', event: 'watchlisted', scope: 'movie' });
+  const show = validatePushEvent({ id: 'w02', event: 'unwatchlisted', scope: 'series' });
   assert.equal(movie.scope, 'movie');
   assert.equal(show.scope, 'series');
   assert.deepEqual(planEvent(movie), { kind: 'watchlist-add' });
@@ -52,7 +52,7 @@ test('watchlist movie and series events are accepted and planned', () => {
 
 test('watchlist events reject episode scope', () => {
   assert.throws(
-    () => validatePushEvent({ id: 'w3', event: 'watchlisted', scope: 'episode' }),
+    () => validatePushEvent({ id: 'w03', event: 'watchlisted', scope: 'episode' }),
     /movie or series scope/,
   );
 });
