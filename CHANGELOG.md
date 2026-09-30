@@ -2,6 +2,26 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+## [0.2.2] - 2026-09-30
+
+### Added
+- Bridge-side memory cache for matching-version pull requests.
+- In-flight pull coalescing so concurrent requests for the same profile/cursor share one Trakt read.
+- Safe stale-cache fallback for transient Trakt `429` / `5xx` responses.
+- `PULL_STALE_IF_ERROR_SECONDS` with a default of 3600 seconds.
+- Pull diagnostics now identify `trakt`, `coalesced`, `cache`, and `stale-cache` sources.
+- Tests covering cache TTL, version matching and stale-cache bounds.
+
+### Changed
+- `PULL_TTL_SECONDS` now defaults to 900 seconds and is used by the bridge itself in addition to being advertised in the addon manifest.
+- Example image tag, User-Agent, README, architecture and upstream notes are synchronized to v0.2.2.
+
+### Safety
+- Cached responses are only served when the caller's `since` exactly matches the cached version.
+- Cache responses contain `version + items` only and never synthesize authoritative `watched` state.
+- Initial pulls and version mismatches always go to Trakt.
+- Stale fallback is bounded and is not used for authentication/reconnect errors.
+
 ## [0.2.1] - 2026-09-30
 
 ### Fixed

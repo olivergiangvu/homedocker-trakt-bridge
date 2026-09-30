@@ -1,4 +1,4 @@
-# Architecture — v0.2.1
+# Architecture — v0.2.2
 
 ```text
 Infuse / Swiftfin / Jellyfin-compatible client
@@ -10,16 +10,20 @@ Infuse / Swiftfin / Jellyfin-compatible client
               / push      \ pull
              v              ^
 HomeDocker Trakt Bridge ----+
-        |           |
-        |           +-- /sync/playback/* -> Continue Watching
-        |           +-- /sync/watched/*  -> watched history
-        |           +-- /sync/last_activities -> watched version gate
+        |      ^
+        |      +-- matching-version memory cache
+        |      +-- in-flight pull coalescing
+        |      +-- bounded stale fallback on transient 429/5xx
+        |
+        +-- /sync/playback/* -> Continue Watching
+        +-- /sync/watched/*  -> watched history
+        +-- /sync/last_activities -> watched version gate
         |
         +-- validate + idempotency
         +-- provider-ID -> Trakt resolver/cache
         +-- OAuth token refresh
         +-- 90% AIOStreams watched-threshold guard
-        +-- safe pagination + fail-closed pull
+        +-- safe pagination + fail-closed authoritative pull
         |
         v
       Trakt API
@@ -57,14 +61,16 @@ The manifest advertises:
   "pull": {
     "items": true,
     "watched": true,
-    "ttlSeconds": 300
+    "ttlSeconds": 900
   }
 }
 ```
 
+`PULL_TTL_SECONDS` is also the bridge's local cache TTL. AIOStreams currently uses its own global `WATCH_STATE_PULL_TTL` setting to decide when the Jellyfin UI should trigger an on-demand pull, so the bridge cannot rely on manifest TTL alone to protect the Trakt API.
+
 ### Continue Watching
 
-The bridge reads:
+A fresh bridge read calls:
 
 - `/sync/playback/movies?extended=full`
 - `/sync/playback/episodes?extended=full`
@@ -73,7 +79,7 @@ It returns standard AIOStreams IDs, preferring IMDb and falling back to `tmdb:` 
 
 ### Watched history
 
-The bridge reads:
+When the caller's `since` no longer matches the Trakt watched version, the bridge reads:
 
 - `/sync/watched/movies`
 - `/sync/watched/shows?extended=progress`
@@ -86,9 +92,49 @@ The watched block is authoritative. If Trakt returns an incomplete show-progress
 
 `/sync/last_activities` is reduced to a stable watched-history version based on movie and episode watched timestamps. AIOStreams sends the previous version as `?since=...`.
 
-- playback `items` are refreshed on every pull;
-- if `since` matches, the bridge omits `watched`;
-- if watched activity changed, the bridge performs the paginated watched-history read and returns the new authoritative block.
+- if `since` differs from the current Trakt version, the bridge fetches and returns authoritative watched history;
+- if `since` matches, `watched` is omitted;
+- matching-version repeated pulls may be served from bridge cache without touching Trakt.
+
+## v0.2.2 rate-limit hardening
+
+### Fresh cache
+
+Each successful pull stores only:
+
+```text
+version
+items
+fetchedAt
+```
+
+The cache is memory-only and scoped per bridge profile.
+
+A cache hit is allowed only when:
+
+```text
+request.since == cache.version
+and
+cache age < PULL_TTL_SECONDS
+```
+
+The cached response contains only `version + items`. It never contains or invents `watched`.
+
+### In-flight coalescing
+
+Concurrent requests for the same `profileId + since` share one Trakt pull task. This prevents multiple UI refreshes from multiplying upstream calls before the first request completes.
+
+### Stale-on-transient-error
+
+If a fresh pull fails with `429` or `5xx`, a stale cached response may be used only when:
+
+```text
+request.since == cache.version
+and
+cache age < PULL_STALE_IF_ERROR_SECONDS
+```
+
+Authentication/reconnect failures do not use stale fallback. A stale response still contains only `version + items`, so it cannot erase watched history.
 
 ## Pagination
 
@@ -100,7 +146,7 @@ Push and pull diagnostics use different identities by design.
 
 A push event's AIOStreams `id` is an idempotency key. Retries preserve that ID, so repeated log rows with the same push ID represent delivery attempts for one event and may be grouped into `recovered` after a later success.
 
-A pull event uses `pull|<since>` only as a cursor label. Many independent successful polls may legitimately use the same unchanged cursor. v0.2.1 therefore keeps pull polls as separate Recent Events rows and never interprets repeated use of one pull cursor as retry attempts.
+A pull event uses `pull|<since>` only as a cursor label. Independent polls are never grouped as retry attempts. v0.2.2 records the pull source as `trakt`, `coalesced`, `cache`, or `stale-cache`.
 
 ## Deferred to v0.3+
 
@@ -109,3 +155,4 @@ A pull event uses `pull|<since>` only as a cursor label. Many independent succes
 - AIOStreams bulk marks
 - richer next-up generation
 - anime/absolute-number episode mapping
+- deeper metadata/orphan-ID reconciliation
