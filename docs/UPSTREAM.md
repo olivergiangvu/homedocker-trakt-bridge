@@ -1,4 +1,4 @@
-# Upstream contracts used by v0.3.0
+# Upstream contracts used by v0.3.1
 
 Reviewed 2026-09-30.
 
@@ -9,13 +9,17 @@ Primary reference:
 - `Viren070/AIOStreams/packages/docs/content/docs/reference/addon-protocol/watch-state.mdx`
 - current protocol: `watchState.version = 2`
 
-v0.3.0 relies on these documented/current semantics:
+v0.3.1 relies on these documented/current semantics:
 
 - push event IDs are stable across retries;
 - missing `durationMs` means unknown, never zero;
 - playback push supports `start`, `pause`, `stop`, `played`, and `unplayed`;
 - movie/show favourite changes are exposed as `watchlisted` / `unwatchlisted` when the addon advertises them;
 - watchlist events use `scope: movie` or `scope: series` and the meta ID in the route;
+- `watchState.push.bulk=true` changes whole-season/show `played` / `unplayed` delivery from one event per video into bulk requests;
+- bulk marks use `scope: season` or `scope: series`, put the meta ID in the path/body, include the explicit changed `videos[]`, and include `part` / `parts`;
+- AIOStreams splits a mark over more than 500 videos into consecutive independent bulk requests;
+- bulk `videos[]` is the authoritative set to write; an addon must not interpret a show-level mark as permission to affect tracker episodes not listed by AIOStreams;
 - AIOStreams treats `200/204` as delivered, `401/403` as reconnect-required and `429/5xx` as retryable;
 - pull accepts `items`, authoritative `watched`, authoritative `watchlist`, and an optional `version`;
 - `watchlist[]` rows use `type`, `metaId`, and optional Unix-second `at`;
@@ -26,7 +30,11 @@ v0.3.0 relies on these documented/current semantics:
 
 The bridge therefore never substitutes empty watched/watchlist state for an upstream failure. Cached and stale responses intentionally contain only `version + items`.
 
-The v0.3.0 state-version basis is broader than v0.2.x because it includes watchlist activity. The local persisted pull-cache namespace is therefore versioned as `pull-state:v3:`. Existing v0.2.x `pull-state:` rows are ignored after upgrade so an old cache cannot postpone the first authoritative watchlist-aware pull.
+The v0.3.x state-version basis includes watchlist activity. The local persisted pull-cache namespace remains `pull-state:v3:`. Existing v0.2.x `pull-state:` rows are ignored after upgrade so an old cache cannot postpone the first authoritative watchlist-aware pull.
+
+### Bulk mark compatibility boundary
+
+AIOStreams explicitly warns that metadata IDs and episode numbering can come from different spaces. v0.3.1 accepts bulk season/show marks only when their `videos[]` can be represented as ordinary season/episode numbers for the resolved show. Anime/absolute-number spaced video IDs such as `kitsu:`, `mal:`, `anilist:` and `anidb:` remain fail-closed.
 
 ## Trakt
 
@@ -42,7 +50,7 @@ OAuth / playback invariants retained from earlier releases:
 - `/scrobble/start`, `/pause`, `/stop` provide active playback state;
 - `/scrobble/stop` has a lower watched threshold than AIOStreams, so the bridge preserves the AIOStreams `played` decision.
 
-v0.3.0 pull endpoints:
+v0.3.x pull endpoints:
 
 - `/sync/last_activities`
 - `/sync/playback/movies`
@@ -52,14 +60,33 @@ v0.3.0 pull endpoints:
 - `/sync/watchlist/movies/added/desc`
 - `/sync/watchlist/shows/added/desc`
 
-The Trakt `last_activities` payload exposes separate watched and watchlisted timestamps. v0.3.0 includes movie/episode watched activity plus movie/show watchlist activity in the single AIOStreams state version.
+The Trakt `last_activities` payload exposes separate watched and watchlisted timestamps. v0.3.x includes movie/episode watched activity plus movie/show watchlist activity in the single AIOStreams state version.
 
-v0.3.0 watchlist writes:
+Watchlist writes:
 
 - `POST /sync/watchlist` to add movie/show items;
 - `POST /sync/watchlist/remove` to remove them.
 
 The public Sync reference documents JSON POST bodies for both add and remove. Trakt assigns the list timestamp server-side; a custom `listed_at` / `watchlisted_at` timestamp is not supported by the normal sync add endpoint, so the bridge does not claim to preserve the AIOStreams event time.
+
+### Bulk history contract
+
+Current Trakt Sync history accepts shows, seasons, episodes and movies. For a show object it also accepts nested:
+
+```text
+shows[].seasons[].number
+shows[].seasons[].episodes[].number
+shows[].seasons[].episodes[].watched_at
+```
+
+The same bulk media schema is accepted by `/sync/history/remove` (with optional history IDs additionally supported there).
+
+v0.3.1 therefore resolves the parent show once, groups only AIOStreams' explicit `videos[]` by season, and sends one nested `shows` request per AIOStreams bulk part:
+
+- `played` -> `POST /sync/history`, with `watched_at` on each listed episode;
+- `unplayed` -> `POST /sync/history/remove`, without `watched_at`.
+
+The bridge deliberately does not send a bare show or a bare season. Trakt documents that a bare show can mark all episodes and a season can mark all episodes in that season, which would be broader than AIOStreams' explicit changed-video set.
 
 The current public reference also documents that watched items are automatically removed from the Trakt watchlist. The bridge therefore invalidates its pull cache after mutations that can change watched/watchlist authority so the next pull can observe that removal.
 
@@ -73,4 +100,4 @@ Trakt may respond with `429` and `Retry-After`. The bridge only converts a trans
 
 The bridge advertises only capabilities it implements. Identity mapping and authoritative state import are fail-closed: if a changed response is incomplete or cannot be mapped safely, the bridge does not guess a destructive replacement state.
 
-v0.3.0 supports watchlist movies and shows because those are the watchlist scopes AIOStreams exposes from Jellyfin favourites. Season/episode watchlist state, dropped state, bulk played/unplayed marks and anime absolute-number mapping remain outside the advertised capability set.
+v0.3.1 supports movie/show watchlist and standard-numbered season/show bulk played/unplayed marks. Season/episode watchlist state, dropped state and anime/absolute-number mapping remain outside the advertised capability set.
