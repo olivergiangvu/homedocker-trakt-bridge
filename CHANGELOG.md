@@ -2,6 +2,17 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+## [0.3.5] - 2026-09-30
+
+### Fixed
+- Alias learning now keys off the successful AIOStreams `stop` event rather than the translated Trakt scrobble action. An unfinished AIOStreams stop is intentionally sent to Trakt as `/scrobble/pause`, and v0.3.4 therefore missed the exact production case that exposed the dual-IMDb duplicate.
+- When a successful stop learns or changes an IMDb alias, the bridge invalidates its pull cache immediately even if the Trakt action was `pause`, so the next pull can return the normalized identity without waiting for the cache TTL.
+
+### Safety
+- Plain `pause` events still cannot teach or override an alias.
+- Alias learning still occurs only after the upstream Trakt scrobble request succeeds.
+- The learned alias model, state cursor schema, and `pull-state:v5:` namespace remain unchanged from v0.3.4.
+
 ## [0.3.4] - 2026-09-30
 
 ### Added
@@ -146,7 +157,7 @@ All notable changes to HomeDocker Trakt Bridge are documented here.
 ### Safety
 - Cached responses are only served when the caller's `since` exactly matches the cached version.
 - Cache responses contain `version + items` only and never synthesize authoritative `watched` state.
-- Initial pulls and version mismatches always go to Trakt.
+- Initial pulls and version mismatches always contact Trakt.
 - Stale fallback is bounded and is not used for authentication/reconnect errors.
 
 ## [0.2.1] - 2026-09-30

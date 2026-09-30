@@ -315,9 +315,9 @@ export class TraktClient {
       throw new BridgeError('Episode event lacks season/episode', { status: 422, code: 'episode_number_missing' });
     }
 
-    // Resolve the parent even when the episode itself is cached. v0.3.4 needs
-    // the stable Trakt show id so a successful playback stop can learn which
-    // AIOStreams IMDb spelling should be used on future pulls.
+    // Resolve the parent even when the episode itself is cached. The stable
+    // Trakt show id lets a successful AIOStreams stop teach which IMDb spelling
+    // should be used on future pulls.
     const resolvedShow = await this.resolveShow(event);
     const showTraktId = toInt(resolvedShow.show?.ids?.trakt);
     if (showTraktId == null) {
@@ -427,7 +427,10 @@ export class TraktClient {
       });
 
       let identityAlias = null;
-      if (plan.action === 'stop' && media.kind === 'episode') {
+      // AIOStreams can emit an unfinished `stop` that the bridge safely maps to
+      // Trakt `/scrobble/pause`. The identity evidence is the successful
+      // AIOStreams stop event, not the Trakt action name.
+      if (event.event === 'stop' && media.kind === 'episode') {
         identityAlias = learnShowAlias(
           this.db,
           profileId,
