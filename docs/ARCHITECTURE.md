@@ -1,4 +1,4 @@
-# Architecture — v0.2.2
+# Architecture — v0.2.3
 
 ```text
 Infuse / Swiftfin / Jellyfin-compatible client
@@ -11,7 +11,9 @@ Infuse / Swiftfin / Jellyfin-compatible client
              v              ^
 HomeDocker Trakt Bridge ----+
         |      ^
-        |      +-- matching-version memory cache
+        |      +-- matching-version cache
+        |      |     +-- in-memory hot copy
+        |      |     +-- SQLite persistence in bridge.db
         |      +-- in-flight pull coalescing
         |      +-- bounded stale fallback on transient 429/5xx
         |
@@ -96,9 +98,9 @@ The watched block is authoritative. If Trakt returns an incomplete show-progress
 - if `since` matches, `watched` is omitted;
 - matching-version repeated pulls may be served from bridge cache without touching Trakt.
 
-## v0.2.2 rate-limit hardening
+## v0.2.3 restart-safe rate-limit hardening
 
-### Fresh cache
+### Cache model
 
 Each successful pull stores only:
 
@@ -108,7 +110,15 @@ items
 fetchedAt
 ```
 
-The cache is memory-only and scoped per bridge profile.
+The entry is held in two layers:
+
+```text
+memory hot copy
+    |
+    +-- miss -> SQLite media_cache (bridge.db)
+```
+
+SQLite retention is bounded by `PULL_STALE_IF_ERROR_SECONDS`. The embedded `fetchedAt` timestamp is still checked independently before a response can be treated as fresh or stale, so restoring an old database cannot revive an expired cache entry.
 
 A cache hit is allowed only when:
 
@@ -119,6 +129,12 @@ cache age < PULL_TTL_SECONDS
 ```
 
 The cached response contains only `version + items`. It never contains or invents `watched`.
+
+### Restart behavior
+
+v0.2.2 lost its memory cache whenever the container was recreated. v0.2.3 reloads a still-valid matching entry from SQLite, then promotes it back into the in-memory hot copy. A deploy therefore does not automatically force the next unchanged AIOStreams poll to hit Trakt.
+
+Disconnecting a profile clears both cache layers.
 
 ### In-flight coalescing
 
@@ -146,7 +162,7 @@ Push and pull diagnostics use different identities by design.
 
 A push event's AIOStreams `id` is an idempotency key. Retries preserve that ID, so repeated log rows with the same push ID represent delivery attempts for one event and may be grouped into `recovered` after a later success.
 
-A pull event uses `pull|<since>` only as a cursor label. Independent polls are never grouped as retry attempts. v0.2.2 records the pull source as `trakt`, `coalesced`, `cache`, or `stale-cache`.
+A pull event uses `pull|<since>` only as a cursor label. Independent polls are never grouped as retry attempts. Pull diagnostics record the source as `trakt`, `coalesced`, `cache`, or `stale-cache`. Cache rows also include `cacheLayer` as `memory` or `sqlite`.
 
 ## Deferred to v0.3+
 
