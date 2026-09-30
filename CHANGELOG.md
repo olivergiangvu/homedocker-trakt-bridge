@@ -2,6 +2,23 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+## [0.2.3] - 2026-09-30
+
+### Added
+- Restart-safe persistence for the matching-version pull cache using the existing SQLite `media_cache` store.
+- Cache diagnostics now identify whether a hit came from the in-memory hot copy or from SQLite after a restart.
+- Regression test proving the persisted cache survives a database reopen and can be cleared explicitly.
+
+### Changed
+- Disconnecting a Trakt profile clears both the in-memory and persisted pull cache.
+- Invalid JSON cache rows are deleted instead of being reparsed on every lookup.
+- App/package/image/User-Agent, README, architecture and upstream notes are synchronized to v0.2.3.
+
+### Safety
+- Persistence does not change pull authority: cached entries still contain only `version + items` and never authoritative `watched` state.
+- SQLite retention is bounded by `PULL_STALE_IF_ERROR_SECONDS`; `fetchedAt` is still checked independently before fresh or stale cache use.
+- Initial pulls and version mismatches still contact Trakt.
+
 ## [0.2.2] - 2026-09-30
 
 ### Added
