@@ -283,7 +283,8 @@ async function processPush(res, { profileId, body, db, trakt, config }) {
   return noContent(res);
 }
 
-function invalidatesPullCache(result) {
+export function invalidatesPullCache(result) {
+  if (result?.identityAlias) return true;
   return ['history:add', 'history:remove', 'history:bulk-add', 'history:bulk-remove', 'watchlist:add', 'watchlist:remove', 'scrobble:stop'].includes(result?.action);
 }
 
@@ -333,8 +334,8 @@ function renderProfile(res, { config, db }, profileId, setupKey) {
     <div class="card"><h1>${escapeHtml(p.name)}</h1><p>Status: <span class="status ${connected ? 'ok' : 'bad'}">${connected ? 'Trakt connected' : 'Not connected'}</span></p><p class="muted">AIOStreams Watch State v2 · bidirectional push + pull · Display time: ${escapeHtml(config.displayTimeZone)}</p>
       <div class="row"><a class="btn" href="/u/${profileId}/oauth/start?key=${encodeURIComponent(setupKey)}">${connected ? 'Reconnect Trakt' : 'Connect Trakt'}</a>${connected ? `<form method="post" action="/u/${profileId}/disconnect?key=${encodeURIComponent(setupKey)}"><button class="btn bad" type="submit">Disconnect</button></form>` : ''}</div>
     </div>
-    <div class="card"><h2>AIOStreams manifest</h2><p class="url"><code>${escapeHtml(manifestUrl)}</code></p><p class="muted">The manifest URL is a credential. v0.3.4 learns the AIOStreams IMDb spelling confirmed by successful episode playback stops and reuses it when Trakt returns another IMDb alias for the same show.</p></div>
-    <div class="card"><h2>v0.3.4 capabilities</h2><p><strong>Push:</strong> <code>start</code> · <code>pause</code> · <code>stop</code> · <code>played</code> · <code>unplayed</code> · <code>watchlisted</code> · <code>unwatchlisted</code> · <code>bulk=true</code></p><p><strong>Pull:</strong> <code>items</code> · <code>watched</code> · <code>watchlist</code> · learned IMDb-alias reconciliation · alias-aware counts · safe next-up hints when supplied upstream · cache TTL ${escapeHtml(config.pullTtlSeconds)}s</p><p class="muted">IMDb/TMDb/TVDb resolution remains deterministic. A successful episode <code>stop</code> may persist a profile-scoped Trakt-show → preferred AIOStreams IMDb alias; future pulls rewrite that same Trakt show before watch-state import. Bulk single-echo suppression remains ${escapeHtml(config.bulkSingleDedupeSeconds)}s.</p></div>
+    <div class="card"><h2>AIOStreams manifest</h2><p class="url"><code>${escapeHtml(manifestUrl)}</code></p><p class="muted">The manifest URL is a credential. v0.3.5 learns the AIOStreams IMDb spelling from a successful AIOStreams episode stop even when an unfinished stop is safely mapped to Trakt pause.</p></div>
+    <div class="card"><h2>v0.3.5 capabilities</h2><p><strong>Push:</strong> <code>start</code> · <code>pause</code> · <code>stop</code> · <code>played</code> · <code>unplayed</code> · <code>watchlisted</code> · <code>unwatchlisted</code> · <code>bulk=true</code></p><p><strong>Pull:</strong> <code>items</code> · <code>watched</code> · <code>watchlist</code> · learned IMDb-alias reconciliation · alias-aware counts · safe next-up hints when supplied upstream · cache TTL ${escapeHtml(config.pullTtlSeconds)}s</p><p class="muted">IMDb/TMDb/TVDb resolution remains deterministic. A successful AIOStreams episode <code>stop</code> may persist a profile-scoped Trakt-show → preferred AIOStreams IMDb alias; if that changes identity state, the pull cache is invalidated immediately. Bulk single-echo suppression remains ${escapeHtml(config.bulkSingleDedupeSeconds)}s.</p></div>
     <div class="card"><h2>Recent events</h2><table><thead><tr><th>Time</th><th>Event / ID</th><th>Status</th><th>Detail</th></tr></thead><tbody>${events}</tbody></table></div>
   `));
 }
