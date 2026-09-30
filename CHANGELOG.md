@@ -2,6 +2,26 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+## [0.3.1] - 2026-09-30
+
+### Added
+- AIOStreams `watch_state` v2 whole-season and whole-series `played` / `unplayed` bulk marks.
+- Manifest now advertises `watchState.push.bulk=true`.
+- One AIOStreams bulk part (up to 500 listed videos) is converted into one Trakt `/sync/history` or `/sync/history/remove` request.
+- Bulk requests preserve AIOStreams' explicit video list by grouping only those season/episode numbers under the resolved Trakt show; the bridge never marks an entire show implicitly.
+- Validation for bulk scope, `metaId`, `part` / `parts`, video count, season consistency and per-video numbering.
+- Unit coverage for manifest bulk capability, validation, multi-season grouping, deduplication, add/remove payloads and fail-closed anime numbering.
+
+### Changed
+- Successful bulk history changes invalidate the pull cache, so the next pull refreshes authoritative watched/watchlist state.
+- Setup UI, app/package/image/User-Agent, README, architecture and upstream notes are synchronized to v0.3.1.
+
+### Safety
+- Bulk history uses the Trakt show's nested `seasons[].episodes[]` form and writes only the videos AIOStreams says changed.
+- More than 500 videos remain split by AIOStreams into independent idempotent parts; the bridge handles one part per request.
+- Anime/absolute-number video IDs remain fail-closed rather than guessing a Trakt season/episode mapping.
+- `start`, `pause`, `stop`, watchlist push and all v0.3.0 pull/cache behavior are unchanged.
+
 ## [0.3.0] - 2026-09-30
 
 ### Added
