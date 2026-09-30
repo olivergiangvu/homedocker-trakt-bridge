@@ -2,6 +2,25 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+## [0.3.2] - 2026-09-30
+
+### Added
+- Restart-safe short-lived coverage markers for every video included in a successful AIOStreams bulk `played` / `unplayed` event.
+- `BULK_SINGLE_DEDUPE_SECONDS` with a default of 300 seconds.
+- Diagnostics for suppressed duplicate episode echoes, including the covering bulk event ID, video ID and event-time delta.
+- Unit tests covering same-kind suppression, opposite-state safety, time bounds and movie exclusion.
+
+### Fixed
+- Jellyfin-compatible clients can issue new per-episode marks after the same season/show change was already delivered as one supported bulk event. Those echoes previously caused redundant Trakt history writes and could create duplicate watched-history entries.
+- Same-kind single episode events covered by a recent successful bulk mark now return `204` without touching Trakt.
+
+### Safety
+- Dedupe is scoped by profile + event kind + exact video ID.
+- A single event is suppressible only when its own event timestamp is at or after the covering bulk timestamp and within the configured dedupe window.
+- Opposite-state events are never suppressed, movie marks are never suppressed, and later same-kind events outside the window are processed normally.
+- Coverage markers are written only after the bulk Trakt mutation succeeds and are persisted with TTL in `bridge.db`, so a restart cannot reopen the duplicate window.
+- Pull, watchlist, scrobble and authoritative-state behavior are unchanged.
+
 ## [0.3.1] - 2026-09-30
 
 ### Added
