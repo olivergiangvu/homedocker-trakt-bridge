@@ -46,6 +46,7 @@ export class TraktClient {
         status: response.status === 429 ? 429 : 502,
         retryAfter: response.headers.get('retry-after'),
         code: 'oauth_exchange_failed',
+        upstreamPath: '/oauth/token',
       });
     }
     return body;
@@ -83,6 +84,7 @@ export class TraktClient {
         status: invalidGrant ? 401 : (response.status === 429 ? 429 : 502),
         retryAfter: response.headers.get('retry-after'),
         code: invalidGrant ? 'reconnect_required' : 'token_refresh_failed',
+        upstreamPath: '/oauth/token',
       });
     }
     this.db.setTokens(profileId, body);
@@ -96,7 +98,7 @@ export class TraktClient {
       token = await this.refresh(profileId, true);
       response = await this.#fetchApi(path, method, body, token);
     }
-    return this.#handleResponse(response, { accept409 });
+    return this.#handleResponse(response, { accept409, upstreamPath: path });
   }
 
   async publicRequest(path) {
@@ -104,7 +106,7 @@ export class TraktClient {
       headers: this.apiHeaders(),
       signal: AbortSignal.timeout(3500),
     });
-    return this.#handleResponse(response, {});
+    return this.#handleResponse(response, { upstreamPath: path });
   }
 
   async #fetchApi(path, method, body, token) {
@@ -116,7 +118,7 @@ export class TraktClient {
     });
   }
 
-  async #handleResponse(response, { accept409 = false }) {
+  async #handleResponse(response, { accept409 = false, upstreamPath = null }) {
     const parsed = await parseJsonSafe(response);
     if (response.ok || (accept409 && response.status === 409)) return parsed;
 
@@ -130,6 +132,7 @@ export class TraktClient {
       status,
       retryAfter: response.headers.get('retry-after'),
       code: `trakt_${response.status}`,
+      upstreamPath,
     });
   }
 
