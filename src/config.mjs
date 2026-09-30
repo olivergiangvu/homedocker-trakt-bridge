@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 export const APP_NAME = 'HomeDocker Trakt Bridge';
-export const APP_VERSION = '0.1.0';
+export const APP_VERSION = '0.1.1';
 
 function requireEnv(name) {
   const value = process.env[name]?.trim();
@@ -30,6 +30,7 @@ export function loadConfig() {
     dbPath: path.join(dataDir, 'bridge.db'),
     port,
     logLevel: (process.env.LOG_LEVEL || 'info').toLowerCase(),
+    displayTimeZone: (process.env.DISPLAY_TIMEZONE || 'Asia/Ho_Chi_Minh').trim(),
     userAgent: (process.env.USER_AGENT || `${APP_NAME.replaceAll(' ', '-')}/${APP_VERSION}`).trim(),
   };
 }
