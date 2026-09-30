@@ -7,6 +7,7 @@ import { page, escapeHtml } from './html.mjs';
 import { buildManifest, planEvent, validatePushEvent } from './watch-state.mjs';
 import { formatEventTime, summarizeRecentEvents } from './diagnostics.mjs';
 import { cachedPullPayload, makePullCacheEntry, stalePullPayload } from './pull-cache.mjs';
+import { coveredByRecentBulk, rememberBulkCoverage } from './bulk-dedupe.mjs';
 
 const inflight = new Map();
 const pullInflight = new Map();
@@ -134,7 +135,7 @@ async function route(req, res, ctx) {
     const profile = db.getProfile(profileId);
     if (!profile?.access_token_enc) throw new BridgeError('Trakt account is not connected', { status: 401, code: 'not_connected' });
     const body = validatePushEvent(await readJson(req, 128 * 1024));
-    return processPush(res, { profileId, body, db, trakt });
+    return processPush(res, { profileId, body, db, trakt, config });
   }
 
   sendJson(res, 404, { error: 'not_found' });
@@ -236,8 +237,22 @@ function pullDetail(payload, extra = {}) {
   };
 }
 
-async function processPush(res, { profileId, body, db, trakt }) {
+async function processPush(res, { profileId, body, db, trakt, config }) {
   if (db.isProcessed(profileId, body.id)) return noContent(res);
+
+  const coverage = coveredByRecentBulk(db, profileId, body, config.bulkSingleDedupeSeconds);
+  if (coverage) {
+    const result = {
+      ignored: 'covered_by_recent_bulk',
+      bulkEventId: coverage.bulkEventId,
+      videoId: coverage.videoId,
+      deltaSeconds: coverage.deltaSeconds,
+    };
+    db.markProcessed(profileId, body.id, JSON.stringify(result));
+    db.logEvent({ profileId, eventId: body.id, event: body.event, status: 'ignored', detail: JSON.stringify(result) });
+    return noContent(res);
+  }
+
   const inflightKey = `${profileId}:${body.id}`;
   if (inflight.has(inflightKey)) {
     await inflight.get(inflightKey);
@@ -248,6 +263,9 @@ async function processPush(res, { profileId, body, db, trakt }) {
     try {
       const plan = planEvent(body);
       const result = plan.kind === 'ignore' ? { ignored: plan.reason } : await trakt.applyEvent(profileId, body, plan);
+      if (result?.action === 'history:bulk-add' || result?.action === 'history:bulk-remove') {
+        rememberBulkCoverage(db, profileId, body, config.bulkSingleDedupeSeconds);
+      }
       if (invalidatesPullCache(result)) clearPullCache(db, profileId);
       db.markProcessed(profileId, body.id, JSON.stringify(result));
       db.logEvent({ profileId, eventId: body.id, event: body.event, status: result.ignored ? 'ignored' : 'ok', detail: JSON.stringify(result) });
@@ -314,8 +332,8 @@ function renderProfile(res, { config, db }, profileId, setupKey) {
     <div class="card"><h1>${escapeHtml(p.name)}</h1><p>Status: <span class="status ${connected ? 'ok' : 'bad'}">${connected ? 'Trakt connected' : 'Not connected'}</span></p><p class="muted">AIOStreams Watch State v2 · bidirectional push + pull · Display time: ${escapeHtml(config.displayTimeZone)}</p>
       <div class="row"><a class="btn" href="/u/${profileId}/oauth/start?key=${encodeURIComponent(setupKey)}">${connected ? 'Reconnect Trakt' : 'Connect Trakt'}</a>${connected ? `<form method="post" action="/u/${profileId}/disconnect?key=${encodeURIComponent(setupKey)}"><button class="btn bad" type="submit">Disconnect</button></form>` : ''}</div>
     </div>
-    <div class="card"><h2>AIOStreams manifest</h2><p class="url"><code>${escapeHtml(manifestUrl)}</code></p><p class="muted">The manifest URL is a credential. v0.3.1 adds efficient whole-season/show played and unplayed bulk marks on top of v0.3.0 watchlist sync.</p></div>
-    <div class="card"><h2>v0.3.1 capabilities</h2><p><strong>Push:</strong> <code>start</code> · <code>pause</code> · <code>stop</code> · <code>played</code> · <code>unplayed</code> · <code>watchlisted</code> · <code>unwatchlisted</code> · <code>bulk=true</code></p><p><strong>Pull:</strong> <code>items</code> · <code>watched</code> · <code>watchlist</code> · cache TTL ${escapeHtml(config.pullTtlSeconds)}s</p><p class="muted">Bulk season/show marks are written as one Trakt history sync request per AIOStreams part (up to 500 listed videos). Repeated unchanged pulls remain restart-safe and transient Trakt 429/5xx may use a safe stale cache for up to ${escapeHtml(config.pullStaleIfErrorSeconds)}s. Dropped state and anime absolute-number mapping remain deferred.</p></div>
+    <div class="card"><h2>AIOStreams manifest</h2><p class="url"><code>${escapeHtml(manifestUrl)}</code></p><p class="muted">The manifest URL is a credential. v0.3.2 keeps v0.3.1 bulk marks and suppresses redundant per-episode echoes covered by a recent successful bulk mark.</p></div>
+    <div class="card"><h2>v0.3.2 capabilities</h2><p><strong>Push:</strong> <code>start</code> · <code>pause</code> · <code>stop</code> · <code>played</code> · <code>unplayed</code> · <code>watchlisted</code> · <code>unwatchlisted</code> · <code>bulk=true</code></p><p><strong>Pull:</strong> <code>items</code> · <code>watched</code> · <code>watchlist</code> · cache TTL ${escapeHtml(config.pullTtlSeconds)}s</p><p class="muted">Bulk season/show marks are written as one Trakt history sync request per AIOStreams part. Same-kind single episode echoes covered by that bulk are ignored for ${escapeHtml(config.bulkSingleDedupeSeconds)}s, including across bridge restarts. Opposite-state events are never suppressed.</p></div>
     <div class="card"><h2>Recent events</h2><table><thead><tr><th>Time</th><th>Event / ID</th><th>Status</th><th>Detail</th></tr></thead><tbody>${events}</tbody></table></div>
   `));
 }
