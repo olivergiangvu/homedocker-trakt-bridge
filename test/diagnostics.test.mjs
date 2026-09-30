@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { formatEventTime, shortenEventId, summarizeRecentEvents } from '../src/diagnostics.mjs';
 
 test('formats event time in configured timezone', () => {
-  assert.equal(formatEventTime(0, 'Asia/Ho_Chi_Minh'), '01/01/1970, 07:00:00');
+  const epoch = Date.parse('2026-09-30T04:00:00Z') / 1000;
+  assert.equal(formatEventTime(epoch, 'Asia/Ho_Chi_Minh'), '30/09/2026, 11:00:00');
 });
 
 test('shortens long event IDs', () => {
