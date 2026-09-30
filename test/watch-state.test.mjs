@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { APP_VERSION } from '../src/config.mjs';
 import { buildManifest, planEvent, progressPercent, validatePushEvent } from '../src/watch-state.mjs';
 
 test('manifest advertises AIOStreams watch_state v2 push and pull', () => {
   const m = buildManifest('abc');
+  assert.equal(m.version, APP_VERSION);
   assert.equal(m.watchState.version, 2);
   assert.deepEqual(m.watchState.push.events, ['start', 'pause', 'stop', 'played', 'unplayed']);
   assert.equal(m.watchState.push.bulk, false);
