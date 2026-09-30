@@ -1,6 +1,6 @@
 {
   "name": "homedocker-trakt-bridge",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "type": "module",
   "description": "Self-hosted bidirectional AIOStreams watch_state v2 and Trakt bridge",
@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node src/index.mjs",
     "test": "node --test",
-    "check": "node --check src/index.mjs && node --check src/server.mjs && node --check src/trakt.mjs && node --check src/db.mjs && node --check src/diagnostics.mjs && node --check src/pull-state.mjs && node --check src/pull-cache.mjs"
+    "check": "node --check src/index.mjs && node --check src/server.mjs && node --check src/trakt.mjs && node --check src/db.mjs && node --check src/diagnostics.mjs && node --check src/pull-state.mjs && node --check src/pull-cache.mjs && node --check src/bulk-dedupe.mjs"
   },
   "license": "MIT"
 }

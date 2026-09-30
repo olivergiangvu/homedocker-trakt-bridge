@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 export const APP_NAME = 'HomeDocker Trakt Bridge';
-export const APP_VERSION = '0.3.1';
+export const APP_VERSION = '0.3.2';
 
 function requireEnv(name) {
   const value = process.env[name]?.trim();
@@ -41,6 +41,7 @@ export function loadConfig() {
     pullTtlSeconds: intEnv('PULL_TTL_SECONDS', 900, 30, 3600),
     pullStaleIfErrorSeconds: intEnv('PULL_STALE_IF_ERROR_SECONDS', 3600, 60, 86400),
     pullMaxPages: intEnv('PULL_MAX_PAGES', 500, 1, 1000),
+    bulkSingleDedupeSeconds: intEnv('BULK_SINGLE_DEDUPE_SECONDS', 300, 30, 1800),
     userAgent: (process.env.USER_AGENT || `${APP_NAME.replaceAll(' ', '-')}/${APP_VERSION}`).trim(),
   };
 }

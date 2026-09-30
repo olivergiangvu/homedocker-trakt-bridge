@@ -1,4 +1,4 @@
-# Architecture — v0.3.1
+# Architecture — v0.3.2
 
 ```text
 Infuse / Swiftfin / Jellyfin-compatible client
@@ -19,6 +19,7 @@ HomeDocker Trakt Bridge ----+
         |
         +-- /scrobble/* -> playback transitions
         +-- /sync/history -> single + bulk watched state
+        +-- recent bulk coverage -> suppress duplicate single echoes
         +-- /sync/watchlist/* -> movie/show watchlist
         +-- /sync/playback/* -> Continue Watching pull
         +-- /sync/watched/* -> authoritative watched pull
@@ -38,7 +39,7 @@ HomeDocker Trakt Bridge ----+
 
 Trakt is the canonical long-term tracker source for watched history and watchlist state. AIOStreams is the playback/state surface for Jellyfin-compatible clients.
 
-v0.3.1 is bidirectional for:
+v0.3.2 is bidirectional for:
 
 - playback progress;
 - watched/unwatched state;
@@ -84,7 +85,7 @@ videos[] = explicit changed videos
 part / parts
 ```
 
-Each part contains at most 500 videos. v0.3.1 validates the part metadata and every video row, resolves the parent show once, groups only the supplied season/episode numbers, and sends one nested Trakt history request for that part.
+Each part contains at most 500 videos. The bridge validates the part metadata and every video row, resolves the parent show once, groups only the supplied season/episode numbers, and sends one nested Trakt history request for that part.
 
 Example internal mapping:
 
@@ -108,6 +109,53 @@ For `unplayed`, `watched_at` is omitted and the body is sent to `/sync/history/r
 The bridge deliberately does **not** send a bare show or season object. Trakt accepts those broad forms, but they could affect episodes not present in AIOStreams' explicit `videos[]` set. Duplicate season/episode rows inside one part are collapsed before the Trakt request.
 
 Anime/absolute-number video IDs remain fail-closed because AIOStreams metadata numbering cannot safely be assumed to equal Trakt broadcast numbering.
+
+### Bulk → single reconciliation
+
+Observed HomeDocker behavior showed a valid bulk season event followed roughly one to two minutes later by new per-episode events carrying distinct `e|...` event IDs. Upstream AIOStreams' bulk dispatcher itself chooses either one bulk request or per-video requests for a sink; it does not emit both in the same dispatch. The later single events therefore have to be treated as a separate client/API reconciliation path, not as retries of the bulk event.
+
+Without an additional semantic guard, Trakt `/sync/history` can receive the same episode more than once with different `watched_at` values. v0.3.2 therefore records short-lived coverage markers **after** a bulk mutation succeeds.
+
+Coverage key dimensions:
+
+```text
+profile id
+event kind: played | unplayed
+exact AIOStreams videoId
+```
+
+The marker stores:
+
+```text
+bulk event id
+bulk event timestamp
+video id
+scope
+part / parts
+```
+
+A later single episode event is suppressed only when:
+
+```text
+same profile
+same event kind
+same video id
+single.at >= bulk.at
+single.at - bulk.at <= BULK_SINGLE_DEDUPE_SECONDS
+```
+
+The default window is 300 seconds. Markers use the existing SQLite `media_cache` TTL store, so container restart does not reopen the duplicate window.
+
+Safety properties:
+
+- an `unplayed` event is never suppressed by a prior `played` bulk;
+- a `played` event is never suppressed by a prior `unplayed` bulk;
+- movie events are never suppressed;
+- events before the bulk timestamp are never suppressed;
+- events outside the bounded window are processed normally;
+- coverage is created only after Trakt accepted the bulk request.
+
+Suppressed events are marked processed, logged as `ignored` with `covered_by_recent_bulk`, and answered with `204` without touching Trakt or invalidating the pull cache again.
 
 ### Watchlist push
 
@@ -255,9 +303,11 @@ A push event's AIOStreams `id` is an idempotency key. Retries preserve that ID, 
 
 A bulk part is also one stable AIOStreams event. On success its detail records `history:bulk-add` or `history:bulk-remove`, scope, number of videos and `part` / `parts`.
 
+A suppressed single echo is logged separately with its own AIOStreams event ID, status `ignored`, reason `covered_by_recent_bulk`, the covering bulk event ID and event-time delta.
+
 A pull event uses `pull|<since>` only as a cursor label. Independent polls are never grouped as retry attempts. Fresh pull detail includes watched counts and `watchlistItems`. Cache rows include `cacheLayer` as `memory` or `sqlite`.
 
-## Deferred after v0.3.1
+## Deferred after v0.3.2
 
 - dropped/undropped state
 - richer next-up generation
