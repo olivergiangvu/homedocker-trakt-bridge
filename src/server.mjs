@@ -5,6 +5,7 @@ import { deriveProfileKey, randomToken, safeEqual } from './crypto.mjs';
 import { BridgeError } from './errors.mjs';
 import { page, escapeHtml } from './html.mjs';
 import { buildManifest, planEvent, validatePushEvent } from './watch-state.mjs';
+import { formatEventTime, summarizeRecentEvents } from './diagnostics.mjs';
 
 const inflight = new Map();
 
@@ -21,7 +22,7 @@ export function createServer({ config, db, trakt }) {
       } else {
         res.end();
       }
-      console.error(JSON.stringify({ level: 'error', status: e.status, code: e.code, message: e.message, ms: Date.now() - started }));
+      console.error(JSON.stringify({ level: 'error', status: e.status, code: e.code, message: e.message, retryAfter: e.retryAfter || null, upstreamPath: e.upstreamPath || null, ms: Date.now() - started }));
     }
   });
 }
@@ -138,7 +139,10 @@ async function processPush(res, { profileId, body, db, trakt }) {
       db.markProcessed(profileId, body.id, JSON.stringify(result));
       db.logEvent({ profileId, eventId: body.id, event: body.event, status: result.ignored ? 'ignored' : 'ok', detail: JSON.stringify(result) });
     } catch (err) {
-      db.logEvent({ profileId, eventId: body.id, event: body.event, status: 'error', detail: `${err.code || 'error'}:${err.message}` });
+      const parts = [`${err.code || 'error'}:${err.message}`];
+      if (err.upstreamPath) parts.push(`endpoint=${err.upstreamPath}`);
+      if (err.retryAfter) parts.push(`retry_after=${err.retryAfter}`);
+      db.logEvent({ profileId, eventId: body.id, event: body.event, status: 'error', detail: parts.join(' ') });
       throw err;
     }
   })().finally(() => inflight.delete(inflightKey));
@@ -182,15 +186,20 @@ function renderProfile(res, { config, db }, profileId, setupKey) {
   const p = db.getProfile(profileId);
   const addonKey = deriveProfileKey(config.bridgeSecret, 'addon', profileId);
   const manifestUrl = `${config.publicBaseUrl}/u/${profileId}/${addonKey}/manifest.json`;
-  const events = db.recentEvents(profileId, 12).map((e) => `<tr><td>${new Date(Number(e.created_at)*1000).toLocaleString()}</td><td>${escapeHtml(e.event || '')}</td><td>${escapeHtml(e.status)}</td><td><small>${escapeHtml(e.detail || '')}</small></td></tr>`).join('') || '<tr><td colspan="4" class="muted">No events yet.</td></tr>';
+  const recent = summarizeRecentEvents(db.recentEvents(profileId, 40), 12);
+  const events = recent.map((e) => {
+    const statusClass = e.displayStatus === 'retrying' ? 'bad' : 'ok';
+    const retryText = e.attempts > 1 ? ` · ${e.attempts} attempts` : '';
+    return `<tr><td>${escapeHtml(formatEventTime(e.created_at, config.displayTimeZone))}</td><td>${escapeHtml(e.event || '')}<br><small class="muted">${escapeHtml(e.shortEventId || '')}</small></td><td><span class="${statusClass}">${escapeHtml(e.displayStatus)}</span><small class="muted">${escapeHtml(retryText)}</small></td><td><small>${escapeHtml(e.detail || '')}</small></td></tr>`;
+  }).join('') || '<tr><td colspan="4" class="muted">No events yet.</td></tr>';
   const connected = Boolean(p.access_token_enc);
   return sendHtml(res, 200, page(`${p.name} - Trakt Bridge`, `
-    <div class="card"><h1>${escapeHtml(p.name)}</h1><p>Status: <span class="status ${connected ? 'ok' : 'bad'}">${connected ? 'Trakt connected' : 'Not connected'}</span></p><p class="muted">AIOStreams Watch State v2 · push-only MVP</p>
+    <div class="card"><h1>${escapeHtml(p.name)}</h1><p>Status: <span class="status ${connected ? 'ok' : 'bad'}">${connected ? 'Trakt connected' : 'Not connected'}</span></p><p class="muted">AIOStreams Watch State v2 · push-only MVP · Display time: ${escapeHtml(config.displayTimeZone)}</p>
       <div class="row"><a class="btn" href="/u/${profileId}/oauth/start?key=${encodeURIComponent(setupKey)}">${connected ? 'Reconnect Trakt' : 'Connect Trakt'}</a>${connected ? `<form method="post" action="/u/${profileId}/disconnect?key=${encodeURIComponent(setupKey)}"><button class="btn bad" type="submit">Disconnect</button></form>` : ''}</div>
     </div>
     <div class="card"><h2>AIOStreams manifest</h2><p class="url"><code>${escapeHtml(manifestUrl)}</code></p><p class="muted">Add this URL as a custom addon in AIOStreams. The URL is a credential; do not publish it.</p></div>
     <div class="card"><h2>v0.1 capabilities</h2><p><code>start</code> · <code>pause</code> · <code>stop</code> · <code>played</code> · <code>unplayed</code></p><p class="muted">Pull/history import and watchlist sync are intentionally not advertised yet.</p></div>
-    <div class="card"><h2>Recent events</h2><table><thead><tr><th>Time</th><th>Event</th><th>Status</th><th>Detail</th></tr></thead><tbody>${events}</tbody></table></div>
+    <div class="card"><h2>Recent events</h2><table><thead><tr><th>Time</th><th>Event / ID</th><th>Status</th><th>Detail</th></tr></thead><tbody>${events}</tbody></table></div>
   `));
 }
 
