@@ -10,7 +10,7 @@ test('manifest advertises AIOStreams watch_state v2 push and pull', () => {
   assert.deepEqual(m.watchState.push.events, [
     'start', 'pause', 'stop', 'played', 'unplayed', 'watchlisted', 'unwatchlisted',
   ]);
-  assert.equal(m.watchState.push.bulk, false);
+  assert.equal(m.watchState.push.bulk, true);
   assert.deepEqual(m.watchState.pull, { items: true, watched: true, watchlist: true, ttlSeconds: 300 });
 });
 
@@ -37,8 +37,34 @@ test('unknown duration is never treated as zero', () => {
   assert.deepEqual(planEvent({ event: 'stop', positionMs: 500, played: true }), { kind: 'history-add' });
 });
 
-test('bulk watched marks remain rejected in v0.3.0', () => {
-  assert.throws(() => validatePushEvent({ id: 'abc', event: 'played', scope: 'series' }), /Bulk marks/);
+test('season and series played marks use bulk plans', () => {
+  const season = validatePushEvent({
+    id: 'b01', event: 'played', scope: 'season', metaId: 'tt1234567', season: 2,
+    videos: [{ videoId: 'tt1234567:2:1', season: 2, episode: 1 }], part: 1, parts: 1,
+  });
+  const series = validatePushEvent({
+    id: 'b02', event: 'unplayed', scope: 'series', metaId: 'tt1234567', season: null,
+    videos: [{ videoId: 'tt1234567:1:1', season: 1, episode: 1 }], part: 1, parts: 1,
+  });
+  assert.deepEqual(planEvent(season), { kind: 'bulk-history-add' });
+  assert.deepEqual(planEvent(series), { kind: 'bulk-history-remove' });
+});
+
+test('bulk mark rejects malformed parts and cross-season videos', () => {
+  assert.throws(
+    () => validatePushEvent({
+      id: 'b03', event: 'played', scope: 'season', metaId: 'tt1234567', season: 2,
+      videos: [{ videoId: 'tt1234567:3:1', season: 3, episode: 1 }], part: 1, parts: 1,
+    }),
+    /another season/,
+  );
+  assert.throws(
+    () => validatePushEvent({
+      id: 'b04', event: 'played', scope: 'series', metaId: 'tt1234567',
+      videos: [{ videoId: 'tt1234567:1:1', season: 1, episode: 1 }], part: 2, parts: 1,
+    }),
+    /part metadata/,
+  );
 });
 
 test('watchlist movie and series events are accepted and planned', () => {
