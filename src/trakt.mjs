@@ -2,8 +2,9 @@ import { BridgeError } from './errors.mjs';
 import {
   buildPlaybackItems,
   buildWatchedState,
-  includeWatchedForSince,
-  watchedVersionFromActivities,
+  buildWatchlistState,
+  includeChangedStateForSince,
+  stateVersionFromActivities,
 } from './pull-state.mjs';
 
 const AUTH_BASE = 'https://auth.trakt.tv';
@@ -189,7 +190,7 @@ export class TraktClient {
     if (response.status === 401 || response.status === 403) status = response.status;
     else if (response.status === 429) status = 429;
     else if (response.status >= 500) status = response.status;
-    else if (response.status === 404 || response.status === 422) status = 422;
+    else if (response.status === 404 || response.status === 420 || response.status === 422) status = 422;
 
     throw new BridgeError(`Trakt API ${response.status}`, {
       status,
@@ -206,29 +207,30 @@ export class TraktClient {
       this.requestAllPages(profileId, '/sync/playback/episodes?extended=full', { limit: 100 }),
     ]);
 
-    const version = watchedVersionFromActivities(activities || {});
+    const version = stateVersionFromActivities(activities || {});
     const payload = {
       version,
       items: buildPlaybackItems(moviePlayback, episodePlayback),
     };
 
-    if (!includeWatchedForSince(since, version)) return payload;
+    if (!includeChangedStateForSince(since, version)) return payload;
 
-    let movieWatched;
-    let showWatched;
     try {
-      [movieWatched, showWatched] = await Promise.all([
+      const [movieWatched, showWatched, movieWatchlist, showWatchlist] = await Promise.all([
         this.requestAllPages(profileId, '/sync/watched/movies', { limit: 250 }),
         this.requestAllPages(profileId, '/sync/watched/shows?extended=progress', { limit: 100 }),
+        this.requestAllPages(profileId, '/sync/watchlist/movies/added/desc', { limit: 100 }),
+        this.requestAllPages(profileId, '/sync/watchlist/shows/added/desc', { limit: 100 }),
       ]);
       payload.watched = buildWatchedState(movieWatched, showWatched);
+      payload.watchlist = buildWatchlistState(movieWatchlist, showWatchlist);
     } catch (err) {
       if (err instanceof BridgeError) throw err;
-      throw new BridgeError('Trakt watched state was incomplete', {
+      throw new BridgeError('Trakt authoritative state was incomplete', {
         status: 502,
-        code: 'trakt_watched_incomplete',
+        code: 'trakt_state_incomplete',
         cause: err,
-        upstreamPath: '/sync/watched/*',
+        upstreamPath: '/sync/watched/* or /sync/watchlist/*',
       });
     }
 
@@ -236,6 +238,10 @@ export class TraktClient {
   }
 
   async resolveMedia(event) {
+    if (event.event === 'watchlisted' || event.event === 'unwatchlisted') {
+      if (event.scope === 'series') return this.resolveShow(event);
+      return this.resolveMovie(event);
+    }
     if (event.scope === 'episode' || Number.isInteger(Number(event.season)) || Number.isInteger(Number(event.episode))) {
       return this.resolveEpisode(event);
     }
@@ -261,10 +267,25 @@ export class TraktClient {
     return { kind: 'movie', movie: normalized };
   }
 
+  async resolveShow(event) {
+    const key = `show:${event.metaId || ''}:${JSON.stringify(event.ids || {})}`;
+    const cached = this.db.cacheGet(key);
+    if (cached) return { kind: 'show', show: cached };
+
+    const hit = await this.lookupExternal(event.ids || {}, 'show');
+    const show = hit?.show;
+    if (!show?.ids?.trakt) {
+      throw new BridgeError('Could not resolve show to Trakt', { status: 422, code: 'show_unresolved' });
+    }
+    const normalized = { ids: normalizeShowIds(show.ids) };
+    this.db.cacheSet(key, normalized);
+    return { kind: 'show', show: normalized };
+  }
+
   async resolveEpisode(event) {
     const videoId = String(event.videoId || '');
     if (/^(kitsu|mal|anilist|anidb):/i.test(videoId)) {
-      throw new BridgeError('Anime/absolute episode numbering is not mapped safely in v0.2', {
+      throw new BridgeError('Anime/absolute episode numbering is not mapped safely in v0.3.0', {
         status: 422,
         code: 'anime_numbering_unsupported',
       });
@@ -313,8 +334,8 @@ export class TraktClient {
   }
 
   async applyEvent(profileId, event, plan) {
-    const media = await this.resolveMedia(event);
     if (plan.kind === 'ignore') return { ignored: plan.reason };
+    const media = await this.resolveMedia(event);
 
     if (plan.kind === 'scrobble') {
       const payload = { progress: Number(plan.progress.toFixed(3)) };
@@ -326,6 +347,16 @@ export class TraktClient {
         accept409: plan.action === 'stop',
       });
       return { action: `scrobble:${plan.action}`, progress: payload.progress };
+    }
+
+    if (plan.kind === 'watchlist-add' || plan.kind === 'watchlist-remove') {
+      const item = media.kind === 'movie'
+        ? { ids: media.movie.ids }
+        : { ids: media.show.ids };
+      const body = media.kind === 'movie' ? { movies: [item] } : { shows: [item] };
+      const path = plan.kind === 'watchlist-add' ? '/sync/watchlist' : '/sync/watchlist/remove';
+      await this.request(profileId, path, { method: 'POST', body });
+      return { action: plan.kind === 'watchlist-add' ? 'watchlist:add' : 'watchlist:remove' };
     }
 
     const watchedAt = new Date((Number(event.at) || Math.floor(Date.now() / 1000)) * 1000).toISOString();
@@ -352,6 +383,14 @@ function normalizeMovieIds(ids) {
   const out = { trakt: Number(ids.trakt) };
   if (ids.imdb) out.imdb = String(ids.imdb);
   if (toInt(ids.tmdb) != null) out.tmdb = toInt(ids.tmdb);
+  return out;
+}
+
+function normalizeShowIds(ids) {
+  const out = { trakt: Number(ids.trakt) };
+  if (ids.imdb) out.imdb = String(ids.imdb);
+  if (toInt(ids.tmdb) != null) out.tmdb = toInt(ids.tmdb);
+  if (toInt(ids.tvdb) != null) out.tvdb = toInt(ids.tvdb);
   return out;
 }
 
