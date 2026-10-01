@@ -38,14 +38,65 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
 
       - uses: docker/build-push-action@v6
+        id: build
         with:
           context: .
           push: true
           platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+
+      - name: Smoke-test exact published image digest
+        shell: bash
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+
+          image_ref="ghcr.io/${GITHUB_REPOSITORY}@${IMAGE_DIGEST}"
+          expected_version="${GITHUB_REF_NAME#v}"
+          expected_schema=$(node --input-type=module -e "import { SCHEMA_VERSION } from './src/migrations.mjs'; process.stdout.write(String(SCHEMA_VERSION))")
+
+          docker pull "$image_ref"
+          docker run -d --name trakt-bridge-release-smoke \
+            -p 127.0.0.1:17000:7000 \
+            -e PUBLIC_BASE_URL=http://127.0.0.1:17000 \
+            -e TRAKT_CLIENT_ID=test-client \
+            -e TRAKT_CLIENT_SECRET=test-secret \
+            -e BRIDGE_SECRET_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+            -e ADMIN_KEY=abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789 \
+            -e PULL_IDENTITY_MODE=trakt \
+            "$image_ref"
+
+          cleanup() { docker rm -f trakt-bridge-release-smoke >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:17000/health > /tmp/release-health.json; then
+              break
+            fi
+            sleep 1
+          done
+
+          grep -q "\"version\":\"${expected_version}\"" /tmp/release-health.json
+
+          code=$(curl -sS -o /tmp/release-readiness.json -w '%{http_code}' http://127.0.0.1:17000/readiness)
+          test "$code" = "503"
+          grep -q '"status":"setup_required"' /tmp/release-readiness.json
+          grep -q "\"schemaVersion\":${expected_schema}" /tmp/release-readiness.json
+
+          {
+            echo "### Published image acceptance"
+            echo "- image: \`ghcr.io/${GITHUB_REPOSITORY}@${IMAGE_DIGEST}\`"
+            echo "- version: \`${expected_version}\`"
+            echo "- schema: \`${expected_schema}\`"
+            echo "- health/readiness smoke test: PASS"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Ensure GitHub Release exists
         env:
