@@ -1,7 +1,7 @@
 services:
   trakt-bridge:
     build: .
-    image: homedocker-trakt-bridge:0.3.6
+    image: homedocker-trakt-bridge:0.3.7
     container_name: trakt-bridge
     restart: unless-stopped
     env_file:
