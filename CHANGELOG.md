@@ -2,6 +2,30 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+## [0.3.6] - 2026-10-01
+
+### Added
+- `PULL_IDENTITY_MODE=trakt|aiostreams`.
+- Default `trakt` mode preserves the IMDb spelling returned by Trakt on Trakt → AIOStreams pulls.
+- Optional `aiostreams` mode retains the v0.3.5 learned-alias rewrite behavior.
+- Regression coverage for the production dual-IMDb case: Trakt `tt44051354` vs AIOStreams-learned `tt44094505` for the same stable show.
+- Pull identity mode participates in the watch-state version basis.
+
+### Changed
+- Pull-state schema advances to `watch-state-v0.3.6` so a representation-mode change forces a fresh authoritative state.
+- Learned IMDb aliases remain persisted and continue to be learned from successful AIOStreams episode `stop` events in both modes.
+- In `trakt` mode, learned aliases remain available for diagnostics/evidence but no longer rewrite Trakt pull rows.
+- Package/image/User-Agent/example configuration are synchronized to v0.3.6.
+
+### Fixed
+- Restores compatibility with clients such as Strand that use native Trakt and AIOStreams watch-state simultaneously. v0.3.4/v0.3.5 could expose two valid IMDb spellings for the same title because native Trakt preserved Trakt IMDb while the bridge rewrote AIOStreams pull state to a learned AIOStreams IMDb.
+- Restores v0.3.3-style Trakt pull identity behavior without rolling back v0.3.4/v0.3.5 alias learning, bulk dedupe, provider fallback, cache safety or unfinished-stop handling.
+
+### Upgrade
+- Production upgrades from v0.3.5 should remove persisted `pull-state:v5:*` rows once before the first v0.3.6 authoritative pull.
+- Do **not** delete profile tokens, `identity-alias:v1:*`, event history or unrelated cache rows.
+- Recommended HomeDocker setting: `PULL_IDENTITY_MODE=trakt`.
+
 ## [0.3.5] - 2026-09-30
 
 ### Fixed
