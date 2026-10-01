@@ -1,0 +1,49 @@
+name: Feature request
+description: Suggest an improvement for HomeDocker Trakt Bridge
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the user problem first, then the proposed solution. Please avoid including credentials or private deployment details.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What user or operator problem are you trying to solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What behavior would you like to see?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Playback scrobbling
+        - Watched/resume sync
+        - Watchlist sync
+        - AIOStreams integration
+        - Trakt rate-limit/recovery
+        - Docker/deployment
+        - Dashboard/operations
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: checkboxes
+    id: compatibility
+    attributes:
+      label: Compatibility
+      options:
+        - label: I understand that changes should preserve the single-history-authority model unless there is a strong reason not to.
+          required: true
