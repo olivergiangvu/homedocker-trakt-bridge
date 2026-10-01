@@ -32,6 +32,34 @@ test('played stop maps to Trakt stop', () => {
   assert.equal(plan.action, 'stop');
 });
 
+test('sub-1% start, pause and unfinished stop are ignored before Trakt', () => {
+  for (const event of [
+    { event: 'start', positionMs: 0, durationMs: 100000 },
+    { event: 'pause', positionMs: 500, durationMs: 100000 },
+    { event: 'stop', positionMs: 500, durationMs: 100000, played: false },
+  ]) {
+    assert.deepEqual(planEvent(event), { kind: 'ignore', reason: 'progress_below_trakt_minimum' });
+  }
+});
+
+test('explicit played stop below 1% falls back to history add', () => {
+  assert.deepEqual(
+    planEvent({ event: 'stop', positionMs: 500, durationMs: 100000, played: true }),
+    { kind: 'history-add' },
+  );
+});
+
+test('exactly 1% remains a valid Trakt scrobble boundary', () => {
+  assert.deepEqual(
+    planEvent({ event: 'pause', positionMs: 1000, durationMs: 100000 }),
+    { kind: 'scrobble', action: 'pause', progress: 1 },
+  );
+  assert.deepEqual(
+    planEvent({ event: 'stop', positionMs: 1000, durationMs: 100000, played: false }),
+    { kind: 'scrobble', action: 'pause', progress: 1 },
+  );
+});
+
 test('unknown duration is never treated as zero', () => {
   assert.deepEqual(planEvent({ event: 'pause', positionMs: 500 }), { kind: 'ignore', reason: 'duration_unknown' });
   assert.deepEqual(planEvent({ event: 'stop', positionMs: 500, played: true }), { kind: 'history-add' });
