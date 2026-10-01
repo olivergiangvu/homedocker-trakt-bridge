@@ -118,3 +118,8 @@ export function rewriteShowRow(row, state) {
 export function rewriteShowRows(rows = [], state) {
   return rows.map((row) => rewriteShowRow(row, state));
 }
+
+export function rowsForPullIdentity(rows = [], state, mode = 'trakt') {
+  if (mode === 'aiostreams') return rewriteShowRows(rows, state);
+  return rows;
+}
