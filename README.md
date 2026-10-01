@@ -56,7 +56,9 @@ docker compose pull
 docker compose up -d
 ```
 
-If the GHCR package is private, run `docker login ghcr.io` first.
+The GHCR image is public, so anonymous pulls work without `docker login`.
+
+For a long-lived production install, pin `TRAKT_BRIDGE_IMAGE` to a release tag or immutable digest instead of following `latest`.
 
 Verify:
 
@@ -106,6 +108,8 @@ For sensitive vulnerabilities, follow **[SECURITY.md](SECURITY.md)** instead of 
 
 ## Project status
 
-The project is in the pre-1.0 release-candidate phase and is being hardened for public self-hosted use.
+`v0.9.2` is the current public pre-1.0 release. Its published GHCR digest has passed release-workflow smoke testing and HomeDocker production cutover/restart acceptance. The remaining work toward `v1.0.0` is final burn-in, rollback verification and release packaging rather than new watch-state features.
+
+A duplicate Trakt play-count observation is tracked separately as a non-blocking post-v1.0 investigation.
 
 License: [MIT](LICENSE).

@@ -57,6 +57,16 @@ Do not delete AIOStreams state blindly to fix a client cache symptom.
 
 The historical dual-IMDb case is documented in [DEVELOPMENT.md](DEVELOPMENT.md).
 
+## The same viewing appears twice in Trakt history
+
+This is different from duplicate Continue Watching cards. A duplicate Trakt history entry means Trakt recorded two viewing events for the same media item.
+
+The first check is whether more than one component can write playback to Trakt, for example a client's native Trakt integration plus AIOStreams -> Trakt Bridge. AIOMetadata or another tracker integration may add another write path depending on configuration.
+
+Do not assume the Bridge is the cause from the duplicate count alone. Compare timestamps and isolate writers one at a time before changing dedupe behavior.
+
+This remains a non-blocking post-v1.0 investigation for the HomeDocker deployment because watched/resume state, identity and client sync remain correct. See the integration caveat in [INTEGRATIONS.md](INTEGRATIONS.md).
+
 ## Trakt returns HTTP 422 for `/scrobble/pause`
 
 AIOStreams can emit pause/unfinished-stop events at `0%` progress.
