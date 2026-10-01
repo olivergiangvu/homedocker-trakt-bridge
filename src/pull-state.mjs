@@ -91,7 +91,7 @@ export function buildPlaybackItems(movieRows = [], episodeRows = []) {
 
 export function stateVersionFromActivities(activities = {}, identityVersion = '') {
   const basis = JSON.stringify({
-    schema: 'watch-state-v0.3.4',
+    schema: 'watch-state-v0.3.6',
     identityVersion: identityVersion || '',
     watchedMovies: activities?.movies?.watched_at || null,
     watchedEpisodes: activities?.episodes?.watched_at || null,

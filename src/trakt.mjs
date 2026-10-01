@@ -4,7 +4,7 @@ import {
   identityAliasVersion,
   learnShowAlias,
   loadIdentityAliases,
-  rewriteShowRows,
+  rowsForPullIdentity,
 } from './identity-alias.mjs';
 import {
   buildPlaybackItems,
@@ -209,19 +209,26 @@ export class TraktClient {
 
   async pullState(profileId, since = null) {
     const aliases = loadIdentityAliases(this.db, profileId);
+    const pullIdentityMode = this.config.pullIdentityMode || 'trakt';
     const [activities, moviePlayback, episodePlayback] = await Promise.all([
       this.request(profileId, '/sync/last_activities'),
       this.requestAllPages(profileId, '/sync/playback/movies?extended=full', { limit: 100 }),
       this.requestAllPages(profileId, '/sync/playback/episodes?extended=full', { limit: 100 }),
     ]);
 
+    const identityVersion = pullIdentityMode === 'aiostreams'
+      ? `mode:aiostreams:${identityAliasVersion(aliases)}`
+      : 'mode:trakt';
     const version = stateVersionFromActivities(
       activities || {},
-      identityAliasVersion(aliases),
+      identityVersion,
     );
     const payload = {
       version,
-      items: buildPlaybackItems(moviePlayback, rewriteShowRows(episodePlayback, aliases)),
+      items: buildPlaybackItems(
+        moviePlayback,
+        rowsForPullIdentity(episodePlayback, aliases, pullIdentityMode),
+      ),
     };
 
     if (!includeChangedStateForSince(since, version)) return payload;
@@ -235,11 +242,11 @@ export class TraktClient {
       ]);
       payload.watched = buildWatchedState(
         movieWatched,
-        rewriteShowRows(showWatched, aliases),
+        rowsForPullIdentity(showWatched, aliases, pullIdentityMode),
       );
       payload.watchlist = buildWatchlistState(
         movieWatchlist,
-        rewriteShowRows(showWatchlist, aliases),
+        rowsForPullIdentity(showWatchlist, aliases, pullIdentityMode),
       );
     } catch (err) {
       if (err instanceof BridgeError) throw err;
@@ -317,7 +324,7 @@ export class TraktClient {
 
     // Resolve the parent even when the episode itself is cached. The stable
     // Trakt show id lets a successful AIOStreams stop teach which IMDb spelling
-    // should be used on future pulls.
+    // should be used on future pulls when pull identity mode opts into it.
     const resolvedShow = await this.resolveShow(event);
     const showTraktId = toInt(resolvedShow.show?.ids?.trakt);
     if (showTraktId == null) {
