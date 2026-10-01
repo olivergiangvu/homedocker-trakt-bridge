@@ -2,6 +2,39 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+## [0.5.0] - 2026-10-01
+
+### Added
+- Local HTTP integration harness that exercises the real Bridge, Trakt client and SQLite paths without external-network test dependencies.
+- End-to-end coverage for Trakt `401 -> token refresh -> retry`, `429` retry metadata, pagination, duplicate delivery and restart-safe processed-event idempotency.
+- Recovery-matrix coverage for OAuth `invalid_grant`, provider-ID `404` fallback, Trakt `420` / `422` classification, pagination safety caps, bounded stale fallback on `429` / `5xx`, stale-window expiry, concurrent pull coalescing and SQLite backup/restore.
+- Authoritative-pull integration coverage for the production dual-IMDb regression fixture (`tt44051354` vs `tt44094505`) across playback, watched episodes, next-up and watchlist.
+- Managed Trakt client behavior that clears unusable local OAuth credentials when Trakt rejects a refresh grant with `invalid_grant`.
+- Auth state transitions in the existing event log using stable event ID `auth|state`.
+- `/status` profile diagnostics `connectionState` and `reconnectRequired`.
+- Dedicated v0.5.0 release-candidate / HomeDocker canary checklist.
+
+### Changed
+- `invalid_grant` is now a credential-state transition instead of a repeatedly retried connected state: tokens are cleared, readiness becomes `setup_required`, and the operator must reconnect Trakt.
+- Successful token storage records the auth state back to `connected`; manual disconnect records `disconnected` separately from `reconnect_required`.
+- CI smoke tests derive the expected application version and DB schema from source instead of hard-coding v0.4.0/schema 1.
+- App/package/example image/User-Agent and operator documentation are synchronized to v0.5.0.
+
+### Safety
+- DB schema remains `1`; no migration is required from v0.4.0.
+- AIOStreams pull representation remains `watch-state-v0.3.6` and persisted pull cache remains `pull-state:v5:*`.
+- No AIOStreams or Bridge cache purge is required for v0.4.0 -> v0.5.0.
+- `PULL_IDENTITY_MODE=trakt` remains the HomeDocker recommendation for native Trakt + AIOStreams coexistence.
+- Authentication failures never use stale pull cache as a substitute for valid credentials.
+- The production Trakt grant does not need to be intentionally revoked for canary validation; invalid-grant recovery is covered by integration tests.
+
+### Upgrade
+- Take a normal pre-upgrade backup of `bridge.db`, `.env`, compose and nginx configuration.
+- Build/recreate the v0.5.0 container; no DB migration or cache cleanup is required.
+- Verify `/health` reports `0.5.0`, `/readiness` is `ready=true`, DB schema remains `1`, and `/status` reports `profile.connectionState=connected`.
+- Run the HomeDocker canary checklist in `docs/releases/v0.5.0.md` before tagging the release.
+- Rollback to v0.4.0 can reuse schema-1 `bridge.db` because v0.5.0 introduces no DB schema change.
+
 ## [0.4.0] - 2026-10-01
 
 ### Added
