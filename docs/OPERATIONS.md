@@ -1,247 +1,126 @@
 # Operations
 
-This guide is for running HomeDocker Trakt Bridge after setup.
+This guide covers the routine tasks needed to run HomeDocker Trakt Bridge after setup.
 
-## Runtime boundaries
+## Health checks
 
-Production assumptions:
+Process health:
 
-```text
-host nginx terminates TLS
-container port 7000 binds to 127.0.0.1 only
-/app/data is persistent
-bridge.db is backed up
-BRIDGE_SECRET_KEY is backed up
-ADMIN_KEY is treated as a credential
-PULL_IDENTITY_MODE=trakt
-production runs a published GHCR image
+```bash
+curl -fsS http://127.0.0.1:7000/health
 ```
 
-## Health endpoints
+Application readiness:
 
-### Liveness
-
-```text
-GET /health
+```bash
+curl -fsS http://127.0.0.1:7000/readiness
 ```
 
-Use this to answer: **is the process alive?**
+A configured instance should report `ready=true` and at least one connected profile.
 
-It intentionally does not depend on live Trakt network access.
+The web dashboard is the preferred human-readable view for connection status, sync health, recent events and current errors.
 
-### Readiness
+## Dashboard states
 
-```text
-GET /readiness
-```
-
-Readiness checks:
-
-- SQLite query succeeds
-- DB schema is supported by the running binary
-- at least one profile has usable Trakt tokens
-
-A configured production instance should return HTTP `200` with `ready=true`.
-
-If Trakt rejects a refresh token with OAuth `invalid_grant`, the bridge clears the unusable local credentials. Readiness then returns `setup_required` until the profile is reconnected.
-
-### Authenticated status
+Common event states:
 
 ```text
-GET /status?key=<ADMIN_KEY>
+ok         completed successfully
+cached     served from a valid local cache
+stale      bounded stale fallback was used
+ignored    intentionally acknowledged without an upstream write
+recovered  a previous failed attempt later succeeded
+retrying   a recent retryable failure is still unresolved
+error      an error event retained for diagnostics
 ```
 
-This is the machine-readable operator diagnostic surface.
-
-It exposes operational state but not OAuth tokens, bridge secrets or addon credentials.
-
-Profile connection state is reported as:
-
-```text
-profile.connectionState = connected | disconnected | reconnect_required
-profile.reconnectRequired = true | false
-```
-
-## Dashboard interpretation
-
-The operator dashboard prioritizes:
-
-- Trakt connection status
-- manifest URL
-- active errors in the recent operational window
-- last authoritative sync counts
-- latest poll source
-- recent event summaries
-
-Historical errors are retained for diagnostics but should not by themselves mark the service unhealthy.
+Historical errors can remain in the database after the underlying problem is gone. Use the dashboard's recent active-error window to judge current health.
 
 ## Backup
 
-Back up these together:
+Back up these items together:
 
 ```text
 /app/data/bridge.db
 .env
 compose.yml
-host nginx configuration for the bridge
+reverse-proxy configuration
 ```
 
-For SQLite, use an online SQLite backup rather than copying an actively written WAL database blindly.
+`BRIDGE_SECRET_KEY` is required to decrypt stored Trakt OAuth tokens after restore, so losing `.env` can make an otherwise valid database backup unusable.
 
-The database contains profiles, encrypted OAuth tokens, idempotency records, pull cache, learned identity evidence and event history.
+For a live SQLite database, prefer SQLite's online backup mechanism instead of blindly copying a WAL-active database.
 
-`BRIDGE_SECRET_KEY` is required to decrypt stored OAuth tokens after restore.
+## Update
 
-## Release-image deployment
-
-From v0.9.0 onward, production deployment should use the published GHCR artifact rather than rebuilding source on the server.
-
-The normal flow is:
+If you use `latest`:
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
 
-The image is selected by:
+For predictable production updates, pin `TRAKT_BRIDGE_IMAGE` to a release tag or immutable digest before pulling.
 
-```env
-TRAKT_BRIDGE_IMAGE=ghcr.io/olivergiangvu/homedocker-trakt-bridge:0.9.0
-```
+Recommended update flow:
 
-For immutable deployment, replace the tag with the exact release digest:
+1. Confirm `/health` and `/readiness` are healthy.
+2. Back up the database and configuration.
+3. Change the image tag/digest.
+4. Pull the new image while the old container is still running.
+5. Recreate the service.
+6. Re-check `/health`, `/readiness`, dashboard connection state and sync counts.
+7. Confirm the client still shows the expected watched/resume state.
 
-```env
-TRAKT_BRIDGE_IMAGE=ghcr.io/olivergiangvu/homedocker-trakt-bridge@sha256:<digest>
-```
-
-After a pull, record the resolved image ID/digest before cutover:
-
-```bash
-docker image inspect "$TRAKT_BRIDGE_IMAGE" \
-  --format '{{json .RepoDigests}}'
-```
-
-## Upgrade procedure
-
-Before an upgrade:
-
-1. verify the current service is healthy
-2. back up DB + config
-3. update `TRAKT_BRIDGE_IMAGE` to the target release tag or digest
-4. pull the target release image while the old container is still running
-5. inspect the pulled digest
-6. recreate the service
-7. verify `/health`
-8. verify `/readiness`
-9. verify DB schema, profile count and connection state
-10. verify authoritative sync counts and dashboard
-11. restart once during canary acceptance
-
-Do not purge AIOStreams or Bridge cache unless the release notes explicitly require it.
-
-### v0.5.0 -> v0.9.0
-
-v0.9.0 keeps:
-
-```text
-DB schema              1
-pull representation    watch-state-v0.3.6
-pull cache namespace   pull-state:v5:*
-PULL_IDENTITY_MODE     trakt (recommended)
-```
-
-No DB migration and no pull-cache purge is required.
-
-The significant operational change is deployment parity: production consumes the same GHCR artifact that the release workflow publishes and smoke-tests.
-
-### v0.4.0 -> v0.5.0
-
-v0.5.0 kept schema 1 and added explicit `reconnect_required` handling for rejected OAuth refresh grants. No migration or cache purge was required.
-
-### v0.3.7 -> v0.4.0
-
-The first v0.4.0 startup migrated:
-
-```text
-PRAGMA user_version 0 -> 1
-```
-
-No watch-state representation change was introduced by that migration.
-
-## v0.9.0 RC checklist
-
-Before tagging v0.9.0, use the checklist in [`releases/v0.9.0.md`](releases/v0.9.0.md).
-
-The important addition is a two-stage artifact acceptance:
-
-1. GitHub Release workflow must pull and run the exact pushed image digest successfully.
-2. HomeDocker must then pull and run the published GHCR artifact without a local build.
-
-Only after both stages pass should the RC begin its v1.0 burn-in.
+Do not purge Bridge or AIOStreams state unless the release notes explicitly require it.
 
 ## Rollback
 
-If a release changes DB schema, restore the matching pre-upgrade database when rolling back to an older binary.
+Set `TRAKT_BRIDGE_IMAGE` back to the previous known-good tag or digest, then:
 
-v0.5.0 and v0.9.0 both use schema 1, so rollback between them can reuse the same database as long as no later schema-changing release has run.
-
-For artifact-based rollback:
-
-1. set `TRAKT_BRIDGE_IMAGE` to the previous release tag or exact digest
-2. `docker compose pull`
-3. recreate the service
-4. verify `/health`, `/readiness` and profile connection state
-5. verify authoritative sync counts and the client surface
-
-Do not run an older binary against a DB schema newer than it understands.
-
-## Event history
-
-The dashboard displays compact summaries. Raw event detail is collapsed behind **Raw**.
-
-Useful statuses:
-
-```text
-ok         completed successfully
-cached     pull served from cache
-stale      bounded stale fallback was used
-ignored    intentionally acknowledged without upstream write
-recovered  a previous failed attempt later succeeded
-retrying   recent unresolved retry chain
-error      raw historical error row
+```bash
+docker compose pull
+docker compose up -d
 ```
 
-Auth state transitions use the stable event id `auth|state`, so a reconnect can be represented as recovery from a prior reconnect-required state instead of a permanent unresolved error.
-
-The DB retains historical failures even after the underlying bug is fixed. Use the dashboard's active-error window for current health.
+If a future release changes the database schema, restore the matching pre-upgrade database before running an older binary.
 
 ## Logs
 
-Container logs are appropriate for startup/migration information, uncaught upstream failures and runtime version/schema confirmation.
+Recent container logs:
 
 ```bash
 docker logs --tail 150 trakt-bridge
 ```
 
-## Release process
+Follow logs live:
 
-Before creating a release tag:
+```bash
+docker logs -f trakt-bridge
+```
 
-1. CI passes syntax checks and unit/integration tests
-2. CI validates production + development Compose configurations
-3. CI builds and smoke-tests the source image
-4. HomeDocker source canary passes when required
-5. release notes / changelog are current
+Use logs mainly for startup, migration and unexpected upstream/runtime failures. The dashboard is easier for normal event inspection.
 
-A `v*` tag triggers the release workflow. The workflow:
+## Trakt rate limits
 
-1. reruns checks/tests
-2. builds and pushes the amd64 GHCR image
-3. publishes semver tags and `latest` for stable releases
-4. emits SBOM and provenance metadata
-5. pulls the exact pushed digest back from GHCR
-6. smoke-tests `/health` and `/readiness` from that digest
-7. creates or reuses the GitHub Release
+The bridge protects Trakt traffic with retry handling, cooldowns and stale-state fallback. If Trakt returns `429`, the dashboard records the affected endpoint and retry delay.
 
-A release workflow is not considered successful unless the published-artifact smoke test passes.
+Avoid repeatedly forcing sync while a rate-limit cooldown is active. The bridge will recover automatically when the allowed window reopens.
+
+## OAuth reconnect
+
+If Trakt rejects the stored refresh token, the bridge moves the profile to `reconnect_required` instead of pretending it is connected.
+
+Open the setup page and reconnect Trakt:
+
+```text
+https://your-domain/setup?key=<ADMIN_KEY>
+```
+
+## Useful files
+
+- [Configuration](CONFIGURATION.md)
+- [Troubleshooting](TROUBLESHOOTING.md)
+- [Integrations](INTEGRATIONS.md)
+- [Architecture](ARCHITECTURE.md) — advanced
+- [Development](DEVELOPMENT.md) — contributors/maintainers
