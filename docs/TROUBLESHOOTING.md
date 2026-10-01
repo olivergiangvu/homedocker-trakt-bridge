@@ -94,7 +94,7 @@ Use the authoritative counts for health interpretation.
 
 - working DB access
 - supported schema
-- at least one connected Trakt profile
+- at least one profile with usable Trakt credentials
 
 Inspect the JSON body for:
 
@@ -106,9 +106,30 @@ connectedProfiles
 status
 ```
 
-## Trakt profile is disconnected
+If `status=setup_required` after the service had previously been connected, inspect authenticated `/status` for:
 
-Open the profile dashboard and use **Reconnect Trakt**.
+```text
+profile.connectionState
+profile.reconnectRequired
+```
+
+## Trakt profile requires reconnect
+
+v0.5.0 treats Trakt OAuth `invalid_grant` as a credential-state transition rather than a generic retryable failure.
+
+Expected behavior:
+
+```text
+invalid_grant
+  -> unusable local OAuth tokens are cleared
+  -> profile.connectionState = reconnect_required
+  -> profile.reconnectRequired = true
+  -> /readiness = setup_required
+```
+
+Open the profile dashboard and complete **Connect/Reconnect Trakt**. A successful OAuth callback stores fresh tokens and returns the profile state to `connected`.
+
+Do not restore the rejected token values from an old `.env` or manual DB edit. OAuth tokens live in `bridge.db` and are encrypted with `BRIDGE_SECRET_KEY`.
 
 If OAuth cannot complete, verify:
 
@@ -117,6 +138,17 @@ If OAuth cannot complete, verify:
 - reverse proxy HTTPS routing
 - `TRAKT_CLIENT_ID`
 - `TRAKT_CLIENT_SECRET`
+
+## Trakt profile is manually disconnected
+
+A manual disconnect is different from `reconnect_required`:
+
+```text
+profile.connectionState = disconnected
+profile.reconnectRequired = false
+```
+
+Use the profile setup page to connect again when desired.
 
 ## Manifest does not work in AIOStreams
 
@@ -148,6 +180,8 @@ retryAfter
 ```
 
 Persistent stale fallback indicates the upstream issue is not recovering.
+
+Authentication/reconnect failures do not use stale fallback as a substitute for valid credentials.
 
 ## DB schema mismatch
 
