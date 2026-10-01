@@ -2,6 +2,38 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+## [0.9.2] - 2026-10-02
+
+### Added
+- Public GHCR release workflow with semver/latest/SHA tags, SBOM and provenance metadata.
+- Exact-published-digest smoke testing for `/health`, `/readiness`, application version and DB schema before a release is accepted.
+- Split Bridge freshness controls: `PULL_CACHE_TTL_SECONDS` and `PULL_HINT_SECONDS`, with legacy `PULL_TTL_SECONDS` fallback compatibility.
+- Profile-wide Trakt rate-limit cooldown shared by reads and writes, persisted through the existing SQLite cache and honored across container restarts.
+- Per-profile authenticated Trakt write pacing and improved operator diagnostics for upstream endpoint and `Retry-After` values.
+- Public-facing documentation structure, contribution templates, issue forms, CI/release/license badges and pre-public Git-history audit tooling.
+
+### Changed
+- Production runtime image is reduced to a minimal Alpine runtime with a stripped Node executable and BusyBox healthcheck; the accepted image budget is `<= 122 MiB`.
+- Successful playback pause invalidates the Bridge pull cache for faster convergence.
+- Public freshness defaults are intentionally conservative at `300s`; HomeDocker accepted a measured optimized profile at `60s` without new upstream `429` during staged `300 -> 120 -> 60` canaries.
+- AIOStreams Watch State runtime settings remain at upstream defaults for the v1.0 baseline; no extra `WATCH_STATE_*` environment overrides are required.
+- Production guidance now prefers published GHCR release tags or immutable digests instead of local source builds.
+
+### Safety
+- DB schema remains `1`.
+- AIOStreams pull representation remains `watch-state-v0.3.6` and pull cache namespace remains `pull-state:v5:*`.
+- `PULL_IDENTITY_MODE=trakt` remains the recommended mode when native Trakt and AIOStreams are used in parallel.
+- Any Trakt `429` protects both read and write lanes for the same profile until the Retry-After window expires.
+- The exact published v0.9.2 digest passed release-workflow smoke testing and HomeDocker production cutover/restart acceptance with the dual-IMDb regression still clean.
+- Duplicate Trakt play-count entries observed with overlapping playback writers are tracked as a non-blocking post-v1.0 investigation rather than addressed with unsafe dedupe heuristics in this release.
+
+### Upgrade
+- Back up `bridge.db`, `.env`, compose and reverse-proxy configuration.
+- Pull the public GHCR image and preferably pin a release tag or immutable digest for production.
+- No DB migration or cache purge is required from v0.5.0.
+- Verify `/health`, `/readiness`, connected profile state, watched/resume behavior and the running image reference after recreation and one restart.
+- For deterministic rollback, record the previous image tag/digest before upgrading.
+
 ## [0.5.0] - 2026-10-01
 
 ### Added
