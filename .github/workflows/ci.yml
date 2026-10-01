@@ -29,6 +29,21 @@ jobs:
       - name: Build production container
         run: docker build -t homedocker-trakt-bridge:ci .
 
+      - name: Enforce runtime image-size budget
+        shell: bash
+        run: |
+          set -euo pipefail
+          size=$(docker image inspect homedocker-trakt-bridge:ci --format '{{.Size}}')
+          budget=$((122 * 1024 * 1024))
+          python3 - "$size" "$budget" <<'PY'
+          import sys
+          size,budget=map(int,sys.argv[1:3])
+          print(f"IMAGE_SIZE_MIB={size/1024/1024:.2f}")
+          print(f"IMAGE_BUDGET_MIB={budget/1024/1024:.2f}")
+          if size > budget:
+              raise SystemExit("runtime image exceeds CI size budget")
+          PY
+
       - name: Smoke-test health and readiness
         shell: bash
         run: |

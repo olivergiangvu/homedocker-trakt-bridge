@@ -139,7 +139,7 @@ async function route(req, res, ctx) {
     const [, profileId, addonKey] = manifestMatch;
     requireAddonKey(config, db, profileId, addonKey);
     if (req.method !== 'GET') return methodNotAllowed(res);
-    return sendJson(res, 200, buildManifest(profileId, config.pullTtlSeconds));
+    return sendJson(res, 200, buildManifest(profileId, config.pullHintSeconds ?? config.pullTtlSeconds));
   }
 
   const pullMatch = path.match(/^\/u\/([a-f0-9]{24})\/([A-Za-z0-9_-]{30,})\/watch_state\/pull\.json$/);
@@ -195,7 +195,8 @@ async function processPull(res, { profileId, since, db, trakt, config }) {
   const eventId = `pull|${since || 'initial'}`;
   const now = Date.now();
   const cacheState = getPullCache(db, profileId);
-  const cached = cachedPullPayload(cacheState.entry, since, now, config.pullTtlSeconds);
+  const cacheTtlSeconds = config.pullCacheTtlSeconds ?? config.pullTtlSeconds;
+  const cached = cachedPullPayload(cacheState.entry, since, now, cacheTtlSeconds);
 
   if (cached) {
     const detail = pullDetail(cached, {
@@ -311,7 +312,7 @@ async function processPush(res, { profileId, body, db, trakt, config }) {
 
 export function invalidatesPullCache(result) {
   if (result?.identityAlias) return true;
-  return ['history:add', 'history:remove', 'history:bulk-add', 'history:bulk-remove', 'watchlist:add', 'watchlist:remove', 'scrobble:stop'].includes(result?.action);
+  return ['history:add', 'history:remove', 'history:bulk-add', 'history:bulk-remove', 'watchlist:add', 'watchlist:remove', 'scrobble:pause', 'scrobble:stop'].includes(result?.action);
 }
 
 function requireAdmin(url, config) {
@@ -357,7 +358,6 @@ function renderProfile(res, { config, db }, profileId, setupKey, eventFilter = '
   const recent = summarizeRecentEvents(db.recentEvents(profileId, 100), 40);
   const filtered = filterOperationalEvents(recent, eventFilter).slice(0, 18);
   const selectedFilter = ['all', 'errors', 'pull', 'playback', 'ignored'].includes(eventFilter) ? eventFilter : 'all';
-
   const events = filtered.map((e) => {
     const statusClass = e.displayStatus === 'retrying'
       ? 'bad'
@@ -453,7 +453,7 @@ function renderProfile(res, { config, db }, profileId, setupKey, eventFilter = '
           <h3>Capabilities</h3>
           <p><strong>Push:</strong> <code>start</code> · <code>pause</code> · <code>stop</code> · <code>played</code> · <code>unplayed</code> · <code>watchlisted</code> · <code>unwatchlisted</code> · <code>bulk=true</code></p>
           <p><strong>Pull:</strong> <code>items</code> · <code>watched</code> · <code>watchlist</code> · identity <code>${escapeHtml(config.pullIdentityMode)}</code> · alias-aware counts · safe next-up hints</p>
-          <p class="hint">Sub-1% scrobbles are ignored before Trakt · bulk single-echo suppression ${escapeHtml(config.bulkSingleDedupeSeconds)}s · cache TTL ${escapeHtml(config.pullTtlSeconds)}s · display timezone ${escapeHtml(config.displayTimeZone)}</p>
+          <p class="hint">Sub-1% scrobbles are ignored before Trakt · bulk single-echo suppression ${escapeHtml(config.bulkSingleDedupeSeconds)}s · cache TTL ${escapeHtml(config.pullCacheTtlSeconds ?? config.pullTtlSeconds)}s · manifest hint ${escapeHtml(config.pullHintSeconds ?? config.pullTtlSeconds)}s · display timezone ${escapeHtml(config.displayTimeZone)}</p>
         </div>
       </div>
     </details>

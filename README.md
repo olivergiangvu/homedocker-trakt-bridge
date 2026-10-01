@@ -4,7 +4,7 @@ A self-hosted bridge between **AIOStreams `watch_state` v2** and **Trakt**.
 
 It lets Jellyfin-compatible clients use AIOStreams as their playback/state surface while keeping Trakt as the canonical watched/resume history source.
 
-**Current release-candidate line: v0.9.0.**
+**Current release-candidate line: v0.9.1.**
 
 ## What this project does
 
@@ -69,11 +69,15 @@ docker compose up -d
 
 Set at least the Trakt credentials, bridge secrets and public HTTPS URL in `.env`.
 
-Recommended HomeDocker setting:
+Recommended HomeDocker settings:
 
 ```env
 PULL_IDENTITY_MODE=trakt
+PULL_CACHE_TTL_SECONDS=60
+PULL_HINT_SECONDS=60
 ```
+
+`PULL_CACHE_TTL_SECONDS` controls Bridge-side unchanged-state caching. `PULL_HINT_SECONDS` is advertised to AIOStreams as the pull TTL hint, so freshness can be tuned independently without coupling both layers to one value.
 
 For exact release reproducibility, `TRAKT_BRIDGE_IMAGE` can be pinned to an immutable GHCR digest instead of a semver tag.
 
@@ -110,8 +114,9 @@ The pre-1.0 RC line treats the published container as the release artifact:
 - the exact pushed image digest is pulled and smoke-tested before the release job completes
 - release images include SBOM and provenance metadata
 - the Node base image is digest-pinned and monitored by Dependabot
+- CI enforces the accepted runtime-image size budget
 
-See [`docs/releases/v0.9.0.md`](docs/releases/v0.9.0.md) for the final v1.0 gate.
+See [`docs/releases/v0.9.1.md`](docs/releases/v0.9.1.md) for the performance/freshness RC acceptance and [`docs/releases/v0.9.0.md`](docs/releases/v0.9.0.md) for the release-artifact gate introduced by the previous RC.
 
 ## Documentation
 
