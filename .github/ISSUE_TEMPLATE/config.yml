@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Setup and configuration guide
+    url: https://github.com/olivergiangvu/homedocker-trakt-bridge/blob/main/docs/SETUP.md
+    about: Start here for install, connection and first-run questions.
+  - name: Troubleshooting guide
+    url: https://github.com/olivergiangvu/homedocker-trakt-bridge/blob/main/docs/TROUBLESHOOTING.md
+    about: Check known sync, identity and client issues before opening a bug.
+  - name: Security policy
+    url: https://github.com/olivergiangvu/homedocker-trakt-bridge/blob/main/SECURITY.md
+    about: Use the security policy instead of a public issue for sensitive vulnerabilities.
