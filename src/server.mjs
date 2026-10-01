@@ -384,15 +384,6 @@ function renderProfile(res, { config, db }, profileId, setupKey, eventFilter = '
   const authoritativeTime = operational?.sync?.lastAuthoritativePullAt
     ? formatEventTime(operational.sync.lastAuthoritativePullAt, config.displayTimeZone)
     : 'Never';
-  const aliases = operational?.identity?.aliases || [];
-  const aliasRows = aliases.slice(0, 12).map((alias) => `
-    <tr>
-      <td><code>${escapeHtml(alias.traktShowId)}</code></td>
-      <td><code>${escapeHtml(alias.traktImdb || '—')}</code></td>
-      <td><code>${escapeHtml(alias.preferredMetaId || '—')}</code></td>
-      <td><code>${escapeHtml(alias.effectivePullMetaId || '—')}</code></td>
-    </tr>
-  `).join('') || '<tr><td colspan="4" class="muted">No learned IMDb aliases.</td></tr>';
 
   const filterLink = (name, label) => `<a class="filter ${selectedFilter === name ? 'active' : ''}" href="/u/${profileId}/setup?key=${encodeURIComponent(setupKey)}&events=${name}">${label}</a>`;
   const activeErrors = Number(operational?.errors?.active || 0);
@@ -406,6 +397,16 @@ function renderProfile(res, { config, db }, profileId, setupKey, eventFilter = '
       <div class="row"><h1 style="margin-right:auto">${escapeHtml(p.name)}</h1><span class="badge">v${APP_VERSION}</span><span class="badge ${healthy ? 'ok' : 'warn'}">${healthy ? 'Healthy' : 'Attention'}</span></div>
       <div class="hero-meta"><span class="${connected ? 'ok' : 'bad'}">● ${connected ? 'Trakt connected' : 'Trakt disconnected'}</span><span class="muted">·</span><span class="muted">AIOStreams watch_state v2</span></div>
       <div class="row hero-actions"><a class="btn" href="/u/${profileId}/oauth/start?key=${encodeURIComponent(setupKey)}">${connected ? 'Reconnect Trakt' : 'Connect Trakt'}</a>${connected ? `<form method="post" action="/u/${profileId}/disconnect?key=${encodeURIComponent(setupKey)}"><button class="btn bad" type="submit">Disconnect</button></form>` : ''}</div>
+    </div>
+
+    <div class="card manifest-card">
+      <div class="manifest-kicker">AIOStreams connection</div>
+      <div class="row"><h2 style="margin-right:auto">Manifest URL</h2><span class="badge">credential</span></div>
+      <p class="muted">Copy this URL into AIOStreams to connect this Trakt profile.</p>
+      <div class="manifest-copy-row">
+        <input id="manifest-url" class="manifest-input" readonly value="${escapeHtml(manifestUrl)}" aria-label="AIOStreams manifest URL">
+        <button class="btn copy-btn" type="button" onclick="const el=document.getElementById('manifest-url');navigator.clipboard.writeText(el.value).then(()=>{const t=this.textContent;this.textContent='Copied';setTimeout(()=>this.textContent=t,1200)}).catch(()=>{el.select();document.execCommand('copy')})">Copy</button>
+      </div>
     </div>
 
     <div class="card">
@@ -436,11 +437,6 @@ function renderProfile(res, { config, db }, profileId, setupKey, eventFilter = '
       <div class="events-wrap"><table class="events-table"><thead><tr><th class="col-time">Time</th><th class="col-event">Event / ID</th><th class="col-status">Status</th><th>Summary</th></tr></thead><tbody>${events}</tbody></table></div>
     </div>
 
-    <div class="card">
-      <div class="row"><h2 style="margin-right:auto">Identity</h2><span class="badge">${escapeHtml(aliases.length)} learned alias${aliases.length === 1 ? '' : 'es'}</span></div>
-      <table class="compact"><thead><tr><th>Trakt show</th><th>Trakt IMDb</th><th>Learned AIOStreams IMDb</th><th>Effective pull</th></tr></thead><tbody>${aliasRows}</tbody></table>
-    </div>
-
     <details class="card tech">
       <summary>Technical details</summary>
       <div class="tech-body">
@@ -454,16 +450,10 @@ function renderProfile(res, { config, db }, profileId, setupKey, eventFilter = '
         </div>
 
         <div class="tech-section">
-          <h3>AIOStreams manifest</h3>
-          <p class="url"><code>${escapeHtml(manifestUrl)}</code></p>
-          <p class="hint">Credential URL · pull identity <code>${escapeHtml(config.pullIdentityMode)}</code> · cache TTL ${escapeHtml(config.pullTtlSeconds)}s</p>
-        </div>
-
-        <div class="tech-section">
           <h3>Capabilities</h3>
           <p><strong>Push:</strong> <code>start</code> · <code>pause</code> · <code>stop</code> · <code>played</code> · <code>unplayed</code> · <code>watchlisted</code> · <code>unwatchlisted</code> · <code>bulk=true</code></p>
           <p><strong>Pull:</strong> <code>items</code> · <code>watched</code> · <code>watchlist</code> · identity <code>${escapeHtml(config.pullIdentityMode)}</code> · alias-aware counts · safe next-up hints</p>
-          <p class="hint">Sub-1% scrobbles are ignored before Trakt · bulk single-echo suppression ${escapeHtml(config.bulkSingleDedupeSeconds)}s · display timezone ${escapeHtml(config.displayTimeZone)}</p>
+          <p class="hint">Sub-1% scrobbles are ignored before Trakt · bulk single-echo suppression ${escapeHtml(config.bulkSingleDedupeSeconds)}s · cache TTL ${escapeHtml(config.pullTtlSeconds)}s · display timezone ${escapeHtml(config.displayTimeZone)}</p>
         </div>
       </div>
     </details>
