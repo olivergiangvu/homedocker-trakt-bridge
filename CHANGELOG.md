@@ -9,15 +9,18 @@ All notable changes to HomeDocker Trakt Bridge are documented here.
 - Fail-closed protection when the database schema is newer than the running binary.
 - `GET /readiness` for operational readiness: database query, supported schema and at least one connected Trakt profile.
 - Authenticated `GET /status?key=<ADMIN_KEY>` operator diagnostics.
-- Production dashboard cards for authority, pull identity, schema, sync counts, unresolved/historical errors, AIOMetadata role and learned alias/effective pull identity.
-- Recent-event filters: All, Errors, Pull, Playback and Ignored.
+- Operator dashboard with connection health, prominent AIOStreams manifest copy action, sync health, active-error status and concise recent-event summaries.
+- Recent-event filters: All, Errors, Pull, Playback and Ignored, with raw payloads collapsed behind `Raw`.
 - CI container build plus `/health` and `/readiness` smoke tests on every push/PR.
 - Tag-based release workflow that publishes an amd64 GHCR image and creates a GitHub Release after checks/tests pass.
-- Dedicated production runbook and AIOMetadata authority documentation.
+- Task-oriented documentation: Setup, Operations, Architecture, Integrations, Troubleshooting and Development.
 
 ### Changed
 - App/package/example image/User-Agent are synchronized to v0.4.0.
-- Setup UI is promoted from a connection/event page to an operational dashboard.
+- The manifest URL is promoted to a first-class dashboard action with a dedicated Copy button.
+- The dashboard separates the latest poll from the last authoritative watched/watchlist sync.
+- Operational health uses a recent active-error window; old historical errors remain available without keeping the dashboard in `Attention` indefinitely.
+- Low-level identity-alias evidence is removed from the normal operator UI and remains available through `/status`, the database and developer documentation.
 - Runtime startup logs include the active DB schema and applied migration summary.
 - Graceful shutdown closes SQLite explicitly.
 - Canonical HomeDocker authority model is documented as: Trakt history authority, AIOStreams Jellyfin state surface, AIOMetadata metadata + secondary-tracker write/fan-out.
