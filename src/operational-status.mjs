@@ -28,9 +28,12 @@ export function buildReadiness({ db }) {
 
   const schemaOk = schemaVersion === SCHEMA_VERSION;
   const ready = dbOk && schemaOk && connectedProfiles > 0;
+  const status = ready
+    ? 'ready'
+    : (!dbOk || !schemaOk ? 'error' : 'setup_required');
 
   return {
-    status: ready ? 'ready' : 'setup_required',
+    status,
     app: APP_NAME,
     version: APP_VERSION,
     ready,
