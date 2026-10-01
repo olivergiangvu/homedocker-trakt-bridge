@@ -4,7 +4,7 @@ A self-hosted bridge between **AIOStreams `watch_state` v2** and **Trakt**.
 
 It lets Jellyfin-compatible clients use AIOStreams as their playback/state surface while keeping Trakt as the canonical watched/resume history source.
 
-**Current development release: v0.4.0.**
+**Current development release: v0.5.0.**
 
 ## What this project does
 
@@ -29,11 +29,13 @@ The bridge supports:
 - watched-state pull back into AIOStreams
 - movie/show watchlist sync
 - bulk season/show watched updates
-- retry-safe event processing
-- restart-safe pull cache
-- Trakt rate-limit / transient-error fallback
+- retry-safe and restart-safe event processing
+- restart-safe pull cache with bounded stale fallback
+- Trakt rate-limit / transient-error recovery
+- fail-closed authoritative pulls when upstream state is incomplete
+- automatic OAuth recovery state when Trakt requires reconnect
 - `PULL_IDENTITY_MODE=trakt` for native-Trakt + AIOStreams coexistence
-- operational health, readiness and status endpoints
+- operational health, readiness and authenticated status endpoints
 - a small operator dashboard with recent-event diagnostics
 
 ## HomeDocker authority model
@@ -83,6 +85,8 @@ The container listens on port `7000`; the production compose binds it to `127.0.
 | `/setup?key=<ADMIN_KEY>` | profile administration |
 
 The dashboard keeps operational information visible and leaves low-level diagnostics in the status API and developer documentation.
+
+When Trakt rejects a refresh token with OAuth `invalid_grant`, v0.5.0 clears the unusable local credentials and exposes `reconnect_required` through `/status`; `/readiness` returns `setup_required` until the profile is reconnected.
 
 ## Documentation
 

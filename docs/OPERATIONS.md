@@ -38,9 +38,11 @@ Readiness checks:
 
 - SQLite query succeeds
 - DB schema is supported by the running binary
-- at least one profile has Trakt tokens
+- at least one profile has usable Trakt tokens
 
 A configured production instance should return HTTP `200` with `ready=true`.
+
+If Trakt rejects a refresh token with OAuth `invalid_grant`, v0.5.0 clears the unusable local credentials. Readiness then returns `setup_required` until the profile is reconnected.
 
 ### Authenticated status
 
@@ -51,6 +53,13 @@ GET /status?key=<ADMIN_KEY>
 This is the machine-readable operator diagnostic surface.
 
 It exposes operational state but not OAuth tokens, bridge secrets or addon credentials.
+
+For each profile, v0.5.0 adds:
+
+```text
+profile.connectionState = connected | disconnected | reconnect_required
+profile.reconnectRequired = true | false
+```
 
 The web dashboard intentionally shows less information than `/status`.
 
@@ -107,6 +116,30 @@ Before an upgrade:
 
 Do not purge AIOStreams or Bridge cache unless the release notes explicitly require it.
 
+### v0.4.0 -> v0.5.0
+
+v0.5.0 keeps:
+
+```text
+DB schema              1
+pull representation    watch-state-v0.3.6
+pull cache namespace   pull-state:v5:*
+PULL_IDENTITY_MODE     trakt (recommended)
+```
+
+No DB migration and no pull-cache purge is required.
+
+The main runtime change is recovery semantics around Trakt authorization:
+
+```text
+OAuth refresh invalid_grant
+        -> local unusable tokens are cleared
+        -> auth state becomes reconnect_required
+        -> /readiness becomes setup_required
+        -> operator reconnects Trakt
+        -> auth state returns to connected
+```
+
 ### v0.3.7 -> v0.4.0
 
 The first v0.4.0 startup migrates:
@@ -119,9 +152,26 @@ No watch-state representation change is introduced by this migration.
 
 `PULL_IDENTITY_MODE=trakt` remains unchanged.
 
+## v0.5.0 canary checklist
+
+Before tagging v0.5.0, deploy the release candidate to HomeDocker and verify:
+
+1. `/health` returns `version=0.5.0`
+2. `/readiness` returns HTTP `200`, `ready=true`, `schemaVersion=1`
+3. `/status` reports `profile.connectionState=connected`
+4. AIOStreams authoritative pull remains on Trakt spelling for the known dual-IMDb regression fixture
+5. native Trakt + AIOStreams stay enabled in Strand with no duplicate Continue Watching card
+6. recent pull/history/watchlist writes complete without new active errors
+7. restart the container once and confirm processed-event idempotency and persisted pull cache remain intact
+8. confirm manifest URL and operator dashboard remain usable
+
+A canary deploy must not intentionally revoke the production Trakt grant just to exercise `invalid_grant`; that behavior is covered by the integration suite.
+
 ## Rollback
 
 If a release changes DB schema, restore the matching pre-upgrade database when rolling back to an older binary.
+
+v0.5.0 does not change schema 1, so rollback to v0.4.0 can reuse the same DB as long as no later schema-changing release has run.
 
 For v0.4.0 -> v0.3.7 rollback:
 
@@ -149,6 +199,8 @@ retrying   recent unresolved retry chain
 error      raw historical error row
 ```
 
+Auth state transitions use the stable event id `auth|state`, so a reconnect can be represented as recovery from a prior reconnect-required state instead of a permanent unresolved error.
+
 The DB retains historical failures even after the underlying bug is fixed. Use the dashboard's active-error window for current health.
 
 ## Logs
@@ -169,10 +221,10 @@ docker logs --tail 150 trakt-bridge
 
 Before creating a release tag:
 
-1. CI passes syntax checks and unit tests
+1. CI passes syntax checks and unit/integration tests
 2. CI builds the production container
 3. CI smoke-tests `/health` and `/readiness`
-4. production deployment passes a short burn-in
+4. production canary passes the checklist above
 5. dashboard and manifest UX are verified
 6. release notes / changelog are current
 

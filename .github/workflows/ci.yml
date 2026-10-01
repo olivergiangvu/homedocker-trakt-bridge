@@ -24,6 +24,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          expected_version=$(node -p "require('./package.json').version")
+          expected_schema=$(node --input-type=module -e "import { SCHEMA_VERSION } from './src/migrations.mjs'; process.stdout.write(String(SCHEMA_VERSION))")
+
           docker run -d --name trakt-bridge-ci \
             -p 127.0.0.1:17000:7000 \
             -e PUBLIC_BASE_URL=http://127.0.0.1:17000 \
@@ -44,9 +48,9 @@ jobs:
             sleep 1
           done
 
-          grep -q '"version":"0.4.0"' /tmp/health.json
+          grep -q "\"version\":\"${expected_version}\"" /tmp/health.json
 
           code=$(curl -sS -o /tmp/readiness.json -w '%{http_code}' http://127.0.0.1:17000/readiness)
           test "$code" = "503"
           grep -q '"status":"setup_required"' /tmp/readiness.json
-          grep -q '"schemaVersion":1' /tmp/readiness.json
+          grep -q "\"schemaVersion\":${expected_schema}" /tmp/readiness.json
