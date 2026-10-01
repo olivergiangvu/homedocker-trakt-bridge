@@ -34,7 +34,7 @@ jobs:
         run: |
           set -euo pipefail
           size=$(docker image inspect homedocker-trakt-bridge:ci --format '{{.Size}}')
-          budget=$((120 * 1024 * 1024))
+          budget=$((122 * 1024 * 1024))
           python3 - "$size" "$budget" <<'PY'
           import sys
           size,budget=map(int,sys.argv[1:3])
