@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 export const APP_NAME = 'HomeDocker Trakt Bridge';
-export const APP_VERSION = '0.9.0';
+export const APP_VERSION = '0.9.1';
 
 function requireEnv(name) {
   const value = process.env[name]?.trim();
@@ -13,6 +13,16 @@ function intEnv(name, fallback, min, max) {
   const value = Number(process.env[name] || fallback);
   if (!Number.isInteger(value) || value < min || value > max) {
     throw new Error(`${name} must be an integer between ${min} and ${max}`);
+  }
+  return value;
+}
+
+function intEnvCompat(primary, legacy, fallback, min, max) {
+  const raw = process.env[primary] ?? (legacy ? process.env[legacy] : undefined) ?? fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < min || value > max) {
+    const suffix = legacy ? ` (legacy ${legacy} is also accepted)` : '';
+    throw new Error(`${primary} must be an integer between ${min} and ${max}${suffix}`);
   }
   return value;
 }
@@ -33,6 +43,8 @@ export function loadConfig() {
 
   const dataDir = (process.env.DATA_DIR || '/app/data').trim();
   const port = intEnv('PORT', 7000, 1, 65535);
+  const pullCacheTtlSeconds = intEnvCompat('PULL_CACHE_TTL_SECONDS', 'PULL_TTL_SECONDS', 60, 15, 3600);
+  const pullHintSeconds = intEnvCompat('PULL_HINT_SECONDS', null, pullCacheTtlSeconds, 15, 3600);
 
   return {
     publicBaseUrl,
@@ -46,7 +58,11 @@ export function loadConfig() {
     port,
     logLevel: (process.env.LOG_LEVEL || 'info').toLowerCase(),
     displayTimeZone: (process.env.DISPLAY_TIMEZONE || 'Asia/Ho_Chi_Minh').trim(),
-    pullTtlSeconds: intEnv('PULL_TTL_SECONDS', 900, 30, 3600),
+    pullCacheTtlSeconds,
+    pullHintSeconds,
+    // Compatibility alias for older tests/local tooling. Runtime code uses the
+    // split cache TTL + manifest hint fields above.
+    pullTtlSeconds: pullCacheTtlSeconds,
     pullStaleIfErrorSeconds: intEnv('PULL_STALE_IF_ERROR_SECONDS', 3600, 60, 86400),
     pullMaxPages: intEnv('PULL_MAX_PAGES', 500, 1, 1000),
     bulkSingleDedupeSeconds: intEnv('BULK_SINGLE_DEDUPE_SECONDS', 300, 30, 1800),
