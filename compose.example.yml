@@ -1,13 +1,13 @@
 services:
   trakt-bridge:
-    image: ${TRAKT_BRIDGE_IMAGE:-ghcr.io/olivergiangvu/homedocker-trakt-bridge:0.9.1}
+    image: ${TRAKT_BRIDGE_IMAGE:-ghcr.io/olivergiangvu/homedocker-trakt-bridge:latest}
     container_name: trakt-bridge
     restart: unless-stopped
     env_file:
       - .env
     volumes:
       - trakt_bridge_data:/app/data
-    # Host nginx terminates TLS; the application port stays loopback-only.
+    # Terminate HTTPS at the host reverse proxy. Keep the app loopback-only.
     ports:
       - "127.0.0.1:7000:7000"
 
