@@ -14,6 +14,10 @@ test('identity alias learning invalidates pull cache even when Trakt action is p
   }), true);
 });
 
-test('ordinary playback pause without alias change keeps pull cache', () => {
-  assert.equal(invalidatesPullCache({ action: 'scrobble:pause' }), false);
+test('successful playback pause invalidates pull cache for immediate convergence', () => {
+  assert.equal(invalidatesPullCache({ action: 'scrobble:pause' }), true);
+});
+
+test('start scrobble alone does not invalidate pull cache', () => {
+  assert.equal(invalidatesPullCache({ action: 'scrobble:start' }), false);
 });
