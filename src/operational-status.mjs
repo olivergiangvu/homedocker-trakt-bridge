@@ -29,6 +29,17 @@ function compactAction(action) {
   return labels[action] || action || 'Completed';
 }
 
+function summarizeTraktError(raw) {
+  const status = raw.match(/^trakt_(\d+):/)?.[1];
+  if (!status) return null;
+  const endpoint = raw.match(/\bendpoint=([^\s]+)/)?.[1] || null;
+  const retryAfter = raw.match(/\bretry_after=([^\s]+)/)?.[1] || null;
+  const parts = [`Trakt ${status}`];
+  if (endpoint) parts.push(endpoint);
+  if (retryAfter) parts.push(`retry ${retryAfter}s`);
+  return parts.join(' · ');
+}
+
 export function summarizeEventDetail(row) {
   const detail = parseJson(row?.detail);
 
@@ -54,6 +65,8 @@ export function summarizeEventDetail(row) {
     if (detail.watchlistItems != null) parts.push(`watchlist ${detail.watchlistItems}`);
     if (detail.ageSeconds != null) parts.push(`age ${detail.ageSeconds}s`);
     if (detail.upstreamError) parts.push(detail.upstreamError);
+    if (detail.upstreamPath) parts.push(detail.upstreamPath);
+    if (detail.retryAfter) parts.push(`retry ${detail.retryAfter}s`);
     return parts.join(' · ');
   }
 
@@ -66,8 +79,8 @@ export function summarizeEventDetail(row) {
   if (detail?.action) return compactAction(detail.action);
 
   const raw = String(row?.detail || '');
-  const match = raw.match(/^trakt_(\d+):.*?(?:endpoint=([^\s]+))?$/);
-  if (match) return `Trakt ${match[1]}${match[2] ? ` · ${match[2]}` : ''}`;
+  const traktError = summarizeTraktError(raw);
+  if (traktError) return traktError;
   return raw || '—';
 }
 
