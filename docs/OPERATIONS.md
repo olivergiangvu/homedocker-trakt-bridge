@@ -14,6 +14,7 @@ bridge.db is backed up
 BRIDGE_SECRET_KEY is backed up
 ADMIN_KEY is treated as a credential
 PULL_IDENTITY_MODE=trakt
+production runs a published GHCR image
 ```
 
 ## Health endpoints
@@ -42,7 +43,7 @@ Readiness checks:
 
 A configured production instance should return HTTP `200` with `ready=true`.
 
-If Trakt rejects a refresh token with OAuth `invalid_grant`, v0.5.0 clears the unusable local credentials. Readiness then returns `setup_required` until the profile is reconnected.
+If Trakt rejects a refresh token with OAuth `invalid_grant`, the bridge clears the unusable local credentials. Readiness then returns `setup_required` until the profile is reconnected.
 
 ### Authenticated status
 
@@ -54,14 +55,12 @@ This is the machine-readable operator diagnostic surface.
 
 It exposes operational state but not OAuth tokens, bridge secrets or addon credentials.
 
-For each profile, v0.5.0 adds:
+Profile connection state is reported as:
 
 ```text
 profile.connectionState = connected | disconnected | reconnect_required
 profile.reconnectRequired = true | false
 ```
-
-The web dashboard intentionally shows less information than `/status`.
 
 ## Dashboard interpretation
 
@@ -89,16 +88,39 @@ host nginx configuration for the bridge
 
 For SQLite, use an online SQLite backup rather than copying an actively written WAL database blindly.
 
-The database contains:
-
-- profiles
-- encrypted OAuth tokens
-- idempotency records
-- pull cache
-- learned identity evidence
-- event history
+The database contains profiles, encrypted OAuth tokens, idempotency records, pull cache, learned identity evidence and event history.
 
 `BRIDGE_SECRET_KEY` is required to decrypt stored OAuth tokens after restore.
+
+## Release-image deployment
+
+From v0.9.0 onward, production deployment should use the published GHCR artifact rather than rebuilding source on the server.
+
+The normal flow is:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+The image is selected by:
+
+```env
+TRAKT_BRIDGE_IMAGE=ghcr.io/olivergiangvu/homedocker-trakt-bridge:0.9.0
+```
+
+For immutable deployment, replace the tag with the exact release digest:
+
+```env
+TRAKT_BRIDGE_IMAGE=ghcr.io/olivergiangvu/homedocker-trakt-bridge@sha256:<digest>
+```
+
+After a pull, record the resolved image ID/digest before cutover:
+
+```bash
+docker image inspect "$TRAKT_BRIDGE_IMAGE" \
+  --format '{{json .RepoDigests}}'
+```
 
 ## Upgrade procedure
 
@@ -106,19 +128,21 @@ Before an upgrade:
 
 1. verify the current service is healthy
 2. back up DB + config
-3. sync the new source
-4. build the new image while the old container is still running
-5. recreate the service
-6. verify `/health`
-7. verify `/readiness`
-8. verify DB schema and profile count
-9. verify the dashboard
+3. update `TRAKT_BRIDGE_IMAGE` to the target release tag or digest
+4. pull the target release image while the old container is still running
+5. inspect the pulled digest
+6. recreate the service
+7. verify `/health`
+8. verify `/readiness`
+9. verify DB schema, profile count and connection state
+10. verify authoritative sync counts and dashboard
+11. restart once during canary acceptance
 
 Do not purge AIOStreams or Bridge cache unless the release notes explicitly require it.
 
-### v0.4.0 -> v0.5.0
+### v0.5.0 -> v0.9.0
 
-v0.5.0 keeps:
+v0.9.0 keeps:
 
 ```text
 DB schema              1
@@ -129,57 +153,46 @@ PULL_IDENTITY_MODE     trakt (recommended)
 
 No DB migration and no pull-cache purge is required.
 
-The main runtime change is recovery semantics around Trakt authorization:
+The significant operational change is deployment parity: production consumes the same GHCR artifact that the release workflow publishes and smoke-tests.
 
-```text
-OAuth refresh invalid_grant
-        -> local unusable tokens are cleared
-        -> auth state becomes reconnect_required
-        -> /readiness becomes setup_required
-        -> operator reconnects Trakt
-        -> auth state returns to connected
-```
+### v0.4.0 -> v0.5.0
+
+v0.5.0 kept schema 1 and added explicit `reconnect_required` handling for rejected OAuth refresh grants. No migration or cache purge was required.
 
 ### v0.3.7 -> v0.4.0
 
-The first v0.4.0 startup migrates:
+The first v0.4.0 startup migrated:
 
 ```text
 PRAGMA user_version 0 -> 1
 ```
 
-No watch-state representation change is introduced by this migration.
+No watch-state representation change was introduced by that migration.
 
-`PULL_IDENTITY_MODE=trakt` remains unchanged.
+## v0.9.0 RC checklist
 
-## v0.5.0 canary checklist
+Before tagging v0.9.0, use the checklist in [`releases/v0.9.0.md`](releases/v0.9.0.md).
 
-Before tagging v0.5.0, deploy the release candidate to HomeDocker and verify:
+The important addition is a two-stage artifact acceptance:
 
-1. `/health` returns `version=0.5.0`
-2. `/readiness` returns HTTP `200`, `ready=true`, `schemaVersion=1`
-3. `/status` reports `profile.connectionState=connected`
-4. AIOStreams authoritative pull remains on Trakt spelling for the known dual-IMDb regression fixture
-5. native Trakt + AIOStreams stay enabled in Strand with no duplicate Continue Watching card
-6. recent pull/history/watchlist writes complete without new active errors
-7. restart the container once and confirm processed-event idempotency and persisted pull cache remain intact
-8. confirm manifest URL and operator dashboard remain usable
+1. GitHub Release workflow must pull and run the exact pushed image digest successfully.
+2. HomeDocker must then pull and run the published GHCR artifact without a local build.
 
-A canary deploy must not intentionally revoke the production Trakt grant just to exercise `invalid_grant`; that behavior is covered by the integration suite.
+Only after both stages pass should the RC begin its v1.0 burn-in.
 
 ## Rollback
 
 If a release changes DB schema, restore the matching pre-upgrade database when rolling back to an older binary.
 
-v0.5.0 does not change schema 1, so rollback to v0.4.0 can reuse the same DB as long as no later schema-changing release has run.
+v0.5.0 and v0.9.0 both use schema 1, so rollback between them can reuse the same database as long as no later schema-changing release has run.
 
-For v0.4.0 -> v0.3.7 rollback:
+For artifact-based rollback:
 
-1. stop v0.4.0
-2. restore the pre-v0.4.0 `bridge.db`
-3. restore matching `.env` / compose if needed
-4. start the v0.3.7 image
-5. verify health and Trakt connection
+1. set `TRAKT_BRIDGE_IMAGE` to the previous release tag or exact digest
+2. `docker compose pull`
+3. recreate the service
+4. verify `/health`, `/readiness` and profile connection state
+5. verify authoritative sync counts and the client surface
 
 Do not run an older binary against a DB schema newer than it understands.
 
@@ -205,13 +218,7 @@ The DB retains historical failures even after the underlying bug is fixed. Use t
 
 ## Logs
 
-Container logs are appropriate for:
-
-- startup and migration information
-- uncaught request/upstream failures
-- runtime version and schema confirmation
-
-Example:
+Container logs are appropriate for startup/migration information, uncaught upstream failures and runtime version/schema confirmation.
 
 ```bash
 docker logs --tail 150 trakt-bridge
@@ -222,10 +229,19 @@ docker logs --tail 150 trakt-bridge
 Before creating a release tag:
 
 1. CI passes syntax checks and unit/integration tests
-2. CI builds the production container
-3. CI smoke-tests `/health` and `/readiness`
-4. production canary passes the checklist above
-5. dashboard and manifest UX are verified
-6. release notes / changelog are current
+2. CI validates production + development Compose configurations
+3. CI builds and smoke-tests the source image
+4. HomeDocker source canary passes when required
+5. release notes / changelog are current
 
-A `v*` tag triggers the release workflow, which builds the amd64 GHCR image and creates a GitHub Release.
+A `v*` tag triggers the release workflow. The workflow:
+
+1. reruns checks/tests
+2. builds and pushes the amd64 GHCR image
+3. publishes semver tags and `latest` for stable releases
+4. emits SBOM and provenance metadata
+5. pulls the exact pushed digest back from GHCR
+6. smoke-tests `/health` and `/readiness` from that digest
+7. creates or reuses the GitHub Release
+
+A release workflow is not considered successful unless the published-artifact smoke test passes.

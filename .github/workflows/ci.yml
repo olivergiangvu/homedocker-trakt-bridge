@@ -17,6 +17,15 @@ jobs:
       - run: npm run check
       - run: npm test
 
+      - name: Validate production and development Compose
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp .env.example .env
+          trap 'rm -f .env' EXIT
+          docker compose -f compose.example.yml config -q
+          docker compose -f compose.example.yml -f compose.dev.yml config -q
+
       - name: Build production container
         run: docker build -t homedocker-trakt-bridge:ci .
 
