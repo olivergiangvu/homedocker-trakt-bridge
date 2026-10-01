@@ -1,4 +1,4 @@
-# Upstream contracts used by v0.3.6
+# Upstream contracts used by v0.3.7
 
 Reviewed 2026-10-01.
 
@@ -9,7 +9,7 @@ Primary reference:
 - `Viren070/AIOStreams/packages/docs/content/docs/reference/addon-protocol/watch-state.mdx`
 - current protocol: `watchState.version = 2`
 
-v0.3.6 relies on these semantics:
+v0.3.7 relies on these semantics:
 
 - push event IDs are stable across retries;
 - push bodies carry `metaId`, `videoId`, and shared show/film `ids` when known;
@@ -144,7 +144,22 @@ AIOStreams stop + played:false   -> /scrobble/pause
 completed AIOStreams stop        -> /scrobble/stop
 ```
 
-Alias learning is based on the original AIOStreams `event=stop`, not the translated Trakt path, and runs only after successful upstream delivery.
+Production also confirmed Trakt rejects a scrobble at effectively zero progress with HTTP `422`. v0.3.7 therefore applies a minimum-progress guard before sending a scrobble:
+
+```text
+progress < 1%
+  start / pause / unfinished stop -> ignore + 204
+  explicit played stop           -> /sync/history add
+
+progress >= 1%
+  normal scrobble mapping applies
+```
+
+The 1% boundary is inclusive: exactly 1% remains eligible for scrobbling. The guard is local and creates no additional Trakt lookup.
+
+Because ignored events return success and are entered into the bridge's processed-event idempotency store, AIOStreams retries for the same stable event ID stop after the next delivery instead of repeatedly receiving an upstream-derived `422`.
+
+Alias learning is based on the original AIOStreams `event=stop`, not the translated Trakt path, and runs only after successful upstream delivery. A sub-1% ignored stop cannot teach an alias.
 
 ## Watchlist writes
 
@@ -199,13 +214,15 @@ state cursor schema: watch-state-v0.3.6
 
 `PULL_IDENTITY_MODE` participates in the state-version basis, so switching modes forces a fresh representation.
 
-For production upgrades from v0.3.5, remove persisted `pull-state:v5:*` rows once before the first v0.3.6 authoritative pull. Do not remove profile tokens or `identity-alias:v1:*` rows.
+v0.3.7 is push-only and intentionally retains the v0.3.6 pull schema and cache behavior. Upgrading v0.3.6 → v0.3.7 requires no pull-cache purge.
+
+For production upgrades directly from v0.3.5, the v0.3.6 one-time migration rule still applies: remove persisted `pull-state:v5:*` rows once before the first authoritative Trakt-preserving pull. Do not remove profile tokens or `identity-alias:v1:*` rows.
 
 ## Compatibility policy
 
-v0.3.6 supports:
+v0.3.7 supports:
 
-- playback scrobble push;
+- playback scrobble push with a fail-safe 1% minimum-progress boundary;
 - movie/episode watched push;
 - standard-numbered season/show bulk marks;
 - movie/show watchlist push + pull;
@@ -213,7 +230,7 @@ v0.3.6 supports:
 - bounded bulk/single duplicate reconciliation;
 - IMDb/TMDb/TVDb identity fallback and alias-aware watched counts;
 - persistent playback-learned IMDb-to-IMDb aliases keyed by stable Trakt show ID;
-- alias learning from successful AIOStreams episode stops, including unfinished stops translated to Trakt pause;
+- alias learning from successful AIOStreams episode stops, including unfinished stops translated to Trakt pause when progress is scrobble-eligible;
 - configurable Trakt-preserving or AIOStreams-preferred pull identity;
 - safe next-up forwarding when Trakt already supplied the exact next episode.
 
