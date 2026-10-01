@@ -54,9 +54,11 @@ This preserves Trakt's IMDb identity on state pulls and avoids creating a second
 
 ## Freshness controls
 
+The conservative public default is:
+
 ```env
-PULL_CACHE_TTL_SECONDS=60
-PULL_HINT_SECONDS=60
+PULL_CACHE_TTL_SECONDS=300
+PULL_HINT_SECONDS=300
 PULL_STALE_IF_ERROR_SECONDS=3600
 ```
 
@@ -64,7 +66,7 @@ PULL_STALE_IF_ERROR_SECONDS=3600
 - `PULL_HINT_SECONDS` is advertised to AIOStreams as the preferred pull freshness hint.
 - `PULL_STALE_IF_ERROR_SECONDS` allows a known matching state to remain available during temporary Trakt rate limits or upstream errors.
 
-Do not aggressively lower pull intervals unless you have measured your Trakt rate-limit behavior. The bridge includes rate-limit protection, but lower is not always faster end-to-end.
+Lower values such as 120 or 60 seconds can improve freshness in some deployments, but they should be staged and measured rather than copied blindly. AIOStreams has its own watch-state pull cadence, and Trakt can return `429` with a `Retry-After` window if reads or playback writes are too aggressive. The bridge protects that window, but avoiding the limit in the first place gives the best playback experience.
 
 ## Reverse proxy
 
