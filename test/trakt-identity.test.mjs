@@ -120,6 +120,7 @@ test('does not learn an alias from a plain pause event', async () => {
 
 test('pull rewrites a Trakt IMDb alias to the learned AIOStreams spelling', async () => {
   const client = fakeClient(async () => []);
+  client.config.pullIdentityMode = 'aiostreams';
   learnShowAlias(
     client.db,
     'profile-a',
