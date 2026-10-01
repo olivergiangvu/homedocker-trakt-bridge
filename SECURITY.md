@@ -20,6 +20,12 @@ Never publish or attach these values to issues, logs or screenshots:
 
 The manifest URL is a credential because it contains a profile-scoped addon key.
 
+## Before making a repository public
+
+Run `scripts/pre-public-audit.sh` from a full local clone. For deployment-specific checks, create a local `.pre-public-forbidden` file with one private hostname, IP, port, username or token fragment per line; the file is ignored by Git. Review every credential-shaped match before changing repository or package visibility.
+
+A passing helper script is not a substitute for GitHub secret scanning or a dedicated secret scanner.
+
 ## Reporting
 
 This repository is maintained primarily for the HomeDocker environment. Report a suspected vulnerability privately to the repository owner rather than opening a public issue containing exploit details or credentials.
