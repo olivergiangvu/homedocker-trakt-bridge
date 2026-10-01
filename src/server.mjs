@@ -8,6 +8,7 @@ import { buildManifest, planEvent, validatePushEvent } from './watch-state.mjs';
 import { formatEventTime, summarizeRecentEvents } from './diagnostics.mjs';
 import { cachedPullPayload, makePullCacheEntry, stalePullPayload } from './pull-cache.mjs';
 import { coveredByRecentBulk, rememberBulkCoverage } from './bulk-dedupe.mjs';
+import { buildProfileOperationalStatus, buildReadiness, filterOperationalEvents } from './operational-status.mjs';
 
 const inflight = new Map();
 const pullInflight = new Map();
@@ -43,8 +44,28 @@ async function route(req, res, ctx) {
     return sendJson(res, 200, { status: 'ok', app: APP_NAME, version: APP_VERSION });
   }
 
+  if (req.method === 'GET' && path === '/readiness') {
+    const readiness = buildReadiness({ db });
+    return sendJson(res, readiness.ready ? 200 : 503, readiness);
+  }
+
+  if (req.method === 'GET' && path === '/status') {
+    requireAdmin(url, config);
+    const profiles = db.listProfiles().map((profile) => buildProfileOperationalStatus({ db, config, profileId: profile.id }));
+    return sendJson(res, 200, {
+      readiness: buildReadiness({ db }),
+      profiles,
+    });
+  }
+
   if (req.method === 'GET' && path === '/') {
-    return sendHtml(res, 200, page(APP_NAME, `<div class="card"><h1>${APP_NAME}</h1><p>Self-hosted AIOStreams <code>watch_state v2</code> ↔ Trakt bridge.</p><p class="muted">v${APP_VERSION}</p></div>`));
+    return sendHtml(res, 200, page(APP_NAME, `
+      <div class="card">
+        <h1>${APP_NAME}</h1>
+        <p>Self-hosted AIOStreams <code>watch_state v2</code> ↔ Trakt bridge.</p>
+        <div class="row"><span class="badge">v${APP_VERSION}</span><span class="badge">production hardening</span></div>
+      </div>
+    `));
   }
 
   if (path === '/setup') {
@@ -78,7 +99,7 @@ async function route(req, res, ctx) {
     const profileId = setupMatch[1];
     requireSetupKey(url, config, db, profileId);
     if (req.method !== 'GET') return methodNotAllowed(res);
-    return renderProfile(res, ctx, profileId, url.searchParams.get('key'));
+    return renderProfile(res, ctx, profileId, url.searchParams.get('key'), url.searchParams.get('events') || 'all');
   }
 
   const oauthStartMatch = path.match(/^\/u\/([a-f0-9]{24})\/oauth\/start$/);
@@ -307,36 +328,120 @@ function requireAddonKey(config, db, profileId, candidate) {
 }
 
 function renderAdmin(res, { config, db }, adminKey) {
+  const readiness = buildReadiness({ db });
   const profiles = db.listProfiles();
   const rows = profiles.map((p) => {
     const setupKey = deriveProfileKey(config.bridgeSecret, 'setup', p.id);
     return `<tr><td>${escapeHtml(p.name)}</td><td>${p.connected_at ? '<span class="ok">Connected</span>' : '<span class="bad">Not connected</span>'}</td><td><a class="btn secondary" href="/u/${p.id}/setup?key=${encodeURIComponent(setupKey)}">Open</a></td></tr>`;
   }).join('') || '<tr><td colspan="3" class="muted">No profiles yet.</td></tr>';
   return sendHtml(res, 200, page('Bridge setup', `
-    <div class="card"><h1>${APP_NAME}</h1><p class="muted">v${APP_VERSION}</p></div>
+    <div class="card">
+      <h1>${APP_NAME}</h1>
+      <div class="row"><span class="badge">v${APP_VERSION}</span><span class="badge ${readiness.ready ? 'ok' : 'warn'}">${escapeHtml(readiness.status)}</span><span class="badge">DB schema ${escapeHtml(readiness.schemaVersion)}</span></div>
+    </div>
     <div class="card"><h2>Profiles</h2><table><thead><tr><th>Name</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
     <div class="card"><h2>Create profile</h2><form method="post" action="/setup?key=${encodeURIComponent(adminKey)}"><label>Name</label><input name="name" value="Trakt" maxlength="80"><button class="btn" type="submit">Create profile</button></form></div>
   `));
 }
 
-function renderProfile(res, { config, db }, profileId, setupKey) {
+function renderProfile(res, { config, db }, profileId, setupKey, eventFilter = 'all') {
   const p = db.getProfile(profileId);
   const addonKey = deriveProfileKey(config.bridgeSecret, 'addon', profileId);
   const manifestUrl = `${config.publicBaseUrl}/u/${profileId}/${addonKey}/manifest.json`;
-  const recent = summarizeRecentEvents(db.recentEvents(profileId, 60), 16);
-  const events = recent.map((e) => {
-    const statusClass = e.displayStatus === 'retrying' ? 'bad' : 'ok';
+  const operational = buildProfileOperationalStatus({ db, config, profileId });
+  const recent = summarizeRecentEvents(db.recentEvents(profileId, 100), 40);
+  const filtered = filterOperationalEvents(recent, eventFilter).slice(0, 16);
+  const selectedFilter = ['all', 'errors', 'pull', 'playback', 'ignored'].includes(eventFilter) ? eventFilter : 'all';
+
+  const events = filtered.map((e) => {
+    const statusClass = e.displayStatus === 'retrying' ? 'bad' : (e.displayStatus === 'recovered' ? 'warn' : (e.status === 'ignored' ? 'muted' : 'ok'));
     const retryText = e.attempts > 1 ? ` · ${e.attempts} attempts` : '';
     return `<tr><td>${escapeHtml(formatEventTime(e.created_at, config.displayTimeZone))}</td><td>${escapeHtml(e.event || '')}<br><small class="muted">${escapeHtml(e.shortEventId || '')}</small></td><td><span class="${statusClass}">${escapeHtml(e.displayStatus)}</span><small class="muted">${escapeHtml(retryText)}</small></td><td><small>${escapeHtml(e.detail || '')}</small></td></tr>`;
-  }).join('') || '<tr><td colspan="4" class="muted">No events yet.</td></tr>';
+  }).join('') || '<tr><td colspan="4" class="muted">No events for this filter.</td></tr>';
+
   const connected = Boolean(p.access_token_enc);
+  const lastPull = operational?.sync?.lastPull || {};
+  const lastPullTime = operational?.sync?.lastPullAt
+    ? formatEventTime(operational.sync.lastPullAt, config.displayTimeZone)
+    : 'Never';
+  const aliases = operational?.identity?.aliases || [];
+  const aliasRows = aliases.slice(0, 12).map((alias) => `
+    <tr>
+      <td><code>${escapeHtml(alias.traktShowId)}</code></td>
+      <td><code>${escapeHtml(alias.traktImdb || '—')}</code></td>
+      <td><code>${escapeHtml(alias.preferredMetaId || '—')}</code></td>
+      <td><code>${escapeHtml(alias.effectivePullMetaId || '—')}</code></td>
+    </tr>
+  `).join('') || '<tr><td colspan="4" class="muted">No learned IMDb aliases.</td></tr>';
+
+  const filterLink = (name, label) => `<a class="filter ${selectedFilter === name ? 'active' : ''}" href="/u/${profileId}/setup?key=${encodeURIComponent(setupKey)}&events=${name}">${label}</a>`;
+  const healthy = connected && Number(operational?.errors?.unresolved || 0) === 0;
+
   return sendHtml(res, 200, page(`${p.name} - Trakt Bridge`, `
-    <div class="card"><h1>${escapeHtml(p.name)}</h1><p>Status: <span class="status ${connected ? 'ok' : 'bad'}">${connected ? 'Trakt connected' : 'Not connected'}</span></p><p class="muted">AIOStreams Watch State v2 · bidirectional push + pull · Display time: ${escapeHtml(config.displayTimeZone)}</p>
+    <div class="card">
+      <div class="row"><h1 style="margin-right:auto">${escapeHtml(p.name)}</h1><span class="badge">v${APP_VERSION}</span><span class="badge ${healthy ? 'ok' : 'warn'}">${healthy ? 'Healthy' : 'Attention'}</span></div>
+      <p>Status: <span class="status ${connected ? 'ok' : 'bad'}">${connected ? 'Trakt connected' : 'Not connected'}</span></p>
+      <p class="muted">AIOStreams Watch State v2 · bidirectional push + pull · Display time: ${escapeHtml(config.displayTimeZone)}</p>
       <div class="row"><a class="btn" href="/u/${profileId}/oauth/start?key=${encodeURIComponent(setupKey)}">${connected ? 'Reconnect Trakt' : 'Connect Trakt'}</a>${connected ? `<form method="post" action="/u/${profileId}/disconnect?key=${encodeURIComponent(setupKey)}"><button class="btn bad" type="submit">Disconnect</button></form>` : ''}</div>
     </div>
-    <div class="card"><h2>AIOStreams manifest</h2><p class="url"><code>${escapeHtml(manifestUrl)}</code></p><p class="muted">The manifest URL is a credential. Pull identity mode: <code>${escapeHtml(config.pullIdentityMode)}</code>. In <code>trakt</code> mode the bridge preserves Trakt's IMDb spelling on pull, allowing native Trakt clients and AIOStreams to converge on the same identity.</p></div>
-    <div class="card"><h2>v${APP_VERSION} capabilities</h2><p><strong>Push:</strong> <code>start</code> · <code>pause</code> · <code>stop</code> · <code>played</code> · <code>unplayed</code> · <code>watchlisted</code> · <code>unwatchlisted</code> · <code>bulk=true</code></p><p><strong>Pull:</strong> <code>items</code> · <code>watched</code> · <code>watchlist</code> · configurable pull identity (<code>${escapeHtml(config.pullIdentityMode)}</code>) · alias-aware counts · safe next-up hints when supplied upstream · cache TTL ${escapeHtml(config.pullTtlSeconds)}s</p><p class="muted">IMDb/TMDb/TVDb resolution remains deterministic. A successful AIOStreams episode <code>stop</code> may persist a profile-scoped Trakt-show → preferred AIOStreams IMDb alias; if that changes identity state, the pull cache is invalidated immediately. Bulk single-echo suppression remains ${escapeHtml(config.bulkSingleDedupeSeconds)}s.</p></div>
-    <div class="card"><h2>Recent events</h2><table><thead><tr><th>Time</th><th>Event / ID</th><th>Status</th><th>Detail</th></tr></thead><tbody>${events}</tbody></table></div>
+
+    <div class="card">
+      <h2>Operational summary</h2>
+      <div class="grid">
+        <div class="stat"><span class="label">History authority</span><span class="value">Trakt</span></div>
+        <div class="stat"><span class="label">Pull identity</span><span class="value"><code>${escapeHtml(config.pullIdentityMode)}</code></span></div>
+        <div class="stat"><span class="label">DB schema</span><span class="value">${escapeHtml(operational?.schemaVersion ?? '—')}</span></div>
+        <div class="stat"><span class="label">Unresolved errors</span><span class="value ${operational?.errors?.unresolved ? 'bad' : 'ok'}">${escapeHtml(operational?.errors?.unresolved ?? 0)}</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Sync health</h2>
+      <div class="grid">
+        <div class="stat"><span class="label">Last successful pull</span><span class="value">${escapeHtml(lastPullTime)}</span></div>
+        <div class="stat"><span class="label">Pull items</span><span class="value">${escapeHtml(lastPull.items ?? '—')}</span></div>
+        <div class="stat"><span class="label">Watched movies</span><span class="value">${escapeHtml(lastPull.watchedMovies ?? '—')}</span></div>
+        <div class="stat"><span class="label">Watched episodes</span><span class="value">${escapeHtml(lastPull.watchedEpisodes ?? '—')}</span></div>
+        <div class="stat"><span class="label">Watchlist</span><span class="value">${escapeHtml(lastPull.watchlistItems ?? '—')}</span></div>
+        <div class="stat"><span class="label">Historical errors</span><span class="value">${escapeHtml(operational?.errors?.historical ?? 0)}</span></div>
+      </div>
+      ${operational?.errors?.lastErrorDetail ? `<p class="muted">Last historical error: ${escapeHtml(operational.errors.lastErrorDetail)}</p>` : ''}
+    </div>
+
+    <div class="card">
+      <h2>Authority model</h2>
+      <div class="grid">
+        <div class="stat"><span class="label">AIOStreams</span><span class="value">Jellyfin state surface</span></div>
+        <div class="stat"><span class="label">AIOMetadata read mode</span><span class="value">This server only</span></div>
+        <div class="stat"><span class="label">AIOMetadata role</span><span class="value">Secondary tracker fan-out</span></div>
+      </div>
+      <p class="muted">AIOMetadata's tracker picker controls what its Jellyfin surface reads back. <strong>This server only</strong> prevents secondary trackers from becoming a second history authority; enabled Watch Tracking writes can still fan playback out independently.</p>
+    </div>
+
+    <div class="card">
+      <h2>Identity diagnostics</h2>
+      <p class="muted section-note">Learned aliases remain diagnostic evidence in <code>trakt</code> mode; they do not rewrite Trakt pull identity.</p>
+      <table class="compact"><thead><tr><th>Trakt show</th><th>Trakt IMDb</th><th>Learned AIOStreams IMDb</th><th>Effective pull</th></tr></thead><tbody>${aliasRows}</tbody></table>
+    </div>
+
+    <div class="card">
+      <h2>AIOStreams manifest</h2>
+      <p class="url"><code>${escapeHtml(manifestUrl)}</code></p>
+      <p class="muted">The manifest URL is a credential. Pull identity mode: <code>${escapeHtml(config.pullIdentityMode)}</code>. In <code>trakt</code> mode the bridge preserves Trakt's IMDb spelling so native Trakt clients and AIOStreams converge on the same identity.</p>
+    </div>
+
+    <div class="card">
+      <h2>v${APP_VERSION} capabilities</h2>
+      <p><strong>Push:</strong> <code>start</code> · <code>pause</code> · <code>stop</code> · <code>played</code> · <code>unplayed</code> · <code>watchlisted</code> · <code>unwatchlisted</code> · <code>bulk=true</code></p>
+      <p><strong>Pull:</strong> <code>items</code> · <code>watched</code> · <code>watchlist</code> · configurable pull identity (<code>${escapeHtml(config.pullIdentityMode)}</code>) · alias-aware counts · safe next-up hints · cache TTL ${escapeHtml(config.pullTtlSeconds)}s</p>
+      <p class="muted">IMDb/TMDb/TVDb resolution remains deterministic. Sub-1% scrobbles are ignored before Trakt. Bulk single-echo suppression remains ${escapeHtml(config.bulkSingleDedupeSeconds)}s.</p>
+    </div>
+
+    <div class="card">
+      <h2>Recent events</h2>
+      <div class="filters">${filterLink('all', 'All')}${filterLink('errors', 'Errors')}${filterLink('pull', 'Pull')}${filterLink('playback', 'Playback')}${filterLink('ignored', 'Ignored')}</div>
+      <table><thead><tr><th>Time</th><th>Event / ID</th><th>Status</th><th>Detail</th></tr></thead><tbody>${events}</tbody></table>
+    </div>
   `));
 }
 

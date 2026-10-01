@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { encryptSecret, decryptSecret, sha256 } from './crypto.mjs';
+import { currentSchemaVersion, migrateDatabase } from './migrations.mjs';
 
 export class BridgeDb {
   constructor(config) {
@@ -11,51 +12,27 @@ export class BridgeDb {
       PRAGMA journal_mode=WAL;
       PRAGMA synchronous=NORMAL;
       PRAGMA foreign_keys=ON;
-      CREATE TABLE IF NOT EXISTS profiles (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        access_token_enc TEXT,
-        refresh_token_enc TEXT,
-        token_expires_at INTEGER,
-        connected_at INTEGER,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS oauth_states (
-        state_hash TEXT PRIMARY KEY,
-        profile_id TEXT NOT NULL,
-        expires_at INTEGER NOT NULL,
-        created_at INTEGER NOT NULL,
-        FOREIGN KEY(profile_id) REFERENCES profiles(id) ON DELETE CASCADE
-      );
-      CREATE TABLE IF NOT EXISTS processed_events (
-        profile_id TEXT NOT NULL,
-        event_id TEXT NOT NULL,
-        processed_at INTEGER NOT NULL,
-        summary TEXT,
-        PRIMARY KEY(profile_id, event_id),
-        FOREIGN KEY(profile_id) REFERENCES profiles(id) ON DELETE CASCADE
-      );
-      CREATE TABLE IF NOT EXISTS media_cache (
-        cache_key TEXT PRIMARY KEY,
-        payload_json TEXT NOT NULL,
-        expires_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS event_log (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        profile_id TEXT,
-        event_id TEXT,
-        event TEXT,
-        status TEXT NOT NULL,
-        detail TEXT,
-        created_at INTEGER NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_event_log_created_at ON event_log(created_at DESC);
     `);
+    this.migration = migrateDatabase(this.db);
   }
 
   now() { return Math.floor(Date.now() / 1000); }
+
+  close() {
+    this.db.close();
+  }
+
+  ping() {
+    return Number(this.db.prepare('SELECT 1 AS ok').get()?.ok || 0) === 1;
+  }
+
+  schemaVersion() {
+    return currentSchemaVersion(this.db);
+  }
+
+  countConnectedProfiles() {
+    return Number(this.db.prepare(`SELECT COUNT(*) AS n FROM profiles WHERE access_token_enc IS NOT NULL`).get()?.n || 0);
+  }
 
   createProfile(id, name) {
     const now = this.now();

@@ -2,6 +2,41 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+## [0.4.0] - 2026-10-01
+
+### Added
+- Explicit SQLite migration framework using `PRAGMA user_version`; v0.3.x databases migrate in place from schema `0` to schema `1` without deleting profiles, OAuth tokens, processed events, learned aliases, event history or pull cache.
+- Fail-closed protection when the database schema is newer than the running binary.
+- `GET /readiness` for operational readiness: database query, supported schema and at least one connected Trakt profile.
+- Authenticated `GET /status?key=<ADMIN_KEY>` operator diagnostics.
+- Production dashboard cards for authority, pull identity, schema, sync counts, unresolved/historical errors, AIOMetadata role and learned alias/effective pull identity.
+- Recent-event filters: All, Errors, Pull, Playback and Ignored.
+- CI container build plus `/health` and `/readiness` smoke tests on every push/PR.
+- Tag-based release workflow that publishes an amd64 GHCR image and creates a GitHub Release after checks/tests pass.
+- Dedicated production runbook and AIOMetadata authority documentation.
+
+### Changed
+- App/package/example image/User-Agent are synchronized to v0.4.0.
+- Setup UI is promoted from a connection/event page to an operational dashboard.
+- Runtime startup logs include the active DB schema and applied migration summary.
+- Graceful shutdown closes SQLite explicitly.
+- Canonical HomeDocker authority model is documented as: Trakt history authority, AIOStreams Jellyfin state surface, AIOMetadata metadata + secondary-tracker write/fan-out.
+- Recommended AIOMetadata Jellyfin `Trackers` setting is formally documented as `This server only` when Trakt Bridge is the canonical history source.
+
+### Safety
+- `/health` remains liveness-only and does not depend on external network state.
+- `/readiness` checks token/connection state without making a live Trakt API call, avoiding rate-limit and latency coupling.
+- `/status` never exposes OAuth tokens, bridge secrets or setup/addon credentials.
+- v0.4.0 intentionally keeps the v0.3.6/v0.3.7 AIOStreams pull representation (`watch-state-v0.3.6`) and `pull-state:v5:*` cache namespace.
+- No AIOStreams pull-cache purge is required for v0.3.7 -> v0.4.0.
+- `PULL_IDENTITY_MODE=trakt` remains the HomeDocker production recommendation for native-Trakt + AIOStreams coexistence.
+
+### Upgrade
+- Take a pre-upgrade backup of `bridge.db`, `.env`, compose and nginx configuration.
+- First v0.4.0 startup upgrades Bridge DB schema `0 -> 1` in place.
+- After upgrade, `/readiness` should return HTTP `200` with `schemaVersion=1` and at least one connected profile.
+- Rollback to v0.3.7 should restore the matching pre-v0.4.0 DB backup as well as the older source/image.
+
 ## [0.3.7] - 2026-10-01
 
 ### Fixed

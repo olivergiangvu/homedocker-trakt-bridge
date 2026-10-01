@@ -2,6 +2,10 @@ name: CI
 on:
   push:
   pull_request:
+
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -12,3 +16,37 @@ jobs:
           node-version: '24'
       - run: npm run check
       - run: npm test
+
+      - name: Build production container
+        run: docker build -t homedocker-trakt-bridge:ci .
+
+      - name: Smoke-test health and readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name trakt-bridge-ci \
+            -p 127.0.0.1:17000:7000 \
+            -e PUBLIC_BASE_URL=http://127.0.0.1:17000 \
+            -e TRAKT_CLIENT_ID=test-client \
+            -e TRAKT_CLIENT_SECRET=test-secret \
+            -e BRIDGE_SECRET_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+            -e ADMIN_KEY=abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789 \
+            -e PULL_IDENTITY_MODE=trakt \
+            homedocker-trakt-bridge:ci
+
+          cleanup() { docker rm -f trakt-bridge-ci >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:17000/health > /tmp/health.json; then
+              break
+            fi
+            sleep 1
+          done
+
+          grep -q '"version":"0.4.0"' /tmp/health.json
+
+          code=$(curl -sS -o /tmp/readiness.json -w '%{http_code}' http://127.0.0.1:17000/readiness)
+          test "$code" = "503"
+          grep -q '"status":"setup_required"' /tmp/readiness.json
+          grep -q '"schemaVersion":1' /tmp/readiness.json
