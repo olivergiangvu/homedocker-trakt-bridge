@@ -32,6 +32,13 @@ function compactAction(action) {
 export function summarizeEventDetail(row) {
   const detail = parseJson(row?.detail);
 
+  if (row?.event === 'auth' && detail?.state) {
+    if (detail.state === 'connected') return 'Trakt connected';
+    if (detail.state === 'reconnect_required') return 'Reconnect required';
+    if (detail.state === 'disconnected') return 'Trakt disconnected';
+    return `Auth · ${detail.state}`;
+  }
+
   if (row?.event === 'pull' && detail) {
     const source = detail.source === 'cache'
       ? 'Cache'
@@ -112,6 +119,12 @@ export function buildProfileOperationalStatus({ db, config, profileId }) {
     return Boolean(detail?.watchedChanged || detail?.watchlistChanged);
   });
   const lastError = latest(rows, (row) => row.status === 'error');
+  const latestAuth = latest(rows, (row) => row.event === 'auth');
+  const latestAuthDetail = parseJson(latestAuth?.detail);
+  const connected = Boolean(profile.access_token_enc);
+  const connectionState = connected
+    ? 'connected'
+    : (latestAuthDetail?.state === 'reconnect_required' ? 'reconnect_required' : 'disconnected');
   const activeErrors = summarized.filter((row) => (
     row.displayStatus === 'retrying'
     && Number(row.created_at || 0) >= now - ACTIVE_ERROR_WINDOW_SECONDS
@@ -138,7 +151,9 @@ export function buildProfileOperationalStatus({ db, config, profileId }) {
     profile: {
       id: profile.id,
       name: profile.name,
-      connected: Boolean(profile.access_token_enc),
+      connected,
+      connectionState,
+      reconnectRequired: connectionState === 'reconnect_required',
       connectedAt: profile.connected_at || null,
     },
     authority: {
