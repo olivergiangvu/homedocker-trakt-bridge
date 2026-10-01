@@ -43,17 +43,11 @@ openssl rand -hex 32
 
 Keep `BRIDGE_SECRET_KEY` with your database backup; it is required to decrypt stored Trakt OAuth tokens after a restore.
 
+The GHCR package is public, so a normal install does not require `docker login ghcr.io`.
+
 For long-lived production installs, pin `TRAKT_BRIDGE_IMAGE` to a release tag or immutable digest instead of `latest`. See [Configuration](CONFIGURATION.md).
 
 ## 3. Start the container
-
-If the GHCR package is private:
-
-```bash
-docker login ghcr.io
-```
-
-Then:
 
 ```bash
 docker compose pull
@@ -132,5 +126,7 @@ Check the dashboard for:
 - no current active errors
 
 Then open your Jellyfin-compatible client through AIOStreams and confirm that watched/resume state appears correctly.
+
+For production, also record the image tag or exact digest you deployed so rollback remains deterministic.
 
 Next: [Configuration](CONFIGURATION.md) · [Operations](OPERATIONS.md) · [Troubleshooting](TROUBLESHOOTING.md)
