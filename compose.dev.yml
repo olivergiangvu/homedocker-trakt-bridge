@@ -1,0 +1,4 @@
+services:
+  trakt-bridge:
+    build: .
+    image: homedocker-trakt-bridge:dev
