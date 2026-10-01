@@ -82,6 +82,10 @@ The production requirement is that both paths converge on the same Trakt-side id
 
 The historical dual-IMDb regression that motivated this rule is documented in [DEVELOPMENT.md](DEVELOPMENT.md), not exposed in the operator UI.
 
+A separate non-blocking observation remains under investigation: the same viewing can occasionally appear twice in Trakt history when more than one playback path is allowed to write to Trakt. The first diagnostic question is therefore **which components are writers**, not whether the watched/resume read-authority model is correct.
+
+Do not disable a working writer globally just to hide duplicate play counts unless you are deliberately isolating paths for diagnosis. This observation does not currently block the v1.0 release gate and is tracked separately from identity/Continue Watching correctness.
+
 ## Odin / Jellyfin-compatible clients without native Trakt
 
 These clients can rely on AIOStreams state supplied by Trakt Bridge.
