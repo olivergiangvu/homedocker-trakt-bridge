@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 export const APP_NAME = 'HomeDocker Trakt Bridge';
-export const APP_VERSION = '0.3.5';
+export const APP_VERSION = '0.3.6';
 
 function requireEnv(name) {
   const value = process.env[name]?.trim();
@@ -13,6 +13,14 @@ function intEnv(name, fallback, min, max) {
   const value = Number(process.env[name] || fallback);
   if (!Number.isInteger(value) || value < min || value > max) {
     throw new Error(`${name} must be an integer between ${min} and ${max}`);
+  }
+  return value;
+}
+
+function enumEnv(name, fallback, allowed) {
+  const value = (process.env[name] || fallback).trim().toLowerCase();
+  if (!allowed.includes(value)) {
+    throw new Error(`${name} must be one of: ${allowed.join(', ')}`);
   }
   return value;
 }
@@ -42,6 +50,7 @@ export function loadConfig() {
     pullStaleIfErrorSeconds: intEnv('PULL_STALE_IF_ERROR_SECONDS', 3600, 60, 86400),
     pullMaxPages: intEnv('PULL_MAX_PAGES', 500, 1, 1000),
     bulkSingleDedupeSeconds: intEnv('BULK_SINGLE_DEDUPE_SECONDS', 300, 30, 1800),
+    pullIdentityMode: enumEnv('PULL_IDENTITY_MODE', 'trakt', ['trakt', 'aiostreams']),
     userAgent: (process.env.USER_AGENT || `${APP_NAME.replaceAll(' ', '-')}/${APP_VERSION}`).trim(),
   };
 }
