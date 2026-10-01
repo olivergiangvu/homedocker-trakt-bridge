@@ -8,7 +8,12 @@ import { buildManifest, planEvent, validatePushEvent } from './watch-state.mjs';
 import { formatEventTime, summarizeRecentEvents } from './diagnostics.mjs';
 import { cachedPullPayload, makePullCacheEntry, stalePullPayload } from './pull-cache.mjs';
 import { coveredByRecentBulk, rememberBulkCoverage } from './bulk-dedupe.mjs';
-import { buildProfileOperationalStatus, buildReadiness, filterOperationalEvents } from './operational-status.mjs';
+import {
+  buildProfileOperationalStatus,
+  buildReadiness,
+  filterOperationalEvents,
+  summarizeEventDetail,
+} from './operational-status.mjs';
 
 const inflight = new Map();
 const pullInflight = new Map();
@@ -350,19 +355,34 @@ function renderProfile(res, { config, db }, profileId, setupKey, eventFilter = '
   const manifestUrl = `${config.publicBaseUrl}/u/${profileId}/${addonKey}/manifest.json`;
   const operational = buildProfileOperationalStatus({ db, config, profileId });
   const recent = summarizeRecentEvents(db.recentEvents(profileId, 100), 40);
-  const filtered = filterOperationalEvents(recent, eventFilter).slice(0, 16);
+  const filtered = filterOperationalEvents(recent, eventFilter).slice(0, 18);
   const selectedFilter = ['all', 'errors', 'pull', 'playback', 'ignored'].includes(eventFilter) ? eventFilter : 'all';
 
   const events = filtered.map((e) => {
-    const statusClass = e.displayStatus === 'retrying' ? 'bad' : (e.displayStatus === 'recovered' ? 'warn' : (e.status === 'ignored' ? 'muted' : 'ok'));
+    const statusClass = e.displayStatus === 'retrying'
+      ? 'bad'
+      : (e.displayStatus === 'recovered' ? 'warn' : (e.status === 'ignored' ? 'muted' : 'ok'));
     const retryText = e.attempts > 1 ? ` · ${e.attempts} attempts` : '';
-    return `<tr><td>${escapeHtml(formatEventTime(e.created_at, config.displayTimeZone))}</td><td>${escapeHtml(e.event || '')}<br><small class="muted">${escapeHtml(e.shortEventId || '')}</small></td><td><span class="${statusClass}">${escapeHtml(e.displayStatus)}</span><small class="muted">${escapeHtml(retryText)}</small></td><td><small>${escapeHtml(e.detail || '')}</small></td></tr>`;
+    const summary = summarizeEventDetail(e);
+    const raw = e.detail
+      ? `<details class="raw-detail"><summary>Raw</summary><pre>${escapeHtml(e.detail)}</pre></details>`
+      : '';
+    return `<tr>
+      <td>${escapeHtml(formatEventTime(e.created_at, config.displayTimeZone))}</td>
+      <td><strong>${escapeHtml(e.event || '')}</strong><small class="muted event-id" title="${escapeHtml(e.event_id || '')}">${escapeHtml(e.shortEventId || '')}</small></td>
+      <td><span class="${statusClass}">${escapeHtml(e.displayStatus)}</span><small class="muted">${escapeHtml(retryText)}</small></td>
+      <td><div class="event-summary" title="${escapeHtml(summary)}">${escapeHtml(summary)}</div>${raw}</td>
+    </tr>`;
   }).join('') || '<tr><td colspan="4" class="muted">No events for this filter.</td></tr>';
 
   const connected = Boolean(p.access_token_enc);
-  const lastPull = operational?.sync?.lastPull || {};
-  const lastPullTime = operational?.sync?.lastPullAt
+  const latestPoll = operational?.sync?.lastPull || {};
+  const authoritative = operational?.sync?.lastAuthoritativePull || {};
+  const latestPollTime = operational?.sync?.lastPullAt
     ? formatEventTime(operational.sync.lastPullAt, config.displayTimeZone)
+    : 'Never';
+  const authoritativeTime = operational?.sync?.lastAuthoritativePullAt
+    ? formatEventTime(operational.sync.lastAuthoritativePullAt, config.displayTimeZone)
     : 'Never';
   const aliases = operational?.identity?.aliases || [];
   const aliasRows = aliases.slice(0, 12).map((alias) => `
@@ -375,73 +395,78 @@ function renderProfile(res, { config, db }, profileId, setupKey, eventFilter = '
   `).join('') || '<tr><td colspan="4" class="muted">No learned IMDb aliases.</td></tr>';
 
   const filterLink = (name, label) => `<a class="filter ${selectedFilter === name ? 'active' : ''}" href="/u/${profileId}/setup?key=${encodeURIComponent(setupKey)}&events=${name}">${label}</a>`;
-  const healthy = connected && Number(operational?.errors?.unresolved || 0) === 0;
+  const activeErrors = Number(operational?.errors?.active || 0);
+  const healthy = connected && activeErrors === 0;
+  const latestPollSource = latestPoll?.source
+    ? `${latestPoll.source}${latestPoll.cacheLayer ? `/${latestPoll.cacheLayer}` : ''}`
+    : '—';
 
   return sendHtml(res, 200, page(`${p.name} - Trakt Bridge`, `
-    <div class="card">
+    <div class="card hero">
       <div class="row"><h1 style="margin-right:auto">${escapeHtml(p.name)}</h1><span class="badge">v${APP_VERSION}</span><span class="badge ${healthy ? 'ok' : 'warn'}">${healthy ? 'Healthy' : 'Attention'}</span></div>
-      <p>Status: <span class="status ${connected ? 'ok' : 'bad'}">${connected ? 'Trakt connected' : 'Not connected'}</span></p>
-      <p class="muted">AIOStreams Watch State v2 · bidirectional push + pull · Display time: ${escapeHtml(config.displayTimeZone)}</p>
-      <div class="row"><a class="btn" href="/u/${profileId}/oauth/start?key=${encodeURIComponent(setupKey)}">${connected ? 'Reconnect Trakt' : 'Connect Trakt'}</a>${connected ? `<form method="post" action="/u/${profileId}/disconnect?key=${encodeURIComponent(setupKey)}"><button class="btn bad" type="submit">Disconnect</button></form>` : ''}</div>
+      <div class="hero-meta"><span class="${connected ? 'ok' : 'bad'}">● ${connected ? 'Trakt connected' : 'Trakt disconnected'}</span><span class="muted">·</span><span class="muted">AIOStreams watch_state v2</span></div>
+      <div class="row hero-actions"><a class="btn" href="/u/${profileId}/oauth/start?key=${encodeURIComponent(setupKey)}">${connected ? 'Reconnect Trakt' : 'Connect Trakt'}</a>${connected ? `<form method="post" action="/u/${profileId}/disconnect?key=${encodeURIComponent(setupKey)}"><button class="btn bad" type="submit">Disconnect</button></form>` : ''}</div>
     </div>
 
     <div class="card">
-      <h2>Operational summary</h2>
+      <h2>System status</h2>
       <div class="grid">
         <div class="stat"><span class="label">History authority</span><span class="value">Trakt</span></div>
         <div class="stat"><span class="label">Pull identity</span><span class="value"><code>${escapeHtml(config.pullIdentityMode)}</code></span></div>
         <div class="stat"><span class="label">DB schema</span><span class="value">${escapeHtml(operational?.schemaVersion ?? '—')}</span></div>
-        <div class="stat"><span class="label">Unresolved errors</span><span class="value ${operational?.errors?.unresolved ? 'bad' : 'ok'}">${escapeHtml(operational?.errors?.unresolved ?? 0)}</span></div>
+        <div class="stat"><span class="label">Active errors · 30m</span><span class="value ${activeErrors ? 'bad' : 'ok'}">${escapeHtml(activeErrors)}</span></div>
       </div>
     </div>
 
     <div class="card">
       <h2>Sync health</h2>
       <div class="grid">
-        <div class="stat"><span class="label">Last successful pull</span><span class="value">${escapeHtml(lastPullTime)}</span></div>
-        <div class="stat"><span class="label">Pull items</span><span class="value">${escapeHtml(lastPull.items ?? '—')}</span></div>
-        <div class="stat"><span class="label">Watched movies</span><span class="value">${escapeHtml(lastPull.watchedMovies ?? '—')}</span></div>
-        <div class="stat"><span class="label">Watched episodes</span><span class="value">${escapeHtml(lastPull.watchedEpisodes ?? '—')}</span></div>
-        <div class="stat"><span class="label">Watchlist</span><span class="value">${escapeHtml(lastPull.watchlistItems ?? '—')}</span></div>
-        <div class="stat"><span class="label">Historical errors</span><span class="value">${escapeHtml(operational?.errors?.historical ?? 0)}</span></div>
+        <div class="stat"><span class="label">Last authoritative sync</span><span class="value">${escapeHtml(authoritativeTime)}</span></div>
+        <div class="stat"><span class="label">Watched movies</span><span class="value">${escapeHtml(authoritative.watchedMovies ?? '—')}</span></div>
+        <div class="stat"><span class="label">Watched episodes</span><span class="value">${escapeHtml(authoritative.watchedEpisodes ?? '—')}</span></div>
+        <div class="stat"><span class="label">Watchlist</span><span class="value">${escapeHtml(authoritative.watchlistItems ?? '—')}</span></div>
+        <div class="stat"><span class="label">Latest poll</span><span class="value">${escapeHtml(latestPollTime)}</span><span class="hint">${escapeHtml(latestPollSource)} · ${escapeHtml(latestPoll.items ?? '—')} items</span></div>
+        <div class="stat"><span class="label">Historical errors</span><span class="value">${escapeHtml(operational?.errors?.historical ?? 0)}</span><span class="hint">kept for diagnostics only</span></div>
       </div>
-      ${operational?.errors?.lastErrorDetail ? `<p class="muted">Last historical error: ${escapeHtml(operational.errors.lastErrorDetail)}</p>` : ''}
     </div>
 
     <div class="card">
-      <h2>Authority model</h2>
-      <div class="grid">
-        <div class="stat"><span class="label">AIOStreams</span><span class="value">Jellyfin state surface</span></div>
-        <div class="stat"><span class="label">AIOMetadata read mode</span><span class="value">This server only</span></div>
-        <div class="stat"><span class="label">AIOMetadata role</span><span class="value">Secondary tracker fan-out</span></div>
-      </div>
-      <p class="muted">AIOMetadata's tracker picker controls what its Jellyfin surface reads back. <strong>This server only</strong> prevents secondary trackers from becoming a second history authority; enabled Watch Tracking writes can still fan playback out independently.</p>
+      <div class="row"><h2 style="margin-right:auto">Recent events</h2><span class="hint">Raw payloads stay collapsed</span></div>
+      <div class="filters">${filterLink('all', 'All')}${filterLink('errors', 'Errors')}${filterLink('pull', 'Pull')}${filterLink('playback', 'Playback')}${filterLink('ignored', 'Ignored')}</div>
+      <div class="events-wrap"><table class="events-table"><thead><tr><th class="col-time">Time</th><th class="col-event">Event / ID</th><th class="col-status">Status</th><th>Summary</th></tr></thead><tbody>${events}</tbody></table></div>
     </div>
 
     <div class="card">
-      <h2>Identity diagnostics</h2>
-      <p class="muted section-note">Learned aliases remain diagnostic evidence in <code>trakt</code> mode; they do not rewrite Trakt pull identity.</p>
+      <div class="row"><h2 style="margin-right:auto">Identity</h2><span class="badge">${escapeHtml(aliases.length)} learned alias${aliases.length === 1 ? '' : 'es'}</span></div>
       <table class="compact"><thead><tr><th>Trakt show</th><th>Trakt IMDb</th><th>Learned AIOStreams IMDb</th><th>Effective pull</th></tr></thead><tbody>${aliasRows}</tbody></table>
     </div>
 
-    <div class="card">
-      <h2>AIOStreams manifest</h2>
-      <p class="url"><code>${escapeHtml(manifestUrl)}</code></p>
-      <p class="muted">The manifest URL is a credential. Pull identity mode: <code>${escapeHtml(config.pullIdentityMode)}</code>. In <code>trakt</code> mode the bridge preserves Trakt's IMDb spelling so native Trakt clients and AIOStreams converge on the same identity.</p>
-    </div>
+    <details class="card tech">
+      <summary>Technical details</summary>
+      <div class="tech-body">
+        <div class="tech-section">
+          <h3>Authority model</h3>
+          <div class="topology">
+            <div class="stat"><span class="label">AIOStreams</span><span class="value">Jellyfin state surface</span></div>
+            <div class="stat"><span class="label">AIOMetadata read mode</span><span class="value">This server only</span></div>
+            <div class="stat"><span class="label">AIOMetadata role</span><span class="value">Secondary tracker fan-out</span></div>
+          </div>
+        </div>
 
-    <div class="card">
-      <h2>v${APP_VERSION} capabilities</h2>
-      <p><strong>Push:</strong> <code>start</code> · <code>pause</code> · <code>stop</code> · <code>played</code> · <code>unplayed</code> · <code>watchlisted</code> · <code>unwatchlisted</code> · <code>bulk=true</code></p>
-      <p><strong>Pull:</strong> <code>items</code> · <code>watched</code> · <code>watchlist</code> · configurable pull identity (<code>${escapeHtml(config.pullIdentityMode)}</code>) · alias-aware counts · safe next-up hints · cache TTL ${escapeHtml(config.pullTtlSeconds)}s</p>
-      <p class="muted">IMDb/TMDb/TVDb resolution remains deterministic. Sub-1% scrobbles are ignored before Trakt. Bulk single-echo suppression remains ${escapeHtml(config.bulkSingleDedupeSeconds)}s.</p>
-    </div>
+        <div class="tech-section">
+          <h3>AIOStreams manifest</h3>
+          <p class="url"><code>${escapeHtml(manifestUrl)}</code></p>
+          <p class="hint">Credential URL · pull identity <code>${escapeHtml(config.pullIdentityMode)}</code> · cache TTL ${escapeHtml(config.pullTtlSeconds)}s</p>
+        </div>
 
-    <div class="card">
-      <h2>Recent events</h2>
-      <div class="filters">${filterLink('all', 'All')}${filterLink('errors', 'Errors')}${filterLink('pull', 'Pull')}${filterLink('playback', 'Playback')}${filterLink('ignored', 'Ignored')}</div>
-      <table><thead><tr><th>Time</th><th>Event / ID</th><th>Status</th><th>Detail</th></tr></thead><tbody>${events}</tbody></table>
-    </div>
+        <div class="tech-section">
+          <h3>Capabilities</h3>
+          <p><strong>Push:</strong> <code>start</code> · <code>pause</code> · <code>stop</code> · <code>played</code> · <code>unplayed</code> · <code>watchlisted</code> · <code>unwatchlisted</code> · <code>bulk=true</code></p>
+          <p><strong>Pull:</strong> <code>items</code> · <code>watched</code> · <code>watchlist</code> · identity <code>${escapeHtml(config.pullIdentityMode)}</code> · alias-aware counts · safe next-up hints</p>
+          <p class="hint">Sub-1% scrobbles are ignored before Trakt · bulk single-echo suppression ${escapeHtml(config.bulkSingleDedupeSeconds)}s · display timezone ${escapeHtml(config.displayTimeZone)}</p>
+        </div>
+      </div>
+    </details>
   `));
 }
 
