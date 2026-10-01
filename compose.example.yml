@@ -1,6 +1,6 @@
 services:
   trakt-bridge:
-    image: ${TRAKT_BRIDGE_IMAGE:-ghcr.io/olivergiangvu/homedocker-trakt-bridge:0.9.0}
+    image: ${TRAKT_BRIDGE_IMAGE:-ghcr.io/olivergiangvu/homedocker-trakt-bridge:0.9.1}
     container_name: trakt-bridge
     restart: unless-stopped
     env_file:
