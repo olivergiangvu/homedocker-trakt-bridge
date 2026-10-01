@@ -50,6 +50,8 @@ test('operational status separates latest poll from last authoritative sync', ()
     profileId: 'p1',
   });
 
+  assert.equal(status.profile.connectionState, 'connected');
+  assert.equal(status.profile.reconnectRequired, false);
   assert.equal(status.authority.history, 'trakt');
   assert.equal(status.authority.aiometadataReadModeRecommended, 'this_server_only');
   assert.equal(status.sync.lastPull.items, 97);
@@ -62,6 +64,29 @@ test('operational status separates latest poll from last authoritative sync', ()
   assert.equal(status.errors.active, 1);
   assert.equal(status.errors.unresolved, 1);
   assert.equal(status.errors.ignored, 1);
+});
+
+test('reconnect-required auth state remains operator-visible after credentials are cleared', () => {
+  const db = fakeDb();
+  db.countConnectedProfiles = () => 0;
+  db.getProfile = () => ({ id: 'p1', name: 'Oliver Trakt', access_token_enc: null, connected_at: null });
+  db.recentEvents = () => [
+    { event_id: 'auth|state', event: 'auth', status: 'error', detail: JSON.stringify({ state: 'reconnect_required' }), created_at: 399 },
+  ];
+
+  const readiness = buildReadiness({ db });
+  const status = buildProfileOperationalStatus({
+    db,
+    config: { pullIdentityMode: 'trakt' },
+    profileId: 'p1',
+  });
+
+  assert.equal(readiness.ready, false);
+  assert.equal(readiness.status, 'setup_required');
+  assert.equal(status.profile.connected, false);
+  assert.equal(status.profile.connectionState, 'reconnect_required');
+  assert.equal(status.profile.reconnectRequired, true);
+  assert.equal(status.errors.active, 1);
 });
 
 test('old unretried errors remain historical but stop affecting active health', () => {
@@ -89,6 +114,10 @@ test('event detail summaries are compact operator-facing strings', () => {
   assert.equal(
     summarizeEventDetail({ event: 'pull', detail: JSON.stringify({ source: 'cache', items: 97, ageSeconds: 50 }) }),
     'Cache · 97 items · age 50s',
+  );
+  assert.equal(
+    summarizeEventDetail({ event: 'auth', detail: JSON.stringify({ state: 'reconnect_required' }) }),
+    'Reconnect required',
   );
 });
 

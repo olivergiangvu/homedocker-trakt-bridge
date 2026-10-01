@@ -1,11 +1,11 @@
 import { loadConfig, APP_NAME, APP_VERSION } from './config.mjs';
 import { BridgeDb } from './db.mjs';
-import { TraktClient } from './trakt.mjs';
+import { ManagedTraktClient } from './managed-trakt.mjs';
 import { createServer } from './server.mjs';
 
 const config = loadConfig();
 const db = new BridgeDb(config);
-const trakt = new TraktClient(config, db);
+const trakt = new ManagedTraktClient(config, db);
 const server = createServer({ config, db, trakt });
 
 server.listen(config.port, '0.0.0.0', () => {
