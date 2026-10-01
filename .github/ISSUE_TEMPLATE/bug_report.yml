@@ -1,0 +1,70 @@
+name: Bug report
+description: Report a reproducible problem with HomeDocker Trakt Bridge
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please redact all credentials, tokens, manifest URLs and private hostnames.
+  - type: input
+    id: version
+    attributes:
+      label: Bridge version
+      placeholder: e.g. 0.9.2
+    validations:
+      required: true
+  - type: input
+    id: aiostreams
+    attributes:
+      label: AIOStreams version
+      placeholder: e.g. latest image digest or release
+  - type: input
+    id: client
+    attributes:
+      label: Client
+      placeholder: e.g. Strand, Remux, Trellis
+  - type: input
+    id: platform
+    attributes:
+      label: Host platform
+      placeholder: e.g. Ubuntu 24.04, Docker 29.x, amd64
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Problem
+      description: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Add relevant /health, /readiness, dashboard event summaries or logs. Remove credentials first.
+      render: shell
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed ADMIN_KEY, BRIDGE_SECRET_KEY, OAuth tokens, manifest URLs and other credentials.
+          required: true
+        - label: I checked the troubleshooting guide before filing this issue.
+          required: true

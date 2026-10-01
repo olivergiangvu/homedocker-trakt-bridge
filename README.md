@@ -1,5 +1,9 @@
 # HomeDocker Trakt Bridge
 
+[![CI](https://github.com/olivergiangvu/homedocker-trakt-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/olivergiangvu/homedocker-trakt-bridge/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/olivergiangvu/homedocker-trakt-bridge)](https://github.com/olivergiangvu/homedocker-trakt-bridge/releases/latest)
+[![License: MIT](https://img.shields.io/github/license/olivergiangvu/homedocker-trakt-bridge)](LICENSE)
+
 Self-hosted **Trakt sync for AIOStreams and Jellyfin-compatible clients**.
 
 It keeps Trakt as the canonical watched/resume history while AIOStreams provides the Jellyfin-compatible playback/state surface used by clients such as Strand, Remux and Trellis.
@@ -87,12 +91,18 @@ If AIOMetadata is also part of the stack, use **Trackers = This server only** fo
 - **[Troubleshooting](docs/TROUBLESHOOTING.md)** — common sync and identity problems
 - **[Documentation index](docs/README.md)** — advanced and maintainer documentation
 
+## Contributing
+
+Bug reports, feature requests and pull requests are welcome. See **[CONTRIBUTING.md](CONTRIBUTING.md)** before opening a change, and never include live credentials or manifest URLs in public issues.
+
 ## Security
 
 - Keep `ADMIN_KEY`, `BRIDGE_SECRET_KEY`, Trakt OAuth material and profile manifest URLs private.
 - Do not expose container port `7000` directly to the Internet.
 - Terminate HTTPS at a reverse proxy and forward only to `127.0.0.1:7000`.
 - Back up `.env` and `/app/data/bridge.db` together.
+
+For sensitive vulnerabilities, follow **[SECURITY.md](SECURITY.md)** instead of opening a public issue.
 
 ## Project status
 
