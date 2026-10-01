@@ -24,23 +24,27 @@ Keep `.env`, `bridge.db`, `BRIDGE_SECRET_KEY`, `ADMIN_KEY`, and the generated pr
 
 ## Container image
 
+The public GHCR package can be pulled anonymously.
+
 For the easiest install:
 
 ```env
 TRAKT_BRIDGE_IMAGE=ghcr.io/olivergiangvu/homedocker-trakt-bridge:latest
 ```
 
-For reproducible production deployments, pin a release tag or immutable digest instead:
+For reproducible production deployments, pin a release tag:
 
 ```env
-TRAKT_BRIDGE_IMAGE=ghcr.io/olivergiangvu/homedocker-trakt-bridge:<release-tag>
+TRAKT_BRIDGE_IMAGE=ghcr.io/olivergiangvu/homedocker-trakt-bridge:0.9.2
 ```
 
-or:
+or an immutable digest:
 
 ```env
 TRAKT_BRIDGE_IMAGE=ghcr.io/olivergiangvu/homedocker-trakt-bridge@sha256:<digest>
 ```
+
+An immutable digest gives the strongest rollback and release-verification guarantee because it cannot move to a different image later.
 
 ## Identity mode
 
@@ -66,7 +70,9 @@ PULL_STALE_IF_ERROR_SECONDS=3600
 - `PULL_HINT_SECONDS` is advertised to AIOStreams as the preferred pull freshness hint.
 - `PULL_STALE_IF_ERROR_SECONDS` allows a known matching state to remain available during temporary Trakt rate limits or upstream errors.
 
-Lower values such as 120 or 60 seconds can improve freshness in some deployments, but they should be staged and measured rather than copied blindly. AIOStreams has its own watch-state pull cadence, and Trakt can return `429` with a `Retry-After` window if reads or playback writes are too aggressive. The bridge protects that window, but avoiding the limit in the first place gives the best playback experience.
+Lower values such as 120 or 60 seconds can improve freshness in some deployments, but they should be staged and measured rather than copied blindly. HomeDocker accepted `60s` for both cache TTL and hint on v0.9.2 with zero new upstream `429` during the acceptance windows, but that is a deployment-specific optimized profile rather than the public default.
+
+AIOStreams has its own watch-state pull cadence. Bridge TTL alone does not guarantee the same end-to-end client refresh interval, and no AIOStreams `WATCH_STATE_*` environment override is required for the v1.0 baseline while upstream defaults already provide satisfactory freshness.
 
 ## Reverse proxy
 
