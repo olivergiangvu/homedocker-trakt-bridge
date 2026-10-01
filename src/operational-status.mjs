@@ -2,6 +2,8 @@ import { APP_NAME, APP_VERSION } from './config.mjs';
 import { SCHEMA_VERSION } from './migrations.mjs';
 import { summarizeRecentEvents } from './diagnostics.mjs';
 
+export const ACTIVE_ERROR_WINDOW_SECONDS = 30 * 60;
+
 function parseJson(value) {
   if (!value) return null;
   try { return JSON.parse(value); }
@@ -10,6 +12,56 @@ function parseJson(value) {
 
 function latest(rows, predicate) {
   return (rows || []).find(predicate) || null;
+}
+
+function compactAction(action) {
+  const labels = {
+    'history:add': 'History added',
+    'history:remove': 'History removed',
+    'history:bulk-add': 'Bulk history added',
+    'history:bulk-remove': 'Bulk history removed',
+    'watchlist:add': 'Watchlist added',
+    'watchlist:remove': 'Watchlist removed',
+    'scrobble:start': 'Scrobble started',
+    'scrobble:pause': 'Scrobble paused',
+    'scrobble:stop': 'Scrobble stopped',
+  };
+  return labels[action] || action || 'Completed';
+}
+
+export function summarizeEventDetail(row) {
+  const detail = parseJson(row?.detail);
+
+  if (row?.event === 'pull' && detail) {
+    const source = detail.source === 'cache'
+      ? 'Cache'
+      : detail.source === 'stale-cache'
+        ? 'Stale cache'
+        : detail.source === 'coalesced'
+          ? 'Trakt · shared request'
+          : 'Trakt';
+    const parts = [`${source} · ${detail.items ?? 0} items`];
+    if (detail.watchedMovies != null || detail.watchedEpisodes != null) {
+      parts.push(`watched ${detail.watchedMovies ?? 0}/${detail.watchedEpisodes ?? 0}`);
+    }
+    if (detail.watchlistItems != null) parts.push(`watchlist ${detail.watchlistItems}`);
+    if (detail.ageSeconds != null) parts.push(`age ${detail.ageSeconds}s`);
+    if (detail.upstreamError) parts.push(detail.upstreamError);
+    return parts.join(' · ');
+  }
+
+  if (detail?.ignored) {
+    if (detail.ignored === 'progress_below_trakt_minimum') return 'Below 1% · ignored locally';
+    if (detail.ignored === 'covered_by_recent_bulk') return 'Covered by recent bulk update';
+    return `Ignored · ${detail.ignored}`;
+  }
+
+  if (detail?.action) return compactAction(detail.action);
+
+  const raw = String(row?.detail || '');
+  const match = raw.match(/^trakt_(\d+):.*?(?:endpoint=([^\s]+))?$/);
+  if (match) return `Trakt ${match[1]}${match[2] ? ` · ${match[2]}` : ''}`;
+  return raw || '—';
 }
 
 export function buildReadiness({ db }) {
@@ -51,9 +103,19 @@ export function buildProfileOperationalStatus({ db, config, profileId }) {
 
   const rows = db.recentEvents(profileId, 250);
   const summarized = summarizeRecentEvents(rows, 250);
+  const now = typeof db.now === 'function' ? db.now() : Math.floor(Date.now() / 1000);
+
   const lastPull = latest(rows, (row) => row.event === 'pull' && ['ok', 'cached', 'stale'].includes(row.status));
+  const lastAuthoritativePull = latest(rows, (row) => {
+    if (row.event !== 'pull' || row.status !== 'ok') return false;
+    const detail = parseJson(row.detail);
+    return Boolean(detail?.watchedChanged || detail?.watchlistChanged);
+  });
   const lastError = latest(rows, (row) => row.status === 'error');
-  const unresolved = summarized.filter((row) => row.displayStatus === 'retrying').length;
+  const activeErrors = summarized.filter((row) => (
+    row.displayStatus === 'retrying'
+    && Number(row.created_at || 0) >= now - ACTIVE_ERROR_WINDOW_SECONDS
+  ));
   const recovered = summarized.filter((row) => row.displayStatus === 'recovered').length;
   const ignored = summarized.filter((row) => row.status === 'ignored').length;
   const historicalErrors = rows.filter((row) => row.status === 'error').length;
@@ -90,9 +152,13 @@ export function buildProfileOperationalStatus({ db, config, profileId }) {
       lastPullAt: lastPull?.created_at || null,
       lastPullStatus: lastPull?.status || null,
       lastPull: parseJson(lastPull?.detail),
+      lastAuthoritativePullAt: lastAuthoritativePull?.created_at || null,
+      lastAuthoritativePull: parseJson(lastAuthoritativePull?.detail),
     },
     errors: {
-      unresolved,
+      active: activeErrors.length,
+      activeWindowSeconds: ACTIVE_ERROR_WINDOW_SECONDS,
+      unresolved: activeErrors.length,
       recovered,
       ignored,
       historical: historicalErrors,
