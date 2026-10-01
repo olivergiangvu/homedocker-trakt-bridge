@@ -1,314 +1,189 @@
-# Architecture — v0.4.0
+# Architecture
 
-v0.4.0 keeps the v0.3.7 watch-state semantics and hardens the service around an explicit production authority model, schema migrations, readiness/status surfaces and release engineering.
+HomeDocker Trakt Bridge exists to keep **one canonical watched/resume authority** while still exposing state through AIOStreams to Jellyfin-compatible clients.
 
-## Canonical HomeDocker topology
-
-```text
-                         READ AUTHORITY
-                              |
-                              v
-                           TRAKT
-                              ^
-                              |
-                       Trakt Bridge
-                       v0.4.0
-                              ^
-                              |
-                         AIOStreams
-                    Jellyfin state surface
-                              |
-         +--------------------+--------------------+
-         |                    |                    |
-       Strand               Odin              Remux/Trellis
-   native Trakt ON
-
-
-                      WRITE / FAN-OUT PATH
-                              |
-                       playback events
-                              |
-                         AIOMetadata
-                              |
-                   secondary trackers
-                Simkl / MDBList / etc.
-```
-
-## Authority rules
-
-HomeDocker production intentionally has one external history read authority:
+## Canonical topology
 
 ```text
-WATCH HISTORY / RESUME      = Trakt
-JELLYFIN WATCH-STATE SURFACE = AIOStreams
-SECONDARY TRACKER FAN-OUT   = AIOMetadata
-METADATA / CATALOG          = AIOMetadata
-STREAM RESOLUTION           = AIOStreams
+                         READ / HISTORY AUTHORITY
+
+                               Trakt
+                                 ^
+                                 |
+                        HomeDocker Trakt Bridge
+                                 ^
+                                 |
+                              AIOStreams
+                    Jellyfin-compatible state surface
+                                 |
+              +------------------+------------------+
+              |                  |                  |
+            Strand              Odin          Remux / Trellis
+
+
+                         METADATA / FAN-OUT
+
+                            AIOMetadata
+                      metadata + local playstate
+                                 |
+                   optional secondary tracker writes
+                                 |
+                     Simkl / MDBList / others
 ```
 
-AIOMetadata should use **Trackers = This server only** for the Jellyfin user that represents the same person as the HomeDocker owner. That picker controls what AIOMetadata reads back into its Jellyfin Continue Watching / watched / Next Up surface. It does not disable enabled Watch Tracking writes to secondary trackers.
+## Responsibility split
 
-This removes a second external history read authority while preserving AIOMetadata's useful write/fan-out role.
+| Component | Responsibility |
+| --- | --- |
+| Trakt | canonical watched/resume history |
+| Trakt Bridge | translate/synchronize AIOStreams watch state and Trakt |
+| AIOStreams | Jellyfin-compatible playback/state surface |
+| AIOMetadata | metadata/catalog, local playstate, optional secondary-tracker write fan-out |
+| Clients | playback and presentation |
 
-## Watch-state data path
+The core design rule is simple:
+
+> Do not configure multiple external tracker-history sources to write competing watched/resume state back into the same AIOStreams surface.
+
+## Read path
+
+Trakt -> AIOStreams:
 
 ```text
-Jellyfin-compatible client
-          |
-          v
-     AIOStreams
-     watch_state v2
-       /       \
-      / push    \ pull
-     v           ^
- Trakt Bridge ---+
-      |
-      +-- provider ID normalization
-      +-- learned show alias evidence
-      +-- pull identity policy
-      +-- sub-1% scrobble guard
-      +-- duplicate-safe bulk reconciliation
-      +-- restart-safe pull cache
-      |
-      v
-    Trakt API
+Trakt playback/history/watchlist
+        |
+        v
+Trakt Bridge pull
+        |
+        v
+AIOStreams watch_state
+        |
+        v
+Jellyfin-compatible clients
 ```
 
-Trakt remains canonical for long-term watched history and watchlist state. AIOStreams remains the playback/state surface exposed to clients.
+Bridge pull provides:
 
-## Identity model
+- paused/resume items
+- watched movies
+- watched episodes
+- movie/show watchlist state
+- exact Next Up only when upstream data supplies it
 
-AIOStreams Watch State v2 can carry both `metaId` / `videoId` and shared provider IDs. The bridge normalizes the conventional HomeDocker spaces:
+## Write path
+
+AIOStreams -> Trakt:
 
 ```text
-IMDb  -> tt0903747
-TMDb  -> tmdb:1396
-TVDb  -> tvdb:81189
+client playback/state event
+        |
+        v
+AIOStreams watch_state push
+        |
+        v
+Trakt Bridge
+        |
+        v
+Trakt scrobble / history / watchlist
 ```
 
-Known aliases are resolved in deterministic order. A Trakt 404 can fall through to another known provider spelling; authentication failures, `429` and `5xx` remain errors.
+The bridge handles:
 
-### Learned IMDb aliases
+- scrobble start/pause/stop
+- watched/unwatched history
+- season/show bulk history
+- watchlist add/remove
+- retry-safe idempotency
 
-A real show can legitimately have two valid IMDb IDs. The bridge persists evidence keyed by:
+## AIOMetadata boundary
+
+For the HomeDocker owner Jellyfin user:
 
 ```text
-profile + stable Trakt show ID
+Trackers = This server only
 ```
 
-with:
+This keeps external tracker history from being read back into AIOMetadata's Jellyfin Continue Watching / watched / Next Up surface.
 
-```text
-preferredMetaId = IMDb spelling used by AIOStreams playback
-traktImdb       = IMDb spelling returned by Trakt
-revision        = monotonic alias revision
-```
+Enabled Watch Tracking writes can still fan playback out independently.
 
-The production regression fixture remains:
+See [INTEGRATIONS.md](INTEGRATIONS.md).
 
-```text
-Trakt IMDb:      tt44051354
-AIOStreams IMDb: tt44094505
-TMDb:            276470
-TVDb:            480791
-```
+## Native Trakt + AIOStreams coexistence
 
-### Pull identity policy
+HomeDocker uses:
 
 ```env
-PULL_IDENTITY_MODE=trakt      # default
-PULL_IDENTITY_MODE=aiostreams # optional legacy rewrite mode
+PULL_IDENTITY_MODE=trakt
 ```
 
-`trakt` mode preserves the Trakt IMDb spelling on pull. This is the HomeDocker production mode and is required when clients such as Strand use native Trakt in parallel with AIOStreams.
+This preserves Trakt's provider spelling on pull, allowing clients that also use native Trakt to converge on the same identity namespace.
 
-`aiostreams` mode keeps the v0.3.5 learned-alias rewrite behavior for AIOStreams-only clients.
+The learned-alias implementation and historical regression fixture are developer concerns and are documented in [DEVELOPMENT.md](DEVELOPMENT.md).
 
-Learned aliases remain stored in both modes. In `trakt` mode they are diagnostic evidence and do not rewrite the authoritative pull representation.
-
-## Push semantics
-
-Supported events:
+## Runtime boundary
 
 ```text
-start
-pause
-stop
-played
-unplayed
-watchlisted
-unwatchlisted
-bulk played/unplayed
+Internet
+   |
+ host nginx / HTTPS
+   |
+ 127.0.0.1:7000
+   |
+ Trakt Bridge container
+   |
+ /app/data/bridge.db
 ```
 
-AIOStreams uses a stricter watched threshold than Trakt scrobble stop, so unfinished AIOStreams stops are mapped to Trakt pause rather than accidentally promoting 80–89% progress to watched.
+The bridge does not terminate TLS itself in the HomeDocker deployment.
 
-v0.3.7 introduced the production minimum-progress guard, retained by v0.4.0:
+## Persistence
+
+The persistent SQLite database stores:
+
+- profiles
+- encrypted Trakt tokens
+- OAuth state
+- processed event IDs
+- pull/media cache
+- learned identity evidence
+- event history
+
+v0.4.0 uses explicit schema tracking:
 
 ```text
-progress < 1%
-  start / pause / unfinished stop -> ignored + 204
-  explicit played stop           -> history-add
-
-progress >= 1%
-  normal scrobble mapping applies
+PRAGMA user_version = 1
 ```
 
-Ignored events are still entered into the processed-event idempotency store.
+The binary fails closed if the DB schema is newer than it supports.
 
-## Pull semantics
+## Cache model
 
-Fresh pull base reads:
+There are two pull-cache layers:
 
 ```text
-/sync/last_activities
-/sync/playback/movies?extended=full
-/sync/playback/episodes?extended=full
+memory
+SQLite media_cache
 ```
 
-When the state cursor changed, authoritative state additionally reads all pages of:
+Fresh matching pulls can be served from cache.
+
+Bounded stale fallback is allowed only when it is safe and the Trakt failure is transient, such as rate limiting or upstream 5xx.
+
+The current persisted pull namespace remains:
 
 ```text
-/sync/watched/movies
-/sync/watched/shows?extended=progress
-/sync/watchlist/movies/added/desc
-/sync/watchlist/shows/added/desc
+pull-state:v5:<profileId>
 ```
 
-Authoritative `watched` and `watchlist` blocks are atomic. If a changed-state read cannot be completed, the pull fails rather than returning destructive partial/empty state.
+## Operator vs developer surfaces
 
-The pull representation remains compatible with v0.3.6/v0.3.7:
+Architecture intentionally separates normal operations from forensic diagnostics:
 
 ```text
-state cursor schema = watch-state-v0.3.6
-persisted cache key = pull-state:v5:<profile>
+Dashboard      = connection, manifest, sync health, active errors, events
+/status        = structured operational + identity diagnostics
+SQLite / tests = forensic/developer evidence
 ```
 
-v0.4.0 does not require another pull-cache purge.
-
-## Pull cache and rate-limit behavior
-
-Successful pull cache contains only:
-
-```text
-version
-items
-fetchedAt
-```
-
-A fresh cache hit requires the caller's `since` cursor to match the cached version and the entry to be younger than `PULL_TTL_SECONDS`.
-
-Bounded stale fallback is allowed only for matching cursors on transient `429` / `5xx` and only within `PULL_STALE_IF_ERROR_SECONDS`.
-
-Cached/stale responses never fabricate authoritative watched or watchlist blocks.
-
-## Database lifecycle — new in v0.4.0
-
-v0.3.x created tables opportunistically. v0.4.0 introduces explicit SQLite schema versioning using `PRAGMA user_version` and ordered migrations.
-
-```text
-schema 0  -- existing v0.3.x database
-    |
-    v
-migration 1: baseline-v0.4.0
-    |
-    v
-schema 1
-```
-
-Migration 1 is intentionally idempotent: existing v0.3.x tables/data are retained while missing baseline objects are created and the schema is marked as version 1.
-
-Safety rules:
-
-- upgrade older supported schemas forward;
-- never silently downgrade;
-- a database newer than the running binary fails closed;
-- profiles, OAuth tokens, processed events, aliases and pull cache remain intact;
-- `bridge.db` + `.env` + nginx/compose configuration remain DR-critical.
-
-## Runtime health surfaces — new in v0.4.0
-
-### `/health`
-
-Liveness only. It answers when the process is serving HTTP.
-
-### `/readiness`
-
-Checks:
-
-```text
-database query succeeds
-schema == expected schema
->= 1 Trakt-connected profile
-```
-
-It returns HTTP `200` when ready and `503` with `status=setup_required` when the process is alive but not operationally configured.
-
-No live Trakt API request is performed by readiness, so health checks do not consume rate limit or become dependent on Internet latency.
-
-### `/status?key=<ADMIN_KEY>`
-
-Authenticated operator JSON. It exposes safe operational diagnostics only: schema, authority model, pull summary, unresolved/historical error counts and learned alias diagnostics. It does not expose OAuth tokens, bridge secrets or addon/setup credentials.
-
-## Operator UI — new in v0.4.0
-
-The setup page is now an operational dashboard rather than only a connection page. It surfaces:
-
-```text
-runtime version / health
-history authority
-pull identity mode
-DB schema
-last successful pull
-items / watched / watchlist counts
-unresolved vs historical errors
-AIOMetadata authority guidance
-learned identity aliases + effective pull spelling
-filtered recent events
-```
-
-Event filters:
-
-```text
-All | Errors | Pull | Playback | Ignored
-```
-
-Historical errors remain visible for audit while unresolved retry chains are counted separately.
-
-## Container and network boundary
-
-The production container:
-
-- runs as the non-root `node` user;
-- stores persistent state under `/app/data`;
-- exposes application port 7000;
-- uses Docker liveness healthcheck against `/health`;
-- is expected to bind host port 7000 to loopback only;
-- relies on host nginx for public TLS termination.
-
-Do not expose port 7000 directly to the Internet.
-
-## CI / release lifecycle — new in v0.4.0
-
-Every push/PR must pass:
-
-```text
-npm run check
-npm test
-Docker image build
-container /health smoke test
-/readiness setup-required smoke test
-```
-
-Tagged releases (`v*`) additionally publish an immutable GHCR image and create a GitHub Release after code/tests pass.
-
-Production deployment should pin an explicit release tag or digest rather than `latest`.
-
-## Deferred after v0.4.0
-
-- full mock Trakt integration test matrix (`401/404/422/429/5xx`, pagination, OAuth refresh);
-- end-to-end fake AIOStreams ↔ Bridge ↔ mock Trakt protocol tests;
-- restore/migration test from real production backup artifacts;
-- anime/absolute-number episode mapping;
-- generalized non-IMDb duplicate entity reconciliation;
-- v0.9 release-candidate burn-in and v1.0 compatibility freeze.
+The web UI should answer operator questions, not duplicate developer documentation.
