@@ -4,5 +4,6 @@ data/*
 *.db
 *.db-shm
 *.db-wal
+.pre-public-forbidden
 .DS_Store
 npm-debug.log*
