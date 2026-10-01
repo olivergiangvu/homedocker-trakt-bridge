@@ -66,12 +66,26 @@ export class BridgeDb {
       now,
       profileId,
     );
+    this.logEvent({
+      profileId,
+      eventId: 'auth|state',
+      event: 'auth',
+      status: 'ok',
+      detail: JSON.stringify({ state: 'connected' }),
+    });
   }
 
-  clearTokens(profileId) {
+  clearTokens(profileId, reason = 'disconnected') {
     const now = this.now();
     this.db.prepare(`UPDATE profiles SET access_token_enc=NULL, refresh_token_enc=NULL, token_expires_at=NULL, connected_at=NULL, updated_at=? WHERE id=?`)
       .run(now, profileId);
+    this.logEvent({
+      profileId,
+      eventId: 'auth|state',
+      event: 'auth',
+      status: reason === 'reconnect_required' ? 'error' : 'ok',
+      detail: JSON.stringify({ state: reason }),
+    });
   }
 
   getTokens(profileId) {
