@@ -2,16 +2,17 @@
 
 Self-hosted **bidirectional AIOStreams `watch_state` v2 ↔ Trakt bridge** for Jellyfin-compatible playback clients such as Infuse, Swiftfin, Strand and Odin.
 
-**Current release: v0.3.6 — playback, watched history, watchlist sync, bulk marks, duplicate-safe reconciliation, provider-ID hardening, learned IMDb aliases, and configurable Trakt-preserving pull identity.**
+**Current release: v0.3.7 — v0.3.6 Trakt-preserving identity compatibility plus a fail-safe guard that suppresses Trakt scrobbles below 1% progress.**
 
 ## What it does
 
 ### AIOStreams → Trakt
 
-- `start` → Trakt scrobble start
-- `pause` → Trakt scrobble pause
-- unfinished AIOStreams `stop` → Trakt scrobble pause
-- finished AIOStreams `stop` → Trakt scrobble stop
+- `start` → Trakt scrobble start when progress is at least 1%
+- `pause` → Trakt scrobble pause when progress is at least 1%
+- unfinished AIOStreams `stop` → Trakt scrobble pause when progress is at least 1%
+- sub-1% start/pause/unfinished-stop events → acknowledged and ignored before Trakt
+- finished AIOStreams `stop` → Trakt scrobble stop; an explicit played stop below 1% falls back to history add
 - single `played` / `unplayed` → add/remove history
 - whole-season/show `played` / `unplayed` → one nested Trakt history sync request per AIOStreams bulk part
 - redundant same-kind per-episode echoes covered by a recent successful bulk mark → safely ignored
@@ -32,6 +33,25 @@ Self-hosted **bidirectional AIOStreams `watch_state` v2 ↔ Trakt bridge** for J
 - transient Trakt `429` / `5xx` can use bounded stale cache when safe
 
 Trakt remains the canonical long-term tracker source for watched history and watchlist state. AIOStreams remains the Jellyfin-compatible playback/state surface.
+
+## Why v0.3.7 exists
+
+Production observed AIOStreams retrying both `pause` and unfinished `stop` events at exactly `0%` progress. The bridge previously forwarded those events to Trakt `/scrobble/pause`, where Trakt rejected them with HTTP `422` because they were below the service's minimum meaningful scrobble progress.
+
+v0.3.7 adds a fail-safe boundary before any Trakt scrobble request:
+
+```text
+progress < 1%
+  start / pause / unfinished stop -> ignore + 204
+  explicit played stop           -> history-add
+
+progress >= 1%
+  existing scrobble behavior remains unchanged
+```
+
+Ignored events are still marked processed, so stable AIOStreams retry IDs recover instead of looping on a guaranteed upstream `422`.
+
+This is a push-only safety fix. It does **not** change the v0.3.6 pull representation, `PULL_IDENTITY_MODE`, watch-state schema, pull cache namespace, profile tokens, or learned aliases.
 
 ## Why v0.3.6 exists
 
@@ -89,6 +109,8 @@ TVDb:            480791
 
 AIOStreams currently uses a 90% watched threshold while Trakt `/scrobble/stop` can mark watched above 80%. The bridge therefore maps `stop + played:false` to Trakt `/scrobble/pause`, preventing 80–89% progress from being promoted to watched by Trakt.
 
+v0.3.7 additionally refuses to send a Trakt scrobble below 1% progress. This prevents deterministic `422` retry loops for playback sessions that open and immediately pause/stop at the beginning.
+
 Alias learning remains evidence-based:
 
 - the original AIOStreams event must be an episode `stop`;
@@ -129,6 +151,7 @@ Infuse / Swiftfin / Strand / Odin / Jellyfin-compatible client
                 +-- pull identity mode
                 |     trakt      -> preserve Trakt IMDb
                 |     aiostreams -> learned alias rewrite
+                +-- sub-1% scrobble guard
                 +-- /scrobble/*
                 +-- /sync/history + bulk history
                 +-- recent bulk coverage dedupe
@@ -194,7 +217,7 @@ curl http://127.0.0.1:7000/health
 Expected:
 
 ```json
-{"status":"ok","app":"HomeDocker Trakt Bridge","version":"0.3.6"}
+{"status":"ok","app":"HomeDocker Trakt Bridge","version":"0.3.7"}
 ```
 
 ## Reverse proxy
@@ -207,7 +230,7 @@ Open the setup page for the bridge and connect the profile to Trakt. The resulti
 
 ## AIOStreams manifest
 
-v0.3.6 advertises:
+v0.3.7 advertises the same Watch State v2 capabilities as v0.3.6:
 
 ```text
 watch_state version: 2
@@ -231,7 +254,7 @@ Explicit valid shared IDs remain authoritative while `metaId` fills missing cand
 
 ### Learned IMDb aliases
 
-The learned alias store introduced in v0.3.4 and fixed in v0.3.5 remains present in v0.3.6:
+The learned alias store introduced in v0.3.4 and fixed in v0.3.5 remains present in v0.3.7:
 
 ```text
 profile + stable Trakt show ID
@@ -240,7 +263,7 @@ profile + stable Trakt show ID
     -> revision
 ```
 
-The difference is **how pull output uses it**:
+The difference introduced by v0.3.6 is **how pull output uses it**:
 
 ```text
 PULL_IDENTITY_MODE=trakt
@@ -250,7 +273,7 @@ PULL_IDENTITY_MODE=aiostreams
     rewrite Trakt IMDb to learned AIOStreams IMDb
 ```
 
-The translated upstream scrobble may be either `/scrobble/stop` or `/scrobble/pause`. The learning evidence is the original successful AIOStreams `stop` event.
+The translated upstream scrobble may be either `/scrobble/stop` or `/scrobble/pause`. The learning evidence is the original successful AIOStreams `stop` event. A sub-1% ignored stop does not teach or change an alias because no upstream scrobble succeeded.
 
 ## Pull behavior
 
@@ -271,7 +294,7 @@ When the state cursor changed they additionally read all pages of:
 /sync/watchlist/shows/added/desc
 ```
 
-v0.3.6 advances the pull representation schema to:
+v0.3.7 intentionally keeps the v0.3.6 pull representation schema:
 
 ```text
 state cursor schema: watch-state-v0.3.6
@@ -279,7 +302,7 @@ state cursor schema: watch-state-v0.3.6
 
 The selected `PULL_IDENTITY_MODE` participates in the version basis, so switching modes forces a new authoritative representation even if Trakt watched/watchlist timestamps did not change.
 
-Production upgrades from v0.3.5 should remove old persisted `pull-state:v5:*` cache rows once before the first v0.3.6 authoritative pull. Profile tokens and learned aliases must not be deleted.
+The one-time v0.3.5 → v0.3.6 `pull-state:v5:*` cleanup remains a v0.3.6 migration step; upgrading v0.3.6 → v0.3.7 requires no additional pull-cache purge.
 
 ## Next Up behavior
 
@@ -325,7 +348,7 @@ previous preference, if any
 alias revision
 ```
 
-In `trakt` mode, learned aliases remain diagnostic/persisted evidence but do not rewrite Trakt pull identity.
+In `trakt` mode, learned aliases remain diagnostic/persisted evidence but do not rewrite Trakt pull identity. Sub-1% playback events are recorded as ignored instead of surfacing as retrying Trakt 422 errors.
 
 ## Backup / disaster recovery
 
@@ -355,6 +378,7 @@ See [CHANGELOG.md](CHANGELOG.md).
 - **v0.3.4:** persistent playback-learned IMDb alias reconciliation
 - **v0.3.5:** unfinished-stop alias-learning fix + immediate cache invalidation
 - **v0.3.6:** configurable pull identity; default Trakt-preserving mode restores native-Trakt compatibility
+- **v0.3.7:** ignore sub-1% scrobbles before Trakt to prevent deterministic 422 retry loops
 - **v1.0:** production migrations, release image workflow and broader compatibility hardening
 
 ## Security
@@ -374,4 +398,4 @@ npm run check
 npm test
 ```
 
-v0.3.6 has no runtime npm dependencies; it uses Node built-ins including `node:sqlite`.
+v0.3.7 has no runtime npm dependencies; it uses Node built-ins including `node:sqlite`.

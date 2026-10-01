@@ -1,4 +1,4 @@
-# Architecture — v0.3.6
+# Architecture — v0.3.7
 
 ```text
 Infuse / Swiftfin / Strand / Odin / Jellyfin-compatible client
@@ -29,6 +29,7 @@ Infuse / Swiftfin / Strand / Odin / Jellyfin-compatible client
                 |     trakt      -> preserve Trakt IMDb
                 |     aiostreams -> learned AIOStreams IMDb rewrite
                 |
+                +-- sub-1% scrobble guard
                 +-- /scrobble/* -> playback transitions
                 +-- /sync/history -> single + bulk watched state
                 +-- recent bulk coverage -> suppress duplicate single echoes
@@ -45,7 +46,7 @@ Infuse / Swiftfin / Strand / Odin / Jellyfin-compatible client
 
 Trakt is the canonical long-term tracker source for watched history and watchlist state. AIOStreams is the Jellyfin-compatible playback/state surface.
 
-v0.3.6 remains bidirectional for playback progress, watched/unwatched state, movie/show watchlist state and whole-season/show bulk marks.
+v0.3.7 remains bidirectional for playback progress, watched/unwatched state, movie/show watchlist state and whole-season/show bulk marks. It keeps the v0.3.6 pull-identity model unchanged and adds a push-side guard for scrobble progress below 1%.
 
 For HomeDocker production, AIOMetadata may still receive playback and fan out to secondary trackers, but it should not act as a second history authority when Trakt Bridge is the selected history source.
 
@@ -98,7 +99,7 @@ revision        = monotonic alias-state revision
 
 v0.3.5 corrected alias learning so a successful unfinished AIOStreams `stop` translated to Trakt `/scrobble/pause` can still teach the alias.
 
-The alias record remains persisted in v0.3.6.
+The alias record remains persisted in v0.3.7. A sub-1% stop ignored by v0.3.7 does not teach an alias because there is no successful upstream scrobble to serve as evidence.
 
 ## Why pull identity became configurable
 
@@ -113,7 +114,7 @@ v0.3.4/v0.3.5 rewrote Trakt pull rows from `tt44051354` to learned `tt44094505`.
 
 Before v0.3.4, both paths preserved Trakt spelling and naturally converged.
 
-v0.3.6 therefore adds:
+v0.3.6 therefore added:
 
 ```env
 PULL_IDENTITY_MODE=trakt      # default
@@ -157,7 +158,20 @@ AIOStreams stop + played:false -> Trakt /scrobble/pause
 AIOStreams completed stop      -> Trakt /scrobble/stop
 ```
 
-Alias learning occurs only after the translated upstream request succeeds. A failed or rate-limited request does not commit a new preference.
+v0.3.7 adds the upstream minimum-progress guard before media resolution/scrobble delivery:
+
+```text
+progress < 1%
+  start / pause / unfinished stop -> ignored + 204
+  explicit played stop           -> history-add
+
+progress >= 1%
+  existing scrobble mapping applies
+```
+
+This prevents deterministic Trakt `422` retry loops for sessions that open and immediately pause/stop at the beginning. Ignored events are marked processed, so a stable AIOStreams retry ID converges successfully.
+
+Alias learning occurs only after the translated upstream request succeeds. A failed, rate-limited, or sub-1% ignored request does not commit a new preference.
 
 ### Bulk history
 
@@ -196,7 +210,7 @@ When the state cursor changed, authoritative state additionally reads all pages 
 /sync/watchlist/shows/added/desc
 ```
 
-The pull row pipeline is now:
+The pull row pipeline remains:
 
 ```text
 Trakt rows
@@ -215,7 +229,7 @@ AIOStreams watch-state builders
 
 ## Version / migration gate
 
-v0.3.6 changes the pull representation and advances the schema salt:
+v0.3.7 does not change pull representation. It intentionally keeps the v0.3.6 schema salt:
 
 ```text
 schema = watch-state-v0.3.6
@@ -223,13 +237,7 @@ schema = watch-state-v0.3.6
 
 The selected pull identity mode participates in the state-version basis. Switching `trakt` ↔ `aiostreams` therefore produces a new version even when Trakt activity timestamps did not change.
 
-Production upgrades from v0.3.5 should remove persisted:
-
-```text
-pull-state:v5:<profile>
-```
-
-once before the first v0.3.6 authoritative pull so no cached v0.3.5 rewritten payload survives the cutover.
+The one-time v0.3.5 → v0.3.6 migration removed persisted `pull-state:v5:<profile>` before the first authoritative v0.3.6 pull. Upgrading v0.3.6 → v0.3.7 requires no additional pull-cache purge.
 
 Do not remove:
 
@@ -299,9 +307,9 @@ previous preference
 alias revision
 ```
 
-In `trakt` mode these aliases remain visible diagnostics but do not alter pull identity.
+In `trakt` mode these aliases remain visible diagnostics but do not alter pull identity. Sub-1% push retries are converted from repeated upstream `422` errors into an ignored/processed event.
 
-## Deferred after v0.3.6
+## Deferred after v0.3.7
 
 - dropped/undropped state
 - active per-show Trakt progress fan-out for richer Next Up

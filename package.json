@@ -1,6 +1,6 @@
 {
   "name": "homedocker-trakt-bridge",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "private": true,
   "type": "module",
   "description": "Self-hosted bidirectional AIOStreams watch_state v2 and Trakt bridge",

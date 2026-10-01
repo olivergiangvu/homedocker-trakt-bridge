@@ -2,6 +2,24 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+## [0.3.7] - 2026-10-01
+
+### Fixed
+- Prevents deterministic Trakt `422` retry loops when AIOStreams emits `start`, `pause`, or unfinished `stop` events below 1% playback progress.
+- Sub-1% scrobble events are acknowledged locally and marked processed without calling Trakt.
+- Explicit `played=true` stops below 1% fall back to Trakt history add so an explicit watched state is not discarded because of inconsistent progress metadata.
+- Setup UI version/capability labels remain dynamic through `APP_VERSION` and display the active `PULL_IDENTITY_MODE`.
+
+### Safety
+- Exactly 1% progress remains eligible for normal scrobbling; only values below 1% are filtered.
+- Unknown duration keeps the existing fail-safe behavior and is not treated as zero progress.
+- Ignored sub-1% events cannot teach or change an IMDb alias because no upstream scrobble succeeded.
+- The v0.3.6 pull identity behavior, `watch-state-v0.3.6` schema salt, pull cache namespace, OAuth/profile data, and learned aliases are unchanged.
+
+### Upgrade
+- No database migration or pull-cache purge is required when upgrading from v0.3.6.
+- Recommended HomeDocker setting remains `PULL_IDENTITY_MODE=trakt` when native Trakt and AIOStreams are used in parallel.
+
 ## [0.3.6] - 2026-10-01
 
 ### Added
@@ -143,7 +161,7 @@ All notable changes to HomeDocker Trakt Bridge are documented here.
 - `watched` and `watchlist` are returned atomically only after the complete changed authoritative state was read successfully.
 - Cached/stale responses still contain only `version + items`, never authoritative watched/watchlist state.
 - AIOStreams watchlist pushes are limited to movie/show scope; episode/season favourites are not invented.
-- Trakt assigns watchlist timestamps, so the bridge does not claim to preserve the AIOStreams event timestamp when adding to Trakt.
+- Trakt assigns list timestamps, so the bridge does not claim to preserve the AIOStreams event timestamp when adding to Trakt.
 - Old v0.2.x persisted pull-cache rows are ignored by v0.3.0 and expire naturally under their existing SQLite TTL.
 - Bulk played/unplayed marks, dropped state and anime absolute-number mapping remain unadvertised.
 
