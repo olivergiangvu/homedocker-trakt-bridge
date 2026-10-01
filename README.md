@@ -1,145 +1,101 @@
 # HomeDocker Trakt Bridge
 
-A self-hosted bridge between **AIOStreams `watch_state` v2** and **Trakt**.
+Self-hosted **Trakt sync for AIOStreams and Jellyfin-compatible clients**.
 
-It lets Jellyfin-compatible clients use AIOStreams as their playback/state surface while keeping Trakt as the canonical watched/resume history source.
+It keeps Trakt as the canonical watched/resume history while AIOStreams provides the Jellyfin-compatible playback/state surface used by clients such as Strand, Remux and Trellis.
 
-**Current release-candidate line: v0.9.1.**
-
-## What this project does
-
-```text
-Jellyfin-compatible clients
-(Strand / Odin / Remux / Trellis / others)
-               |
-               v
-          AIOStreams
-               |
-               v
-      HomeDocker Trakt Bridge
-               |
-               v
-             Trakt
+```mermaid
+flowchart LR
+    C["Jellyfin-compatible clients"] --> A["AIOStreams"]
+    A <--> B["Trakt Bridge"]
+    B <--> T["Trakt"]
 ```
 
-The bridge supports:
+## Features
 
-- playback scrobbling (`start`, `pause`, `stop`)
-- watched / unwatched history
-- watched-state pull back into AIOStreams
-- movie/show watchlist sync
+- playback scrobbling: start, pause and stop
+- watched / unwatched history sync
+- resume state pulled from Trakt into AIOStreams
+- movie and show watchlist sync
 - bulk season/show watched updates
-- retry-safe and restart-safe event processing
-- restart-safe pull cache with bounded stale fallback
-- Trakt rate-limit / transient-error recovery
-- fail-closed authoritative pulls when upstream state is incomplete
-- automatic OAuth reconnect state when Trakt rejects an invalid refresh grant
-- `PULL_IDENTITY_MODE=trakt` for native-Trakt + AIOStreams coexistence
-- operational health, readiness and authenticated status endpoints
-- a compact operator dashboard
+- retry-safe and restart-safe processing
+- Trakt rate-limit protection and bounded stale fallback
+- native Trakt + AIOStreams coexistence
+- lightweight operator dashboard with health and sync status
 
-## HomeDocker authority model
+## Quick start
 
-Use one history read authority:
-
-```text
-Trakt                = canonical watched/resume history
-Trakt Bridge         = Trakt <-> AIOStreams state bridge
-AIOStreams           = Jellyfin-compatible state/playback surface
-AIOMetadata          = metadata/catalog + secondary-tracker write fan-out
-AIOMetadata Trackers = This server only
-```
-
-`AIOMetadata -> Trackers = This server only` prevents secondary tracker history from being read back as a second competing Jellyfin history source. Enabled Watch Tracking writes can still fan playback out to secondary trackers.
-
-## Production quick start
-
-Production deploys use the published GHCR image. Source builds are reserved for development.
+Requirements: Docker Engine, Docker Compose, a Trakt API application and an HTTPS reverse proxy.
 
 ```bash
+git clone https://github.com/olivergiangvu/homedocker-trakt-bridge.git
+cd homedocker-trakt-bridge
+
 cp .env.example .env
 cp compose.example.yml compose.yml
+```
 
-# Required when the GHCR package is private.
-docker login ghcr.io
+Edit `.env` and set at least:
 
+```env
+PUBLIC_BASE_URL=https://trakt.example.com
+TRAKT_CLIENT_ID=...
+TRAKT_CLIENT_SECRET=...
+BRIDGE_SECRET_KEY=...
+ADMIN_KEY=...
+```
+
+Then start the bridge:
+
+```bash
 docker compose pull
 docker compose up -d
 ```
 
-Set at least the Trakt credentials, bridge secrets and public HTTPS URL in `.env`.
+If the GHCR package is private, run `docker login ghcr.io` first.
 
-Recommended HomeDocker settings:
+Verify:
+
+```bash
+curl -fsS http://127.0.0.1:7000/health
+curl -fsS http://127.0.0.1:7000/readiness
+```
+
+## Connect Trakt and AIOStreams
+
+1. Open `https://your-domain/setup?key=<ADMIN_KEY>`.
+2. Create a profile and connect Trakt through OAuth.
+3. Copy the **Manifest URL** shown on the profile dashboard.
+4. Add that manifest URL to AIOStreams.
+
+Treat the manifest URL as a credential.
+
+For clients that also use native Trakt directly, the recommended setting is:
 
 ```env
 PULL_IDENTITY_MODE=trakt
-PULL_CACHE_TTL_SECONDS=60
-PULL_HINT_SECONDS=60
 ```
 
-`PULL_CACHE_TTL_SECONDS` controls Bridge-side unchanged-state caching. `PULL_HINT_SECONDS` is advertised to AIOStreams as the pull TTL hint, so freshness can be tuned independently without coupling both layers to one value.
-
-For exact release reproducibility, `TRAKT_BRIDGE_IMAGE` can be pinned to an immutable GHCR digest instead of a semver tag.
-
-The container listens on port `7000`; the production compose binds it to `127.0.0.1` and expects the host reverse proxy to provide HTTPS.
-
-## Development build
-
-To build the current source tree locally:
-
-```bash
-cp .env.example .env
-docker compose -f compose.example.yml -f compose.dev.yml up -d --build
-```
-
-The development override changes the service to a local source build without changing the production Compose contract.
-
-## Operator endpoints
-
-| Endpoint | Purpose |
-| --- | --- |
-| `GET /health` | process liveness |
-| `GET /readiness` | DB/schema/profile readiness |
-| `GET /status?key=<ADMIN_KEY>` | authenticated operational diagnostics |
-| `/setup?key=<ADMIN_KEY>` | profile administration |
-
-When Trakt rejects a refresh token with OAuth `invalid_grant`, the bridge clears unusable local credentials, reports `reconnect_required` through `/status`, and returns `setup_required` from `/readiness` until the profile is reconnected.
-
-## Release artifact policy
-
-The pre-1.0 RC line treats the published container as the release artifact:
-
-- release workflow builds and pushes GHCR
-- stable tags also publish `latest`
-- the exact pushed image digest is pulled and smoke-tested before the release job completes
-- release images include SBOM and provenance metadata
-- the Node base image is digest-pinned and monitored by Dependabot
-- CI enforces the accepted runtime-image size budget
-
-See [`docs/releases/v0.9.1.md`](docs/releases/v0.9.1.md) for the performance/freshness RC acceptance and [`docs/releases/v0.9.0.md`](docs/releases/v0.9.0.md) for the release-artifact gate introduced by the previous RC.
+If AIOMetadata is also part of the stack, use **Trackers = This server only** for the Jellyfin user so Trakt remains the single external watched/resume read authority.
 
 ## Documentation
 
-Start here: **[`docs/README.md`](docs/README.md)**.
+- **[Getting started](docs/SETUP.md)** — install, connect Trakt and add the manifest to AIOStreams
+- **[Configuration](docs/CONFIGURATION.md)** — image pinning, identity mode, freshness and reverse proxy settings
+- **[Operations](docs/OPERATIONS.md)** — health, backup, update, rollback and logs
+- **[Integrations](docs/INTEGRATIONS.md)** — AIOMetadata and native-Trakt coexistence
+- **[Troubleshooting](docs/TROUBLESHOOTING.md)** — common sync and identity problems
+- **[Documentation index](docs/README.md)** — advanced and maintainer documentation
 
-| Guide | Use it for |
-| --- | --- |
-| [`docs/SETUP.md`](docs/SETUP.md) | install, configure and connect AIOStreams |
-| [`docs/OPERATIONS.md`](docs/OPERATIONS.md) | health, backup, upgrade, rollback and release operations |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | authority model, data flow and runtime boundaries |
-| [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md) | AIOMetadata and client coexistence rules |
-| [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) | common production failure patterns |
-| [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | protocol contracts, identity edge cases and contributor notes |
-| [`SECURITY.md`](SECURITY.md) | credential handling and security reporting |
-| [`CHANGELOG.md`](CHANGELOG.md) | release history |
+## Security
 
-## Security notes
-
-- Treat `ADMIN_KEY`, `BRIDGE_SECRET_KEY`, Trakt OAuth material and the generated manifest URL as credentials.
+- Keep `ADMIN_KEY`, `BRIDGE_SECRET_KEY`, Trakt OAuth material and profile manifest URLs private.
 - Do not expose container port `7000` directly to the Internet.
-- Back up `bridge.db`, `.env`, compose configuration and reverse-proxy configuration before upgrades that change the DB schema.
-- Prefer an immutable GHCR digest for long-lived production deployments.
+- Terminate HTTPS at a reverse proxy and forward only to `127.0.0.1:7000`.
+- Back up `.env` and `/app/data/bridge.db` together.
 
-## License / scope
+## Project status
 
-This repository is maintained for the HomeDocker self-hosted environment and is intentionally optimized for that topology first.
+The project is in the pre-1.0 release-candidate phase and is being hardened for public self-hosted use.
+
+License: [MIT](LICENSE).
