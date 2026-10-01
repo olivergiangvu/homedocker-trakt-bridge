@@ -53,7 +53,9 @@ For a live SQLite database, prefer SQLite's online backup mechanism instead of b
 
 ## Update
 
-If you use `latest`:
+The GHCR package is public and supports anonymous pulls.
+
+If you intentionally follow `latest`:
 
 ```bash
 docker compose pull
@@ -66,11 +68,21 @@ Recommended update flow:
 
 1. Confirm `/health` and `/readiness` are healthy.
 2. Back up the database and configuration.
-3. Change the image tag/digest.
-4. Pull the new image while the old container is still running.
-5. Recreate the service.
-6. Re-check `/health`, `/readiness`, dashboard connection state and sync counts.
-7. Confirm the client still shows the expected watched/resume state.
+3. Record the currently running image reference and image ID.
+4. Change the image tag or digest.
+5. Pull the new image while the old container is still running.
+6. Recreate the service without a local source build.
+7. Re-check `/health`, `/readiness`, dashboard connection state and sync counts.
+8. Restart the container once and confirm readiness remains healthy.
+9. Confirm the client still shows the expected watched/resume state.
+
+To verify an exact-digest deployment:
+
+```bash
+docker inspect trakt-bridge --format '{{.Config.Image}}'
+```
+
+The result should be the immutable `ghcr.io/...@sha256:...` reference you intended to deploy.
 
 Do not purge Bridge or AIOStreams state unless the release notes explicitly require it.
 
@@ -84,6 +96,8 @@ docker compose up -d
 ```
 
 If a future release changes the database schema, restore the matching pre-upgrade database before running an older binary.
+
+For schema-compatible releases, still verify `/readiness`, profile connection state and client watched/resume state after rollback instead of assuming image replacement alone is sufficient.
 
 ## Logs
 
@@ -103,7 +117,7 @@ Use logs mainly for startup, migration and unexpected upstream/runtime failures.
 
 ## Trakt rate limits
 
-The bridge protects Trakt traffic with retry handling, cooldowns and stale-state fallback. If Trakt returns `429`, the dashboard records the affected endpoint and retry delay.
+The bridge protects Trakt traffic with write pacing, profile-wide `429` cooldown handling, retry metadata and stale-state fallback. If Trakt returns `429`, the dashboard records the affected endpoint and retry delay.
 
 Avoid repeatedly forcing sync while a rate-limit cooldown is active. The bridge will recover automatically when the allowed window reopens.
 
