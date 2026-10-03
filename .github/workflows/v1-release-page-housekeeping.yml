@@ -1,4 +1,5 @@
 name: One-time v1 release page housekeeping
+# Final acceptance sync; remove this workflow after the release body is verified.
 
 on:
   push:
