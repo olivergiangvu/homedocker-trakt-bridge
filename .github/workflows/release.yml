@@ -98,12 +98,25 @@ jobs:
             echo "- health/readiness smoke test: PASS"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Ensure GitHub Release exists
+      - name: Create or sync GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+
+          notes_file="docs/releases/${GITHUB_REF_NAME}.md"
+
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo "GitHub Release $GITHUB_REF_NAME already exists; keeping the existing release."
+            if [[ -f "$notes_file" ]]; then
+              echo "Syncing existing GitHub Release from $notes_file"
+              gh release edit "$GITHUB_REF_NAME" --notes-file "$notes_file"
+            else
+              echo "GitHub Release $GITHUB_REF_NAME already exists and no versioned notes file is present; keeping its body."
+            fi
+          elif [[ -f "$notes_file" ]]; then
+            echo "Creating GitHub Release from $notes_file"
+            gh release create "$GITHUB_REF_NAME" --verify-tag --notes-file "$notes_file"
           else
+            echo "No versioned notes file found; creating generated release notes."
             gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
           fi
