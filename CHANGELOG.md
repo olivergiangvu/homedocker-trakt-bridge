@@ -2,6 +2,43 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+## [1.0.0] - 2026-10-04
+
+### Stable release
+- Promotes the accepted v0.9.2 production candidate to the first stable release line after a 45.78-hour HomeDocker burn-in.
+- Keeps Trakt as the canonical watched/resume authority while AIOStreams remains the Jellyfin-compatible playback/state surface.
+- Keeps `PULL_IDENTITY_MODE=trakt` as the recommended coexistence mode for clients that also use native Trakt.
+- Keeps conservative public freshness defaults at `300s`; HomeDocker's measured `60s` profile remains deployment-specific tuning rather than a universal default.
+- Keeps AIOStreams Watch State runtime settings at upstream defaults; no additional `WATCH_STATE_*` overrides are required for the v1.0 baseline.
+
+### Reliability qualification
+- Exact published v0.9.2 digest completed extended production burn-in with schema `1`, one connected profile, healthy OAuth state and no reconnect requirement.
+- Final audit recorded 134 successful pulls, including 73 authoritative pulls, with watched/watchlist state still populated.
+- AIOStreams → Bridge handoff finished with 477/477 retained deliveries in a final delivered state and no pending/non-final rows.
+- Trakt `429` responses were contained by profile-wide cooldown, Retry-After handling and AIOStreams retry scheduling without a current backlog.
+- Four historical `unplayed` errors initially flagged as unresolved were each superseded by a newer same-item `played` event and did not represent lost final state.
+- The production dual-IMDb regression remained clean and the duplicate Continue Watching/identity symptom remained absent through burn-in.
+- Long-run sampled runtime settled around `41 MiB` memory with `0%` idle CPU and no sustained growth in the sampled window.
+
+### Known non-blocking observation
+- Duplicate Trakt play-count/history entries can still occur when AIOStreams generates repeated semantic `played` marks for the same item at different timestamps.
+- AIOMetadata 3.3.2 is not a Trakt watch-tracking writer in the qualified HomeDocker topology.
+- This remains tracked in issue #40 for post-v1.0 investigation; v1.0 intentionally does not add heuristic Bridge-side dedupe that could suppress legitimate rewatches.
+
+### Compatibility and safety
+- DB schema remains `1`.
+- AIOStreams pull representation remains `watch-state-v0.3.6`.
+- Pull cache namespace remains `pull-state:v5:*`.
+- No database migration or cache purge is required from v0.9.2.
+- The accepted v0.9.2 immutable digest remains the deterministic rollback target for the v1.0.0 production canary.
+
+### Upgrade
+- Back up `bridge.db`, `.env`, Compose and reverse-proxy configuration.
+- Pull the public GHCR `1.0.0` tag or, preferably, pin the immutable digest published by the release workflow.
+- Recreate the container without deleting the data volume.
+- Verify `/health`, `/readiness`, connected profile state, authoritative watched/watchlist sync and the running image digest.
+- For the final HomeDocker v1.0 acceptance, verify rollback to the accepted v0.9.2 exact digest and return to the v1.0.0 exact digest.
+
 ## [0.9.2] - 2026-10-02
 
 ### Added

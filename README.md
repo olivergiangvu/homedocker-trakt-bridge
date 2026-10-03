@@ -108,8 +108,8 @@ For sensitive vulnerabilities, follow **[SECURITY.md](SECURITY.md)** instead of 
 
 ## Project status
 
-`v0.9.2` is the current public pre-1.0 release. Its published GHCR digest has passed release-workflow smoke testing and HomeDocker production cutover/restart acceptance. The remaining work toward `v1.0.0` is final burn-in, rollback verification and release packaging rather than new watch-state features.
+`v1.0.0` is the stable release line. It is based on the accepted v0.9.2 production candidate after a 45.78-hour HomeDocker burn-in with healthy OAuth/profile state, populated authoritative watched/watchlist data, no duplicate identity or Continue Watching regression, and no pending AIOStreams → Bridge deliveries.
 
-A duplicate Trakt play-count observation is tracked separately as a non-blocking post-v1.0 investigation.
+A duplicate Trakt play-count observation caused by repeated upstream semantic `played` marks remains tracked separately as a non-blocking post-v1.0 investigation.
 
 License: [MIT](LICENSE).
