@@ -2,7 +2,7 @@
 
 This is the versioned user manual for HomeDocker Trakt Bridge.
 
-The repository and GHCR package are public. `v0.9.2` is the current published pre-1.0 release and has passed exact-digest release smoke testing plus HomeDocker production cutover/restart acceptance.
+The repository and GHCR package are public. `v1.0.0` is the stable release line, promoted from the accepted v0.9.2 candidate after extended HomeDocker production burn-in.
 
 ## User guides
 
