@@ -83,6 +83,27 @@ progress < 1%
 
 If you see old `422` rows in event history, check their timestamp. They may be historical rows retained from before the guard was deployed.
 
+## AIOStreams shows old `failed` watch deliveries
+
+AIOStreams delivery state has three meanings:
+
+```text
+pending    = outstanding / retryable work
+delivered  = terminal success
+failed     = terminal failure retained for diagnostics
+```
+
+When checking whether the Bridge has an active handoff backlog, inspect **`pending`** rows and the sink status. Historical `failed` rows are not themselves pending work and are not retried indefinitely.
+
+A healthy steady state should have:
+
+```text
+Bridge sink status = connected
+pending deliveries = 0
+```
+
+Keep terminal `failed` rows for diagnostics unless you have a separate retention policy. For the HomeDocker v1.0 qualification, two old pre-guard sub-1% `pause/stop` HTTP 422 rows remained as terminal failures while the sink was connected with zero pending deliveries.
+
 ## Watched movie/episode counts show `—`
 
 A cache-only poll does not necessarily include the full watched/watchlist payload.
