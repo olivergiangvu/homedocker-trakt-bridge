@@ -4,10 +4,20 @@ updates:
     directory: /
     schedule:
       interval: monthly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
+    groups:
+      ci-actions:
+        patterns:
+          - "*"
 
   - package-ecosystem: docker
     directory: /
     schedule:
       interval: monthly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
+    # Node 24 is the qualified runtime baseline for v1.x. A Node major bump is
+    # handled as an explicit compatibility project instead of a routine bot PR.
+    ignore:
+      - dependency-name: "node"
+        update-types:
+          - "version-update:semver-major"
