@@ -222,6 +222,9 @@ The workflow:
 2. logs into GHCR
 3. builds the production amd64 image
 4. publishes semver/SHA tags
-5. creates the GitHub Release
+5. smoke-tests the exact published digest
+6. creates or synchronizes the GitHub Release
 
-Do not tag a release before production deployment and UI/operations verification have passed.
+When `docs/releases/<tag>.md` exists, that versioned file is the canonical GitHub Release body. The workflow uses it both for a new release and to synchronize an existing release created with the tag. If no versioned notes file exists, GitHub-generated notes are used as the fallback.
+
+Do not create a stable tag until source/RC tests, compatibility checks, and the intended production configuration have been qualified. The exact published-digest production canary and deterministic rollback test happen after the tag is published because that immutable artifact does not exist beforehand.
