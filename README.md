@@ -15,6 +15,12 @@ flowchart LR
     B <--> T["Trakt"]
 ```
 
+## Dashboard
+
+![Sanitized HomeDocker Trakt Bridge v1.0.0 dashboard](docs/assets/dashboard-v1-public.jpg)
+
+The operator dashboard exposes connection health, pull identity, authoritative watched/watchlist state and recent sync activity. The screenshot above is sanitized; live Manifest URLs are credentials and must not be published.
+
 ## Features
 
 - playback scrobbling: start, pause and stop
