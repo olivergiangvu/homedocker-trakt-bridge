@@ -2,6 +2,25 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+## [1.2.0-rc.6] - 2026-10-05
+
+### Changed
+- Detect-only AIO reconciliation now coalesces local resume updates per item and waits for a 300-second quiet window before emitting a settled classification.
+- Playback-delivery coverage is now scoped to the configured HomeDocker AIO sink rather than any sink. The sink can be pinned with `AIO_RECONCILE_SINK_INSTANCE_ID`.
+- Reconciler persistence advances to the `aio-reconcile:v2:*` namespace so the first rc.6 run establishes a fresh baseline instead of replaying rc.5 observations.
+
+### Canary evidence
+- rc.5 observed a Strand/UserData intermediate AIO row at 362934 ms (06:02) followed about 180.4 seconds later by a final row at 536771 ms (08:56).
+- A direct Trakt read matched the final 536771 ms state, while AIO `watch_sessions` contained no session for the client and the HomeDocker sink had only `unplayed` deliveries with zero position.
+- This proves a 30-second or 180-second age gate is insufficient to infer final playback state for this client path.
+
+### Safety
+- rc.6 remains observation-only: the reconciler never calls or writes Trakt and never writes the AIOStreams database.
+- The AIO mount remains read-only.
+- If the configured HomeDocker sink is missing or ambiguous, settlement is blocked rather than guessed.
+- Pending candidates survive Bridge restart; newer same-item local state replaces older pending state and resets the quiet timer.
+- DB schema remains `1`; rc.4 transport/rate-limit behavior remains unchanged.
+
 ## [1.2.0-rc.5] - 2026-10-05
 
 ### Added
