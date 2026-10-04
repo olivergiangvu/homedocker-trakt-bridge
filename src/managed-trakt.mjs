@@ -161,7 +161,7 @@ export class ManagedTraktClient extends TraktClient {
     this.db.cacheSet?.(this.#cooldownKey(profileId), state, ttlSeconds);
   }
 
-  #cooldownUntil(profileId, lane) {
+  #activeCooldown(profileId, lane) {
     const state = this.#loadCooldowns(profileId);
     const now = Date.now();
 
@@ -176,16 +176,24 @@ export class ManagedTraktClient extends TraktClient {
       if (state[key] <= now) state[key] = 0;
     }
 
+    const candidates = [{ lane: 'shared', until: state.sharedUntil }];
+
     if (lane === 'read') {
-      return Math.max(state.sharedUntil, state.readUntil);
+      candidates.push({ lane: 'read', until: state.readUntil });
+    } else {
+      candidates.push({ lane: 'write', until: state.allWriteUntil });
+      if (lane !== 'write') {
+        candidates.push({
+          lane,
+          until: Number(state[cooldownKeyForLane(lane)] || 0),
+        });
+      }
     }
 
-    if (lane === 'write') {
-      return Math.max(state.sharedUntil, state.allWriteUntil);
-    }
-
-    const specific = Number(state[cooldownKeyForLane(lane)] || 0);
-    return Math.max(state.sharedUntil, state.allWriteUntil, specific);
+    return candidates.reduce(
+      (active, candidate) => candidate.until > active.until ? candidate : active,
+      { lane: 'shared', until: 0 },
+    );
   }
 
   #armRateCooldown(profileId, retryAfter, lane = 'shared') {
@@ -199,14 +207,14 @@ export class ManagedTraktClient extends TraktClient {
   }
 
   #throwIfCooling(profileId, path, lane) {
-    const until = this.#cooldownUntil(profileId, lane);
-    if (!until) return;
+    const active = this.#activeCooldown(profileId, lane);
+    if (!active.until) return;
     throw new BridgeError('Trakt rate limit cooldown is active', {
       status: 429,
-      retryAfter: retryAfterSeconds(until),
+      retryAfter: retryAfterSeconds(active.until),
       code: 'trakt_rate_cooldown',
       upstreamPath: path,
-      rateLimit: { name: localCooldownName(lane) },
+      rateLimit: { name: localCooldownName(active.lane) },
     });
   }
 
