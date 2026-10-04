@@ -2,11 +2,13 @@ import { loadConfig, APP_NAME, APP_VERSION } from './config.mjs';
 import { BridgeDb } from './db.mjs';
 import { ManagedTraktClient } from './managed-trakt.mjs';
 import { createServer } from './server.mjs';
+import { startAioReconciler } from './aio-reconciler.mjs';
 
 const config = loadConfig();
 const db = new BridgeDb(config);
 const trakt = new ManagedTraktClient(config, db);
 const server = createServer({ config, db, trakt });
+const aioReconciler = startAioReconciler({ config, db });
 
 server.listen(config.port, '0.0.0.0', () => {
   console.log(JSON.stringify({
@@ -27,10 +29,12 @@ function shutdown(signal) {
   shuttingDown = true;
   console.log(JSON.stringify({ level: 'info', message: `received ${signal}, shutting down` }));
   server.close(() => {
+    try { aioReconciler.stop(); } catch {}
     try { db.close(); } catch {}
     process.exit(0);
   });
   setTimeout(() => {
+    try { aioReconciler.stop(); } catch {}
     try { db.close(); } catch {}
     process.exit(1);
   }, 10_000).unref();
