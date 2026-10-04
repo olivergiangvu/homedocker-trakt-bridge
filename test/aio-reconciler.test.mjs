@@ -7,6 +7,7 @@ import { join } from 'node:path';
 
 import {
   classifyTraktPlaybackCandidate,
+  aioReconcileOperationalSnapshot,
   compareAioCandidatesOnce,
   reconcileAioOnce,
   resolveHomeDockerSink,
@@ -757,6 +758,12 @@ test('compare mode stages detect candidate then classifies Trakt state read-only
     assert.equal(detail.action, 'aio-reconcile:compare-settled');
     assert.equal(detail.decision, 'trakt_stale_candidate');
     assert.equal(detail.writesTrakt, false);
+
+    const snapshot = aioReconcileOperationalSnapshot(bridge);
+    assert.equal(snapshot.compare.awaiting, 0);
+    assert.equal(snapshot.compare.total, 1);
+    assert.equal(snapshot.compare.staleCandidate, 1);
+    assert.equal(snapshot.compare.sameOrNewer, 0);
   } finally {
     aio.close();
     rmSync(dir, { recursive: true, force: true });
@@ -822,6 +829,11 @@ test('compare mode keeps candidate retryable when Trakt GET is rate limited', as
     assert.equal(second.unavailable, 0);
     assert.equal(second.pending, 1);
     assert.equal(bridge.events.length, 1);
+
+    const snapshot = aioReconcileOperationalSnapshot(bridge);
+    assert.equal(snapshot.compare.awaiting, 1);
+    assert.equal(snapshot.compare.retrying, 1);
+    assert.equal(snapshot.compare.total, 0);
   } finally {
     aio.close();
     rmSync(dir, { recursive: true, force: true });
