@@ -7,6 +7,8 @@ All notable changes to HomeDocker Trakt Bridge are documented here.
 ### Fixed
 - A source-identity playback watermark is now recorded before Trakt media resolution, so a newer AIOStreams playback event that itself fails during metadata resolution still prevents an older retry from overtaking it.
 - Public Trakt metadata lookups now honor a persisted local `Retry-After` cooldown after a 429 instead of repeatedly re-hitting the same resolver path during the throttle window.
+- Resolver caches are normalized across provider-ID subsets. Show/movie results are indexed by provider aliases and episodes are keyed by canonical Trakt show + season + episode, preventing the same item from being re-resolved when one event carries full IMDb/TMDb/TVDb IDs and another carries only IMDb.
+- Existing pre-v1.2 resolver cache rows are promoted lazily into the normalized cache on first use, avoiding a forced cache purge.
 
 ### Canary evidence
 - rc.1 captured a real VidHub pause at 11.84% that reached AIOStreams correctly but failed in Bridge before scrobbling because the public episode resolver returned `429` on `/shows/285217/seasons/1/episodes/2` with `Retry-After: 65` and no `X-Ratelimit` metadata.
