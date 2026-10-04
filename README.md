@@ -114,8 +114,8 @@ For sensitive vulnerabilities, follow **[SECURITY.md](SECURITY.md)** instead of 
 
 ## Project status
 
-`v1.1.0` remains the current stable production release. `v1.2.0-rc.2` is the current HomeDocker canary candidate for issue #58.
+`v1.1.0` remains the current stable release. `v1.2.0-rc.3` is the current HomeDocker transport-hardening canary candidate for issue #58; the HomeDocker host remains pinned to the accepted rc.2 digest until rc.3 qualification.
 
-rc.2 keeps the rc.1 stale-playback and rate-limit hardening, and additionally protects playback ordering before Trakt media resolution plus persists a separate public-metadata Retry-After cooldown. Production should stay on the immutable v1.1.0 digest until the rc.2 HomeDocker canary passes with native Trakt still enabled on supported clients.
+rc.3 keeps the rc.1/rc.2 stale-playback, semantic-dedupe, diagnostics and retry safeguards, but removes public metadata resolution from the normal playback/history hot path in favor of Odin-style direct provider-ID writes. Native Trakt remains enabled during qualification, and AIOStreams scheduling is intentionally unchanged for the rc.3-A transport canary.
 
 License: [MIT](LICENSE).
