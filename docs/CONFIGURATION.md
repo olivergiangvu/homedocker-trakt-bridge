@@ -74,6 +74,47 @@ Lower values such as 120 or 60 seconds can improve freshness in some deployments
 
 AIOStreams has its own watch-state pull cadence. Bridge TTL alone does not guarantee the same end-to-end client refresh interval, and no AIOStreams `WATCH_STATE_*` environment override is required for the v1.0 baseline while upstream defaults already provide satisfactory freshness.
 
+## Optional AIO local-state reconciler (rc.5 detect-only)
+
+AIOStreams remains unmodified. The bridge can optionally inspect the AIOStreams SQLite database through a **read-only mount** to detect local resume-state changes that were not accompanied by a watch-state playback delivery.
+
+The feature is disabled by default:
+
+```env
+AIO_RECONCILER_MODE=off
+```
+
+For the rc.5 detect-only canary:
+
+```env
+AIO_RECONCILER_MODE=detect
+AIO_DB_PATH=/aio-data/db.sqlite
+AIO_RECONCILE_INTERVAL_SECONDS=15
+AIO_RECONCILE_GRACE_SECONDS=30
+AIO_RECONCILE_MAX_ROWS=100
+```
+
+Mount the AIOStreams data directory read-only into the bridge container. A HomeDocker-style Docker volume can be exposed as:
+
+```yaml
+volumes:
+  - trakt_bridge_data:/app/data
+  - /var/lib/docker/volumes/aiostreams_data/_data:/aio-data:ro
+```
+
+Detect mode:
+
+- opens the AIO database with SQLite read-only mode and `query_only`
+- only inspects unfinished local movie/episode resume rows
+- checks for a nearby queued `start`, `pause`, or `stop` delivery
+- stores only its own cursor/watermark in the bridge database
+- logs a reconciliation candidate when AIO local state changed without a matching playback delivery
+- never calls Trakt and never writes to AIOStreams
+
+The first enabled run establishes a baseline cursor and does not replay historical AIO rows. The detector also requires exactly one connected bridge profile; ambiguous multi-profile deployments fail safe.
+
+This is intentionally an observation phase. A later write-capable reconciler must compare a candidate against current Trakt playback before synthesizing any stop so native-Trakt clients remain authoritative when they already committed the same or newer state.
+
 ## Duplicate-history guard
 
 The default semantic history guard is:
