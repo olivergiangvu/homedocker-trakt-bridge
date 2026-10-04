@@ -2,6 +2,26 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+## [1.2.0-rc.5] - 2026-10-05
+
+### Added
+- Optional Bridge-side AIO local-state reconciler in detect-only mode. It reads the AIOStreams SQLite database through a read-only connection and identifies local unfinished resume-state updates that lack a nearby AIO playback delivery.
+- Restart-safe AIO detection cursor and per-row watermark stored in the existing Bridge `media_cache`; no database migration is required.
+- `AIO_RECONCILER_MODE`, `AIO_DB_PATH`, `AIO_RECONCILE_INTERVAL_SECONDS`, `AIO_RECONCILE_GRACE_SECONDS`, and `AIO_RECONCILE_MAX_ROWS` configuration controls.
+
+### Evidence
+- Strand advanced AIO local state and native Trakt to 443904 ms (07:23), while the Bridge received only redundant `unplayed` deliveries and no `start`/`pause`/`stop` for that playback.
+- VidHub then resumed at exactly 07:23, confirming native-Trakt coexistence works when the client commits its own Trakt state.
+- AIOStreams 2.35.9 source audit showed the Jellyfin UserData path records `PlaybackPositionTicks` locally as a stop but does not dispatch that stop to watch-state addons.
+
+### Safety
+- The reconciler is disabled by default.
+- Detect mode never writes the AIOStreams database, never calls Trakt, and never synthesizes playback.
+- The first enabled run establishes a baseline instead of replaying historical AIO rows.
+- Exactly one connected Bridge profile is required; ambiguous multi-profile setups fail safe.
+- rc.4 direct transport, rate-limit lanes, semantic history dedupe, playback watermarks, pull behavior and native-Trakt coexistence are unchanged.
+- DB schema remains `1`.
+
 
 ## [1.2.0-rc.4] - 2026-10-04
 
