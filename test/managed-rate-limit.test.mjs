@@ -32,6 +32,19 @@ function config() {
   };
 }
 
+function rateHeader(name, retryAfter = '2') {
+  return {
+    'retry-after': retryAfter,
+    'x-ratelimit': JSON.stringify({
+      name,
+      period: 1,
+      limit: 1,
+      remaining: 0,
+      until: new Date(Date.now() + Number(retryAfter) * 1000).toISOString(),
+    }),
+  };
+}
+
 test('Managed Trakt: authenticated writes are serialized at Trakt safe cadence', async (t) => {
   const starts = [];
   const mock = await startJsonServer(async (req) => {
@@ -54,7 +67,7 @@ test('Managed Trakt: authenticated writes are serialized at Trakt safe cadence',
   assert.ok(starts[1] - starts[0] >= 1000, `writes were only ${starts[1] - starts[0]}ms apart`);
 });
 
-test('Managed Trakt: GET 429 arms a shared cooldown before another upstream call', async (t) => {
+test('Managed Trakt: headerless GET 429 is treated as shared/security cooldown', async (t) => {
   let getCalls = 0;
   let writeCalls = 0;
   const mock = await startJsonServer(async (req) => {
@@ -77,32 +90,30 @@ test('Managed Trakt: GET 429 arms a shared cooldown before another upstream call
     () => client.request('profile-a', '/sync/last_activities'),
     (err) => err instanceof BridgeError && err.code === 'trakt_429' && err.retryAfter === '2',
   );
-
   await assert.rejects(
     () => client.request('profile-a', '/sync/last_activities'),
-    (err) => err instanceof BridgeError
-      && err.code === 'trakt_rate_cooldown'
-      && Number(err.retryAfter) >= 1,
+    (err) => err instanceof BridgeError && err.code === 'trakt_rate_cooldown',
   );
-
   await assert.rejects(
     () => client.request('profile-a', '/sync/history', { method: 'POST', body: { episodes: [] } }),
-    (err) => err instanceof BridgeError
-      && err.code === 'trakt_rate_cooldown'
-      && Number(err.retryAfter) >= 1,
+    (err) => err instanceof BridgeError && err.code === 'trakt_rate_cooldown',
   );
 
-  assert.equal(getCalls, 1, 'cooldown must prevent the second Trakt GET entirely');
-  assert.equal(writeCalls, 0, 'shared cooldown must protect the write lane too');
+  assert.equal(getCalls, 1);
+  assert.equal(writeCalls, 0);
 });
 
-test('Managed Trakt: write 429 also protects the read lane until Retry-After expires', async (t) => {
+test('Managed Trakt: confirmed POST bucket 429 blocks writes but keeps GET pull lane open', async (t) => {
   let writeCalls = 0;
   let getCalls = 0;
   const mock = await startJsonServer(async (req) => {
     if (req.path === '/sync/history' && req.method === 'POST') {
       writeCalls += 1;
-      return { status: 429, headers: { 'retry-after': '1' }, body: { error: 'rate_limited' } };
+      return {
+        status: 429,
+        headers: rateHeader('AUTHED_API_POST_LIMIT', '2'),
+        body: { error: 'rate_limited' },
+      };
     }
     if (req.path === '/sync/last_activities') {
       getCalls += 1;
@@ -117,16 +128,52 @@ test('Managed Trakt: write 429 also protects the read lane until Retry-After exp
 
   await assert.rejects(
     () => client.request('profile-a', '/sync/history', { method: 'POST', body: { episodes: [] } }),
-    (err) => err instanceof BridgeError && err.code === 'trakt_429',
+    (err) => err instanceof BridgeError
+      && err.code === 'trakt_429'
+      && err.rateLimit?.name === 'AUTHED_API_POST_LIMIT',
   );
 
+  const read = await client.request('profile-a', '/sync/last_activities');
+  assert.deepEqual(read, { all: 'ok' });
+
+  await assert.rejects(
+    () => client.request('profile-a', '/sync/history', { method: 'POST', body: { episodes: [] } }),
+    (err) => err instanceof BridgeError && err.code === 'trakt_rate_cooldown',
+  );
+
+  assert.equal(writeCalls, 1);
+  assert.equal(getCalls, 1, 'write-only throttle must not unnecessarily block pull GETs');
+});
+
+test('Managed Trakt: headerless write 429 stays conservative and blocks reads too', async (t) => {
+  let writeCalls = 0;
+  let getCalls = 0;
+  const mock = await startJsonServer(async (req) => {
+    if (req.path === '/sync/history' && req.method === 'POST') {
+      writeCalls += 1;
+      return { status: 429, headers: { 'retry-after': '2' }, body: { error: 'security_limit' } };
+    }
+    if (req.path === '/sync/last_activities') {
+      getCalls += 1;
+      return { status: 200, body: { all: 'ok' } };
+    }
+    return null;
+  });
+  const restoreFetch = redirectTraktFetch(mock.baseUrl);
+  t.after(async () => { restoreFetch(); await mock.close(); });
+
+  const client = new ManagedTraktClient(config(), tokenDb());
+  await assert.rejects(
+    () => client.request('profile-a', '/sync/history', { method: 'POST', body: { episodes: [] } }),
+    (err) => err instanceof BridgeError && err.code === 'trakt_429',
+  );
   await assert.rejects(
     () => client.request('profile-a', '/sync/last_activities'),
     (err) => err instanceof BridgeError && err.code === 'trakt_rate_cooldown',
   );
 
   assert.equal(writeCalls, 1);
-  assert.equal(getCalls, 0, 'write Retry-After must suppress GETs in the same window');
+  assert.equal(getCalls, 0);
 });
 
 test('Managed Trakt: rate cooldown survives client reconstruction through cache persistence', async (t) => {
@@ -156,5 +203,5 @@ test('Managed Trakt: rate cooldown survives client reconstruction through cache 
       && Number(err.retryAfter) >= 1,
   );
 
-  assert.equal(calls, 1, 'persisted cooldown must survive client reconstruction');
+  assert.equal(calls, 1);
 });

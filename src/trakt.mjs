@@ -1,6 +1,7 @@
 import { BridgeError } from './errors.mjs';
 import { providerIdsForEvent } from './media-ids.mjs';
 import { recentEquivalentHistoryState, rememberHistoryState } from './history-dedupe.mjs';
+import { observePlaybackWatermark } from './playback-watermark.mjs';
 import {
   identityAliasVersion,
   learnShowAlias,
@@ -29,6 +30,30 @@ function withQuery(path, values) {
     if (value != null) url.searchParams.set(key, String(value));
   }
   return `${url.pathname}${url.search}`;
+}
+
+export function parseRateLimitHeader(headers) {
+  const raw = headers?.get?.('x-ratelimit');
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return {
+      name: parsed?.name || null,
+      period: Number.isFinite(Number(parsed?.period)) ? Number(parsed.period) : null,
+      limit: Number.isFinite(Number(parsed?.limit)) ? Number(parsed.limit) : null,
+      remaining: Number.isFinite(Number(parsed?.remaining)) ? Number(parsed.remaining) : null,
+      until: parsed?.until || null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function safeUpstreamDetail(parsed) {
+  if (!parsed || typeof parsed !== 'object') return null;
+  const value = parsed.error_description ?? parsed.error ?? parsed.message ?? parsed.raw ?? null;
+  if (value == null) return null;
+  return String(value).replace(/\s+/g, ' ').slice(0, 240);
 }
 
 export class TraktClient {
@@ -205,6 +230,9 @@ export class TraktClient {
       retryAfter: response.headers.get('retry-after'),
       code: `trakt_${response.status}`,
       upstreamPath,
+      upstreamStatus: response.status,
+      upstreamDetail: safeUpstreamDetail(parsed),
+      rateLimit: parseRateLimitHeader(response.headers),
     });
   }
 
@@ -425,6 +453,19 @@ export class TraktClient {
     const media = await this.resolveMedia(event);
 
     if (plan.kind === 'scrobble') {
+      const watermark = observePlaybackWatermark(this.db, profileId, media, event);
+      if (watermark?.stale) {
+        return {
+          action: 'playback:stale-deduped',
+          ignored: 'stale_playback_event',
+          incomingAt: watermark.incomingAt,
+          newestAt: watermark.newestAt,
+          newestEventId: watermark.newestEventId,
+          newestEvent: watermark.newestEvent,
+          deltaSeconds: watermark.deltaSeconds,
+        };
+      }
+
       const payload = { progress: Number(plan.progress.toFixed(3)) };
       if (media.kind === 'movie') payload.movie = media.movie;
       else payload.episode = media.episode;

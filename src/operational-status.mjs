@@ -73,10 +73,26 @@ export function summarizeEventDetail(row) {
   if (detail?.ignored) {
     if (detail.ignored === 'progress_below_trakt_minimum') return 'Below 1% · ignored locally';
     if (detail.ignored === 'covered_by_recent_bulk') return 'Covered by recent bulk update';
+    if (detail.ignored === 'stale_playback_event') {
+      const lag = detail.deltaSeconds != null ? ` · older by ${detail.deltaSeconds}s` : '';
+      return `Stale playback retry ignored${lag}`;
+    }
     return `Ignored · ${detail.ignored}`;
   }
 
   if (detail?.action) return compactAction(detail.action);
+
+  if (detail?.error) {
+    const status = detail.upstreamStatus
+      || String(detail.error).match(/^trakt_(\d+)$/)?.[1]
+      || null;
+    const parts = [status ? `Trakt ${status}` : String(detail.error)];
+    if (detail.upstreamPath) parts.push(detail.upstreamPath);
+    if (detail.retryAfter) parts.push(`retry ${detail.retryAfter}s`);
+    if (detail.rateLimit?.name) parts.push(detail.rateLimit.name);
+    if (detail.upstreamDetail) parts.push(detail.upstreamDetail);
+    return parts.join(' · ');
+  }
 
   const raw = String(row?.detail || '');
   const traktError = summarizeTraktError(raw);
