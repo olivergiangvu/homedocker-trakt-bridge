@@ -93,7 +93,11 @@ export function planEvent(event) {
       const progress = progressPercent(event);
       if (progress == null) return event.played === true ? { kind: 'history-add' } : { kind: 'ignore', reason: 'duration_unknown' };
       if (belowTraktScrobbleMinimum(progress)) return event.played === true ? { kind: 'history-add' } : { kind: 'ignore', reason: 'progress_below_trakt_minimum' };
-      if (event.played !== true) return { kind: 'scrobble', action: 'pause', progress };
+
+      // Preserve the client's stop semantic on the wire. Trakt's stop endpoint
+      // itself decides whether 1-79% is a resumable pause or >=80% completes the
+      // scrobble. This matches the original Odin bridge and avoids leaving a
+      // paused active scrobble behind when the Jellyfin session has actually ended.
       return { kind: 'scrobble', action: 'stop', progress };
     }
     default: throw new BridgeError('Unsupported event', { status: 422, code: 'unsupported_event' });
