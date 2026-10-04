@@ -68,7 +68,7 @@ export function loadConfig() {
     bulkSingleDedupeSeconds: intEnv('BULK_SINGLE_DEDUPE_SECONDS', 300, 30, 1800),
     historyDedupeSeconds: intEnv('HISTORY_DEDUPE_SECONDS', 300, 0, 1800),
     pullIdentityMode: enumEnv('PULL_IDENTITY_MODE', 'trakt', ['trakt', 'aiostreams']),
-    aioReconcilerMode: enumEnv('AIO_RECONCILER_MODE', 'off', ['off', 'detect']),
+    aioReconcilerMode: enumEnv('AIO_RECONCILER_MODE', 'off', ['off', 'detect', 'compare']),
     aioDbPath: (process.env.AIO_DB_PATH || '/aio-data/db.sqlite').trim(),
     aioReconcileIntervalSeconds: intEnv('AIO_RECONCILE_INTERVAL_SECONDS', 15, 5, 3600),
     aioReconcileGraceSeconds: intEnv('AIO_RECONCILE_GRACE_SECONDS', 30, 5, 3600),
