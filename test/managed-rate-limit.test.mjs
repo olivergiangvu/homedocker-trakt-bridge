@@ -67,7 +67,7 @@ test('Managed Trakt: authenticated writes are serialized at Trakt safe cadence',
   assert.ok(starts[1] - starts[0] >= 1000, `writes were only ${starts[1] - starts[0]}ms apart`);
 });
 
-test('Managed Trakt: headerless GET 429 is treated as shared/security cooldown', async (t) => {
+test('Managed Trakt: headerless GET 429 cools reads but keeps write recovery lane open', async (t) => {
   let getCalls = 0;
   let writeCalls = 0;
   const mock = await startJsonServer(async (req) => {
@@ -94,13 +94,15 @@ test('Managed Trakt: headerless GET 429 is treated as shared/security cooldown',
     () => client.request('profile-a', '/sync/last_activities'),
     (err) => err instanceof BridgeError && err.code === 'trakt_rate_cooldown',
   );
-  await assert.rejects(
-    () => client.request('profile-a', '/sync/history', { method: 'POST', body: { episodes: [] } }),
-    (err) => err instanceof BridgeError && err.code === 'trakt_rate_cooldown',
-  );
+
+  const write = await client.request('profile-a', '/sync/history', {
+    method: 'POST',
+    body: { episodes: [] },
+  });
+  assert.deepEqual(write, { added: { episodes: 1 } });
 
   assert.equal(getCalls, 1);
-  assert.equal(writeCalls, 0);
+  assert.equal(writeCalls, 1);
 });
 
 test('Managed Trakt: confirmed POST bucket 429 blocks writes but keeps GET pull lane open', async (t) => {
@@ -145,7 +147,7 @@ test('Managed Trakt: confirmed POST bucket 429 blocks writes but keeps GET pull 
   assert.equal(getCalls, 1, 'write-only throttle must not unnecessarily block pull GETs');
 });
 
-test('Managed Trakt: headerless write 429 stays conservative and blocks reads too', async (t) => {
+test('Managed Trakt: headerless write 429 cools writes but keeps recovery GET open', async (t) => {
   let writeCalls = 0;
   let getCalls = 0;
   const mock = await startJsonServer(async (req) => {
@@ -167,13 +169,58 @@ test('Managed Trakt: headerless write 429 stays conservative and blocks reads to
     () => client.request('profile-a', '/sync/history', { method: 'POST', body: { episodes: [] } }),
     (err) => err instanceof BridgeError && err.code === 'trakt_429',
   );
+
+  const read = await client.request('profile-a', '/sync/last_activities');
+  assert.deepEqual(read, { all: 'ok' });
+
+  await assert.rejects(
+    () => client.request('profile-a', '/sync/history', { method: 'POST', body: { episodes: [] } }),
+    (err) => err instanceof BridgeError && err.code === 'trakt_rate_cooldown',
+  );
+
+  assert.equal(writeCalls, 1);
+  assert.equal(getCalls, 1);
+});
+
+test('Managed Trakt: independent headerless 429s can cool both lanes without pre-emptive sharing', async (t) => {
+  let writeCalls = 0;
+  let getCalls = 0;
+  const mock = await startJsonServer(async (req) => {
+    if (req.path === '/sync/history' && req.method === 'POST') {
+      writeCalls += 1;
+      return { status: 429, headers: { 'retry-after': '2' }, body: { error: 'rate_limited' } };
+    }
+    if (req.path === '/sync/last_activities') {
+      getCalls += 1;
+      return { status: 429, headers: { 'retry-after': '2' }, body: { error: 'rate_limited' } };
+    }
+    return null;
+  });
+  const restoreFetch = redirectTraktFetch(mock.baseUrl);
+  t.after(async () => { restoreFetch(); await mock.close(); });
+
+  const client = new ManagedTraktClient(config(), tokenDb());
+
+  await assert.rejects(
+    () => client.request('profile-a', '/sync/history', { method: 'POST', body: {} }),
+    (err) => err instanceof BridgeError && err.code === 'trakt_429',
+  );
+  await assert.rejects(
+    () => client.request('profile-a', '/sync/last_activities'),
+    (err) => err instanceof BridgeError && err.code === 'trakt_429',
+  );
+
+  await assert.rejects(
+    () => client.request('profile-a', '/sync/history', { method: 'POST', body: {} }),
+    (err) => err instanceof BridgeError && err.code === 'trakt_rate_cooldown',
+  );
   await assert.rejects(
     () => client.request('profile-a', '/sync/last_activities'),
     (err) => err instanceof BridgeError && err.code === 'trakt_rate_cooldown',
   );
 
   assert.equal(writeCalls, 1);
-  assert.equal(getCalls, 0);
+  assert.equal(getCalls, 1);
 });
 
 test('Managed Trakt: rate cooldown survives client reconstruction through cache persistence', async (t) => {
