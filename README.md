@@ -114,8 +114,8 @@ For sensitive vulnerabilities, follow **[SECURITY.md](SECURITY.md)** instead of 
 
 ## Project status
 
-`v1.0.0` is the stable release line. It is based on the accepted v0.9.2 production candidate after a 45.78-hour HomeDocker burn-in with healthy OAuth/profile state, populated authoritative watched/watchlist data, no duplicate identity or Continue Watching regression, and no pending AIOStreams → Bridge deliveries.
+`v1.0.0` remains the stable release line. It is based on the accepted v0.9.2 production candidate after a 45.78-hour HomeDocker burn-in with healthy OAuth/profile state, populated authoritative watched/watchlist data, no duplicate identity or Continue Watching regression, and no pending AIOStreams → Bridge deliveries.
 
-A duplicate Trakt play-count observation caused by repeated upstream semantic `played` marks remains tracked separately as a non-blocking post-v1.0 investigation.
+`v1.1.0-rc.1` is the HomeDocker canary candidate for issue #40. It adds restart-safe semantic history dedupe for repeated `played` / `unplayed` marks and the completed-scrobble → explicit-played overlap. It is not promoted to stable until the canary proves one normal viewing produces one Trakt play without suppressing legitimate rewatches.
 
 License: [MIT](LICENSE).

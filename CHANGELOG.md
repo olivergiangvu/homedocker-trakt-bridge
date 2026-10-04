@@ -2,7 +2,12 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
-## [Unreleased]
+## [1.1.0-rc.1] - 2026-10-04
+
+### Release candidate
+- First canary candidate for the post-v1.0 duplicate-history guard.
+- `v1.0.0` remains the stable production release while this candidate is qualified on HomeDocker.
+
 
 ### Fixed
 - Adds canonical Trakt-ID semantic dedupe for repeated single-item `played` / `unplayed` events that arrive with different AIOStreams event IDs.
