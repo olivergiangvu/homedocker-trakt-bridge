@@ -25,9 +25,11 @@ export function normalizeProviderIds(ids = {}) {
   const imdbId = imdb(ids?.imdb);
   const tmdbId = int(ids?.tmdb);
   const tvdbId = int(ids?.tvdb);
+  const traktId = int(ids?.trakt);
   if (imdbId) out.imdb = imdbId;
   if (tmdbId != null) out.tmdb = tmdbId;
   if (tvdbId != null) out.tvdb = tvdbId;
+  if (traktId != null && traktId > 0) out.trakt = traktId;
   return out;
 }
 
