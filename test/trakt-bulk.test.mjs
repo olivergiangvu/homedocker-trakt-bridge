@@ -9,7 +9,6 @@ function client() {
 
 test('bulk played writes one nested Trakt history request for listed videos only', async () => {
   const trakt = client();
-  trakt.resolveShow = async () => ({ kind: 'show', show: { ids: { trakt: 42, imdb: 'tt1234567' } } });
   let call;
   trakt.request = async (profileId, path, options) => { call = { profileId, path, options }; return {}; };
 
@@ -32,7 +31,7 @@ test('bulk played writes one nested Trakt history request for listed videos only
   const watchedAt = new Date(event.at * 1000).toISOString();
   assert.deepEqual(call.options.body, {
     shows: [{
-      ids: { trakt: 42, imdb: 'tt1234567' },
+      ids: { imdb: 'tt1234567' },
       seasons: [
         { number: 1, episodes: [{ number: 3, watched_at: watchedAt }] },
         { number: 2, episodes: [{ number: 1, watched_at: watchedAt }, { number: 2, watched_at: watchedAt }] },
@@ -43,7 +42,6 @@ test('bulk played writes one nested Trakt history request for listed videos only
 
 test('bulk unplayed removes only listed episodes in one request', async () => {
   const trakt = client();
-  trakt.resolveShow = async () => ({ kind: 'show', show: { ids: { trakt: 42, tvdb: 123 } } });
   let call;
   trakt.request = async (profileId, path, options) => { call = { profileId, path, options }; return {}; };
 
@@ -61,7 +59,7 @@ test('bulk unplayed removes only listed episodes in one request', async () => {
   assert.equal(call.path, '/sync/history/remove');
   assert.deepEqual(call.options.body, {
     shows: [{
-      ids: { trakt: 42, tvdb: 123 },
+      ids: { tvdb: 123 },
       seasons: [{ number: 3, episodes: [{ number: 1 }, { number: 2 }] }],
     }],
   });
@@ -69,7 +67,6 @@ test('bulk unplayed removes only listed episodes in one request', async () => {
 
 test('bulk anime spaced videos fail closed before writing Trakt', async () => {
   const trakt = client();
-  trakt.resolveShow = async () => { throw new Error('should not resolve'); };
   trakt.request = async () => { throw new Error('should not request'); };
   await assert.rejects(
     () => trakt.applyEvent('p1', {
