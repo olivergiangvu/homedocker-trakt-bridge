@@ -100,3 +100,58 @@ test('a newer backwards seek remains valid because ordering uses event time, not
   assert.equal(seekBack.action, 'scrobble:start');
   assert.deepEqual(calls.map((x) => x.path), ['/scrobble/pause', '/scrobble/start']);
 });
+
+
+test('newer event that fails during media resolution still blocks an older retry before resolution', async () => {
+  const db = fakeDb();
+  const client = new TraktClient({ historyDedupeSeconds: 300 }, db);
+  let resolveCalls = 0;
+
+  client.resolveMedia = async () => {
+    resolveCalls += 1;
+    throw new BridgeError('Trakt API 429', {
+      status: 429,
+      code: 'trakt_429',
+      retryAfter: '65',
+      upstreamPath: '/shows/285217/seasons/1/episodes/2',
+    });
+  };
+
+  const identity = {
+    scope: 'episode',
+    metaId: 'tt36885662',
+    videoId: 'tt36885662:1:2',
+    season: 1,
+    episode: 2,
+  };
+
+  await assert.rejects(
+    () => client.applyEvent('p1', {
+      ...identity,
+      id: 'pause-new',
+      event: 'pause',
+      at: 2000,
+    }, {
+      kind: 'scrobble',
+      action: 'pause',
+      progress: 11.84,
+    }),
+    (err) => err instanceof BridgeError && err.code === 'trakt_429',
+  );
+
+  const stale = await client.applyEvent('p1', {
+    ...identity,
+    id: 'stop-old',
+    event: 'stop',
+    at: 1000,
+  }, {
+    kind: 'scrobble',
+    action: 'pause',
+    progress: 7,
+  });
+
+  assert.equal(stale.ignored, 'stale_playback_event');
+  assert.equal(stale.watermarkSource, 'source');
+  assert.equal(stale.newestEventId, 'pause-new');
+  assert.equal(resolveCalls, 1, 'older retry must be rejected before another resolver call');
+});

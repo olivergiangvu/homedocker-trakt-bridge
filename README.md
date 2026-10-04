@@ -114,8 +114,8 @@ For sensitive vulnerabilities, follow **[SECURITY.md](SECURITY.md)** instead of 
 
 ## Project status
 
-`v1.1.0` remains the current stable production release. `v1.2.0-rc.1` is the HomeDocker canary for issue #58 and hardens coexistence with native Trakt clients under shared user-level rate pressure.
+`v1.1.0` remains the current stable production release. `v1.2.0-rc.2` is the current HomeDocker canary candidate for issue #58.
 
-The rc.1 candidate adds persistent stale-playback protection, safe 422/429 diagnostics, and separate read/write/shared cooldown lanes while keeping DB schema `1`. Production should stay on the immutable v1.1.0 digest until the rc.1 HomeDocker canary passes with native Trakt still enabled on supported clients.
+rc.2 keeps the rc.1 stale-playback and rate-limit hardening, and additionally protects playback ordering before Trakt media resolution plus persists a separate public-metadata Retry-After cooldown. Production should stay on the immutable v1.1.0 digest until the rc.2 HomeDocker canary passes with native Trakt still enabled on supported clients.
 
 License: [MIT](LICENSE).

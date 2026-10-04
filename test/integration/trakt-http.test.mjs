@@ -156,6 +156,43 @@ test('Trakt HTTP: 429 preserves retry-after and upstream path', async (t) => {
   );
 });
 
+test('Trakt HTTP: public metadata 429 arms a persisted local cooldown before another resolver call', async (t) => {
+  let publicCalls = 0;
+  const mock = await startJsonServer(async (req) => {
+    if (req.path === '/shows/285217/seasons/1/episodes/2') {
+      publicCalls += 1;
+      return {
+        status: 429,
+        headers: { 'retry-after': '2' },
+        body: { error: 'rate_limited' },
+      };
+    }
+    return null;
+  });
+  const restoreFetch = redirectTraktFetch(mock.baseUrl);
+  t.after(async () => { restoreFetch(); await mock.close(); });
+
+  const db = tokenDb();
+  const first = new TraktClient(clientConfig(), db);
+
+  await assert.rejects(
+    () => first.publicRequest('/shows/285217/seasons/1/episodes/2'),
+    (err) => err instanceof BridgeError
+      && err.code === 'trakt_429'
+      && err.retryAfter === '2',
+  );
+
+  const reconstructed = new TraktClient(clientConfig(), db);
+  await assert.rejects(
+    () => reconstructed.publicRequest('/shows/285217/seasons/1/episodes/2'),
+    (err) => err instanceof BridgeError
+      && err.code === 'trakt_public_rate_cooldown'
+      && Number(err.retryAfter) >= 1,
+  );
+
+  assert.equal(publicCalls, 1, 'cooldown must prevent a repeated upstream public metadata call');
+});
+
 test('Trakt HTTP: pagination follows the upstream page count and keeps order', async (t) => {
   const mock = await startJsonServer(async (req) => {
     if (req.path !== '/sync/watched/movies') return null;

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { observePlaybackWatermark } from '../src/playback-watermark.mjs';
+import { observePlaybackWatermark, observeSourcePlaybackWatermark } from '../src/playback-watermark.mjs';
 
 function fakeDb() {
   const rows = new Map();
@@ -89,4 +89,63 @@ test('non-playback and missing timestamps do not create a watermark', () => {
     id: 'pause-1', event: 'pause',
   }), null);
   assert.equal(db.rows.size, 0);
+});
+
+
+test('source watermark orders the same AIOStreams video before Trakt resolution exists', () => {
+  const db = fakeDb();
+  const base = {
+    scope: 'episode',
+    metaId: 'tt36885662',
+    videoId: 'tt36885662:1:2',
+    season: 1,
+    episode: 2,
+  };
+
+  const newest = observeSourcePlaybackWatermark(db, 'p1', {
+    ...base,
+    id: 'pause-new',
+    event: 'pause',
+    at: 1100,
+  });
+  assert.equal(newest.stale, false);
+
+  const oldRetry = observeSourcePlaybackWatermark(db, 'p1', {
+    ...base,
+    id: 'stop-old',
+    event: 'stop',
+    at: 1000,
+  });
+  assert.equal(oldRetry.stale, true);
+  assert.equal(oldRetry.newestEventId, 'pause-new');
+});
+
+test('source watermark still allows a newer backwards seek', () => {
+  const db = fakeDb();
+  const base = {
+    scope: 'episode',
+    metaId: 'tt36885662',
+    videoId: 'tt36885662:1:2',
+    season: 1,
+    episode: 2,
+  };
+
+  observeSourcePlaybackWatermark(db, 'p1', {
+    ...base,
+    id: 'pause-80',
+    event: 'pause',
+    at: 1000,
+    positionMs: 800,
+  });
+
+  const newer = observeSourcePlaybackWatermark(db, 'p1', {
+    ...base,
+    id: 'start-30',
+    event: 'start',
+    at: 1100,
+    positionMs: 300,
+  });
+
+  assert.equal(newer.stale, false);
+  assert.equal(newer.newestAt, 1100);
 });

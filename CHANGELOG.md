@@ -2,6 +2,23 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+## [1.2.0-rc.2] - 2026-10-04
+
+### Fixed
+- A source-identity playback watermark is now recorded before Trakt media resolution, so a newer AIOStreams playback event that itself fails during metadata resolution still prevents an older retry from overtaking it.
+- Public Trakt metadata lookups now honor a persisted local `Retry-After` cooldown after a 429 instead of repeatedly re-hitting the same resolver path during the throttle window.
+
+### Canary evidence
+- rc.1 captured a real VidHub pause at 11.84% that reached AIOStreams correctly but failed in Bridge before scrobbling because the public episode resolver returned `429` on `/shows/285217/seasons/1/episodes/2` with `Retry-After: 65` and no `X-Ratelimit` metadata.
+- Because rc.1's canonical watermark was recorded only after successful media resolution, that resolver failure left a stale-retry race open. rc.2 closes that gap before the resolver runs.
+
+### Safety
+- The existing canonical Trakt-item watermark remains in place after successful resolution.
+- Event ordering still uses event time, never progress, so legitimate newer backwards seeks remain valid.
+- The public metadata cooldown is separate from authenticated read/write cooldowns; a public lookup 429 does not unnecessarily freeze authenticated pull or mutation lanes.
+- DB schema remains `1`; no migration is required.
+- Pause-422 recovery remains deferred until a real 422 reason is captured in canary diagnostics.
+
 ## [1.2.0-rc.1] - 2026-10-04
 
 ### Added
