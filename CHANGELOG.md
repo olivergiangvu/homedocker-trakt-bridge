@@ -2,6 +2,27 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+## [1.3.0-rc.1] - 2026-10-05
+
+### Added
+- Adds opt-in `AIO_RECONCILER_MODE=compare` as the first v1.3 recovery phase.
+- Keeps the fully qualified v1.2 detect settlement path unchanged, then stages only settled missing-delivery candidates into a separate restart-safe Trakt comparison queue.
+- Compares candidates against authenticated Trakt playback using GET endpoints only and classifies `trakt_same_or_newer`, `trakt_stale_candidate`, `trakt_playback_missing_candidate`, or fail-closed ambiguous outcomes.
+- Gives newer native-Trakt timestamps precedence, while equivalent/ahead Trakt progress also suppresses recovery candidacy.
+- Keeps Trakt read failures/rate limits retryable with bounded backoff instead of converting them into terminal recovery decisions.
+- Adds persisted aggregate compare diagnostics to operational status.
+
+### Safety
+- Compare mode never writes Trakt and never writes AIOStreams.
+- AIO SQLite remains read-only.
+- Existing v1.2 sink matching, position-aware delivery coverage, quiet-window settlement, first-seen preservation, same-item coalescing, playback watermarks, history dedupe, and rate-limit lanes remain unchanged.
+- Public default remains `AIO_RECONCILER_MODE=off`.
+- Phase B guarded writeback is explicitly excluded from this RC.
+
+### Qualification target
+- RC1 is intended for HomeDocker compare-only canary observation.
+- Production stable remains the exact v1.2.0 digest until RC1 compare decisions are observed and accepted.
+
 ## [1.2.0] - 2026-10-05
 
 ### Stable release
