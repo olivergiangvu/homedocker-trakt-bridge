@@ -5,6 +5,10 @@ import { DatabaseSync } from 'node:sqlite';
 const CURSOR_KEY = 'aio-reconcile:v2:cursor';
 const PENDING_KEY = 'aio-reconcile:v2:pending';
 const SETTLED_PREFIX = 'aio-reconcile:v2:settled:';
+const COMPARE_PENDING_KEY = 'aio-reconcile:v3:compare-pending';
+const COMPARE_SETTLED_PREFIX = 'aio-reconcile:v3:compare-settled:';
+const COMPARE_RETRY_BASE_MS = 60_000;
+const COMPARE_RETRY_MAX_MS = 15 * 60_000;
 const CACHE_TTL_SECONDS = 10 * 365 * 24 * 3600;
 
 const REQUIRED_WATCH_STATE_COLUMNS = [
@@ -58,6 +62,13 @@ function sourceKey(row) {
 function digestForRow(row) {
   return createHash('sha256')
     .update(sourceKey(row))
+    .digest('hex')
+    .slice(0, 24);
+}
+
+function digestForPending(item) {
+  return createHash('sha256')
+    .update(`${item.uuid}\u001f${item.persona || ''}\u001f${item.itemKey}`)
     .digest('hex')
     .slice(0, 24);
 }
@@ -288,6 +299,35 @@ function storePendingMap(db, value) {
   db.cacheSet(PENDING_KEY, value, CACHE_TTL_SECONDS);
 }
 
+function comparePendingMap(db) {
+  const value = db.cacheGet(COMPARE_PENDING_KEY);
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value
+    : {};
+}
+
+function storeComparePendingMap(db, value) {
+  db.cacheSet(COMPARE_PENDING_KEY, value, CACHE_TTL_SECONDS);
+}
+
+function stageComparePending(db, profileId, row, firstSeenAt, nowMs) {
+  const pending = comparePendingMap(db);
+  const key = digestForRow(row);
+  const previous = pending[key];
+
+  if (!previous || Number(row.updated_at) > Number(previous.updatedAt)) {
+    pending[key] = {
+      ...rowToPending(row, firstSeenAt || nowMs),
+      profileId,
+      compareFirstSeenAt: Number(previous?.compareFirstSeenAt || nowMs),
+      attempts: 0,
+      nextAttemptAt: 0,
+      lastError: null,
+    };
+    storeComparePendingMap(db, pending);
+  }
+}
+
 function stagePendingRows(db, pending, rows, nowMs) {
   let staged = 0;
   let replaced = 0;
@@ -317,6 +357,179 @@ function progressPercent(row) {
   return durationMs > 0
     ? Number(((positionMs / durationMs) * 100).toFixed(3))
     : null;
+}
+
+function parseProviderIdentity(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+
+  if (/^tt\d+$/i.test(raw)) {
+    return { provider: 'imdb', value: raw.toLowerCase() };
+  }
+
+  const imdb = raw.match(/^imdb:(tt\d+)$/i);
+  if (imdb) {
+    return { provider: 'imdb', value: imdb[1].toLowerCase() };
+  }
+
+  const numeric = raw.match(/^(trakt|tmdb|tvdb):(\d+)$/i);
+  if (numeric) {
+    return {
+      provider: numeric[1].toLowerCase(),
+      value: Number(numeric[2]),
+    };
+  }
+
+  return null;
+}
+
+function idsContain(ids, identity) {
+  if (!ids || !identity) return false;
+  const actual = ids[identity.provider];
+  if (actual == null) return false;
+  if (identity.provider === 'imdb') {
+    return String(actual).toLowerCase() === String(identity.value).toLowerCase();
+  }
+  return Number(actual) === Number(identity.value);
+}
+
+function playbackPausedAtMs(row) {
+  const raw = row?.paused_at || row?.updated_at || null;
+  if (!raw) return null;
+  const value = Date.parse(String(raw));
+  return Number.isFinite(value) ? value : null;
+}
+
+function playbackIdentity(row, kind) {
+  if (kind === 'movie') {
+    return {
+      kind,
+      ids: row?.movie?.ids || null,
+    };
+  }
+  return {
+    kind,
+    showIds: row?.show?.ids || null,
+    season: row?.episode?.season == null
+      ? null
+      : Number(row.episode.season),
+    episode: row?.episode?.number == null
+      ? null
+      : Number(row.episode.number),
+    episodeIds: row?.episode?.ids || null,
+  };
+}
+
+export function classifyTraktPlaybackCandidate(
+  item,
+  playbackRows,
+  { positionToleranceMs = 2000 } = {},
+) {
+  const identity = parseProviderIdentity(item.baseId);
+  if (!identity) {
+    return {
+      decision: 'trakt_compare_ambiguous',
+      reason: 'candidate_identity_unusable',
+      candidate: false,
+      trakt: null,
+    };
+  }
+
+  const kind = String(item.kind);
+  const matches = (playbackRows || []).filter((row) => {
+    if (kind === 'movie') {
+      return idsContain(row?.movie?.ids, identity);
+    }
+
+    if (kind === 'episode') {
+      return idsContain(row?.show?.ids, identity)
+        && Number(row?.episode?.season) === Number(item.season)
+        && Number(row?.episode?.number) === Number(item.episode);
+    }
+
+    return false;
+  });
+
+  if (matches.length === 0) {
+    return {
+      decision: 'trakt_playback_missing_candidate',
+      reason: 'no_matching_trakt_playback',
+      candidate: true,
+      trakt: null,
+    };
+  }
+
+  if (matches.length !== 1) {
+    return {
+      decision: 'trakt_compare_ambiguous',
+      reason: 'multiple_matching_trakt_playback_rows',
+      candidate: false,
+      trakt: null,
+    };
+  }
+
+  const row = matches[0];
+  const traktProgress = Number(row?.progress);
+  if (!Number.isFinite(traktProgress) || traktProgress < 0 || traktProgress > 100) {
+    return {
+      decision: 'trakt_compare_ambiguous',
+      reason: 'trakt_progress_invalid',
+      candidate: false,
+      trakt: playbackIdentity(row, kind),
+    };
+  }
+
+  const durationMs = Number(item.durationMs);
+  const aioPositionMs = Number(item.positionMs);
+  if (!(durationMs > 0) || !(aioPositionMs > 0)) {
+    return {
+      decision: 'trakt_compare_ambiguous',
+      reason: 'candidate_position_invalid',
+      candidate: false,
+      trakt: playbackIdentity(row, kind),
+    };
+  }
+
+  const traktPositionMs = Math.round((durationMs * traktProgress) / 100);
+  const positionDeltaMs = traktPositionMs - aioPositionMs;
+  const pausedAtMs = playbackPausedAtMs(row);
+  const aioUpdatedAt = Number(item.updatedAt);
+
+  const sameOrNewerByTime = Number.isFinite(pausedAtMs)
+    && Number.isFinite(aioUpdatedAt)
+    && pausedAtMs >= aioUpdatedAt;
+  const sameOrNewerByPosition =
+    traktPositionMs + Number(positionToleranceMs) >= aioPositionMs;
+
+  if (sameOrNewerByTime || sameOrNewerByPosition) {
+    return {
+      decision: 'trakt_same_or_newer',
+      reason: sameOrNewerByTime
+        ? 'trakt_timestamp_same_or_newer'
+        : 'trakt_position_same_or_newer',
+      candidate: false,
+      trakt: {
+        ...playbackIdentity(row, kind),
+        progress: traktProgress,
+        positionMs: traktPositionMs,
+        pausedAtMs,
+        positionDeltaMs,
+      },
+    };
+  }
+
+  return {
+    decision: 'trakt_stale_candidate',
+    reason: 'trakt_older_and_behind',
+    candidate: true,
+    trakt: {
+      ...playbackIdentity(row, kind),
+      progress: traktProgress,
+      positionMs: traktPositionMs,
+      pausedAtMs,
+      positionDeltaMs,
+    },
+  };
 }
 
 function deliveryDetail(delivery) {
@@ -353,8 +566,21 @@ function logSettled(db, profileId, row, {
   delivery = null,
   quietSeconds,
   firstSeenAt,
+  compareEnabled = false,
+  nowMs = Date.now(),
 }) {
   const eventId = settledEventId(row);
+
+  if (candidate && compareEnabled) {
+    stageComparePending(
+      db,
+      profileId,
+      row,
+      firstSeenAt,
+      nowMs,
+    );
+  }
+
   const marker = db.cacheGet(settledKey(row));
 
   if (marker && Number(marker.updatedAt) === Number(row.updated_at)) {
@@ -497,6 +723,8 @@ function settlePendingRows({
         delivery,
         quietSeconds: config.aioReconcileQuietSeconds,
         firstSeenAt: item.firstSeenAt,
+        compareEnabled: config.aioReconcilerMode === 'compare',
+        nowMs,
       },
     );
 
@@ -526,7 +754,7 @@ export function reconcileAioOnce({
   db,
   nowMs = Date.now(),
 }) {
-  if (config.aioReconcilerMode !== 'detect') {
+  if (!['detect', 'compare'].includes(config.aioReconcilerMode)) {
     return {
       status: 'disabled',
       observed: 0,
@@ -623,8 +851,228 @@ export function reconcileAioOnce({
   }
 }
 
-export function startAioReconciler({ config, db }) {
-  if (config.aioReconcilerMode !== 'detect') {
+function compareEventId(item) {
+  return `reconcile|aio-compare|${digestForPending(item)}|${item.updatedAt}`;
+}
+
+function compareSettledKey(item) {
+  return `${COMPARE_SETTLED_PREFIX}${digestForPending(item)}`;
+}
+
+function retryAfterMs(value) {
+  if (value == null || value === '') return null;
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric >= 0) {
+    if (numeric > 1e12) return Math.max(0, numeric - Date.now());
+    if (numeric > 1e9) return Math.max(0, numeric * 1000 - Date.now());
+    return numeric * 1000;
+  }
+  const date = Date.parse(String(value));
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : null;
+}
+
+function compareRetryDelayMs(item, error) {
+  const explicit = retryAfterMs(error?.retryAfter);
+  if (explicit != null) {
+    return Math.min(
+      COMPARE_RETRY_MAX_MS,
+      Math.max(COMPARE_RETRY_BASE_MS, explicit),
+    );
+  }
+
+  const attempts = Math.max(1, Number(item.attempts || 0) + 1);
+  return Math.min(
+    COMPARE_RETRY_MAX_MS,
+    COMPARE_RETRY_BASE_MS * (2 ** Math.min(attempts - 1, 4)),
+  );
+}
+
+function logCompareSettled(db, item, result) {
+  const markerKey = compareSettledKey(item);
+  const marker = db.cacheGet(markerKey);
+  if (marker && Number(marker.updatedAt) === Number(item.updatedAt)) {
+    return null;
+  }
+
+  const detail = {
+    action: 'aio-reconcile:compare-settled',
+    decision: result.decision,
+    reason: result.reason,
+    candidate: Boolean(result.candidate),
+    itemKey: item.itemKey,
+    kind: item.kind,
+    videoId: item.videoId || null,
+    baseId: item.baseId,
+    season: item.season,
+    episode: item.episode,
+    positionMs: Number(item.positionMs),
+    durationMs: Number(item.durationMs),
+    progressPercent: progressPercent(item),
+    updatedAt: Number(item.updatedAt),
+    firstSeenAt: Number(item.firstSeenAt || item.updatedAt),
+    compareFirstSeenAt: Number(
+      item.compareFirstSeenAt || item.firstSeenAt || item.updatedAt
+    ),
+    trakt: result.trakt,
+    writesTrakt: false,
+  };
+
+  db.cacheSet(markerKey, {
+    updatedAt: Number(item.updatedAt),
+    decision: result.decision,
+  }, CACHE_TTL_SECONDS);
+
+  db.logEvent({
+    profileId: item.profileId,
+    eventId: compareEventId(item),
+    event: 'reconcile',
+    status: 'ignored',
+    detail: JSON.stringify(detail),
+  });
+
+  return detail;
+}
+
+function markCompareUnavailable(item, error, nowMs) {
+  const attempts = Number(item.attempts || 0) + 1;
+  const delayMs = compareRetryDelayMs(item, error);
+  return {
+    ...item,
+    attempts,
+    nextAttemptAt: Number(nowMs) + delayMs,
+    lastError: error?.code || error?.message || String(error),
+  };
+}
+
+export async function compareAioCandidatesOnce({
+  config,
+  db,
+  trakt,
+  nowMs = Date.now(),
+}) {
+  if (config.aioReconcilerMode !== 'compare') {
+    return {
+      status: 'disabled',
+      pending: 0,
+      compared: 0,
+      unavailable: 0,
+    };
+  }
+
+  if (!trakt) {
+    return {
+      status: 'unavailable',
+      reason: 'trakt_client_missing',
+      pending: Object.keys(comparePendingMap(db)).length,
+      compared: 0,
+      unavailable: 0,
+    };
+  }
+
+  const pending = comparePendingMap(db);
+  const due = Object.entries(pending)
+    .filter(([, item]) => Number(item.nextAttemptAt || 0) <= Number(nowMs))
+    .slice(0, Number(config.aioReconcileMaxRows || 100));
+
+  if (!due.length) {
+    return {
+      status: 'ok',
+      pending: Object.keys(pending).length,
+      compared: 0,
+      sameOrNewer: 0,
+      stale: 0,
+      missing: 0,
+      ambiguous: 0,
+      unavailable: 0,
+    };
+  }
+
+  let compared = 0;
+  let sameOrNewer = 0;
+  let stale = 0;
+  let missing = 0;
+  let ambiguous = 0;
+  let unavailable = 0;
+  const details = [];
+
+  for (const kind of ['movie', 'episode']) {
+    const group = due.filter(([, item]) => String(item.kind) === kind);
+    if (!group.length) continue;
+
+    let rows;
+    try {
+      rows = await trakt.requestAllPages(
+        group[0][1].profileId,
+        kind === 'movie'
+          ? '/sync/playback/movies?extended=full'
+          : '/sync/playback/episodes?extended=full',
+        { limit: 100 },
+      );
+    } catch (error) {
+      for (const [key, item] of group) {
+        pending[key] = markCompareUnavailable(item, error, nowMs);
+        unavailable += 1;
+      }
+      continue;
+    }
+
+    for (const [key, item] of group) {
+      const result = classifyTraktPlaybackCandidate(item, rows, {
+        positionToleranceMs:
+          Number(config.aioReconcilePositionToleranceMs || 2000),
+      });
+
+      const detail = logCompareSettled(db, item, result);
+      if (detail) {
+        details.push(detail);
+        compared += 1;
+        if (result.decision === 'trakt_same_or_newer') sameOrNewer += 1;
+        else if (result.decision === 'trakt_stale_candidate') stale += 1;
+        else if (result.decision === 'trakt_playback_missing_candidate') {
+          missing += 1;
+        } else {
+          ambiguous += 1;
+        }
+      }
+
+      delete pending[key];
+    }
+  }
+
+  for (const [key, item] of due) {
+    if (['movie', 'episode'].includes(String(item.kind))) continue;
+    const result = {
+      decision: 'trakt_compare_ambiguous',
+      reason: 'candidate_kind_unsupported',
+      candidate: false,
+      trakt: null,
+    };
+    const detail = logCompareSettled(db, item, result);
+    if (detail) {
+      details.push(detail);
+      compared += 1;
+      ambiguous += 1;
+    }
+    delete pending[key];
+  }
+
+  storeComparePendingMap(db, pending);
+
+  return {
+    status: 'ok',
+    pending: Object.keys(pending).length,
+    compared,
+    sameOrNewer,
+    stale,
+    missing,
+    ambiguous,
+    unavailable,
+    details,
+  };
+}
+
+export function startAioReconciler({ config, db, trakt = null }) {
+  if (!['detect', 'compare'].includes(config.aioReconcilerMode)) {
     return { stop() {} };
   }
 
@@ -632,7 +1080,7 @@ export function startAioReconciler({ config, db }) {
   let stopped = false;
   let lastError = null;
 
-  const run = () => {
+  const run = async () => {
     if (running || stopped) return;
     running = true;
 
@@ -664,6 +1112,35 @@ export function startAioReconciler({ config, db }) {
         }));
       }
 
+      if (config.aioReconcilerMode === 'compare') {
+        const compared = await compareAioCandidatesOnce({
+          config,
+          db,
+          trakt,
+        });
+
+        if (
+          compared.status === 'ok'
+          && (
+            compared.compared
+            || compared.unavailable
+          )
+        ) {
+          console.log(JSON.stringify({
+            level: 'info',
+            event: 'aio_reconcile_compare',
+            pending: compared.pending,
+            compared: compared.compared,
+            sameOrNewer: compared.sameOrNewer,
+            stale: compared.stale,
+            missing: compared.missing,
+            ambiguous: compared.ambiguous,
+            unavailable: compared.unavailable,
+            writesTrakt: false,
+          }));
+        }
+      }
+
       lastError = null;
     } catch (error) {
       const message = error instanceof Error
@@ -687,7 +1164,7 @@ export function startAioReconciler({ config, db }) {
   console.log(JSON.stringify({
     level: 'info',
     event: 'aio_reconcile_start',
-    mode: 'detect',
+    mode: config.aioReconcilerMode,
     dbPath: config.aioDbPath,
     intervalSeconds: config.aioReconcileIntervalSeconds,
     graceSeconds: config.aioReconcileGraceSeconds,
@@ -701,10 +1178,10 @@ export function startAioReconciler({ config, db }) {
     writesTrakt: false,
   }));
 
-  run();
+  void run();
 
   const timer = setInterval(
-    run,
+    () => void run(),
     config.aioReconcileIntervalSeconds * 1000,
   );
   timer.unref();
