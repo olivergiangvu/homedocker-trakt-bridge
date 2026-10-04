@@ -20,10 +20,10 @@ test('progress is computed and clamped', () => {
   assert.equal(progressPercent({ positionMs: 0 }), null);
 });
 
-test('AIOStreams stop below its 90% watched threshold maps to Trakt pause', () => {
+test('AIOStreams unfinished stop preserves stop semantics and lets Trakt classify resume', () => {
   const plan = planEvent({ event: 'stop', positionMs: 850, durationMs: 1000, played: false });
   assert.equal(plan.kind, 'scrobble');
-  assert.equal(plan.action, 'pause');
+  assert.equal(plan.action, 'stop');
   assert.equal(plan.progress, 85);
 });
 
