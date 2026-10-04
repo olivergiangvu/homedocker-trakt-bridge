@@ -14,6 +14,13 @@ All notable changes to HomeDocker Trakt Bridge are documented here.
 - rc.6 incorrectly classified that final row as missing because it searched only +/-15 seconds around the latest AIO timestamp.
 - The captured stop and final local row differ by only 12 ms, providing a deterministic regression fixture for rc.7.
 
+### Runtime qualification
+- The annotated `v1.2.0-rc.7` tag resolves to commit `c77794c5e7cc9ef2d26db1b39212e758a87efd80`; the successful release workflow published and exact-digest smoke-tested `sha256:2fc1725aae1c57c86f428c94cd018d5767327628f52c03610600eeee563b18c3`, which is the same immutable image used by the HomeDocker canary.
+- Restart-while-pending passed in the live canary: pending `firstSeenAt=1791142679441` existed before Bridge restart `1791142696673`, survived with the same first-seen watermark, and settled only after restart.
+- A newer same-item local AIO row coalesced from `updatedAt=1791142684785` to `1791142976796` while preserving `firstSeenAt`; this is expected behavior, not qualification contamination.
+- The chain settled exactly once at `1791143282000` as `covered_by_homedocker_playback_delivery`, with `candidate=false` and `writesTrakt=false`.
+- Restart persistence and delivery coverage are treated as independent assertions. The reusable operator harness is `scripts/qualify-aio-restart-persistence.sh`.
+
 ### Safety
 - rc.7 retains rc.6's 300-second per-item quiescence and exact HomeDocker sink matching.
 - The reconciler remains detect-only and never calls/writes Trakt or writes AIOStreams.
