@@ -105,18 +105,25 @@ jobs:
           set -euo pipefail
 
           notes_file="docs/releases/${GITHUB_REF_NAME}.md"
+          release_flags=()
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            release_flags+=(--prerelease)
+          fi
 
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             if [[ -f "$notes_file" ]]; then
               echo "Syncing existing GitHub Release from $notes_file"
-              gh release edit "$GITHUB_REF_NAME" --notes-file "$notes_file"
+              gh release edit "$GITHUB_REF_NAME" "${release_flags[@]}" --notes-file "$notes_file"
             else
               echo "GitHub Release $GITHUB_REF_NAME already exists and no versioned notes file is present; keeping its body."
+              if (( ${#release_flags[@]} )); then
+                gh release edit "$GITHUB_REF_NAME" "${release_flags[@]}"
+              fi
             fi
           elif [[ -f "$notes_file" ]]; then
             echo "Creating GitHub Release from $notes_file"
-            gh release create "$GITHUB_REF_NAME" --verify-tag --notes-file "$notes_file"
+            gh release create "$GITHUB_REF_NAME" --verify-tag "${release_flags[@]}" --notes-file "$notes_file"
           else
             echo "No versioned notes file found; creating generated release notes."
-            gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
+            gh release create "$GITHUB_REF_NAME" --verify-tag "${release_flags[@]}" --generate-notes
           fi
