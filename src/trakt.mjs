@@ -1,7 +1,19 @@
 import { BridgeError } from './errors.mjs';
 import { providerIdsForEvent } from './media-ids.mjs';
-import { recentEquivalentHistoryState, rememberHistoryState } from './history-dedupe.mjs';
+import {
+  recentEquivalentHistoryStateByKey,
+  rememberHistoryState,
+  rememberHistoryStateByKey,
+} from './history-dedupe.mjs';
 import { observePlaybackWatermark, observeSourcePlaybackWatermark } from './playback-watermark.mjs';
+import {
+  directBulkHistoryPayload,
+  directHistoryPayload,
+  directScrobblePayload,
+  directWatchlistPayload,
+  mediaFromScrobbleResponse,
+  sourceSemanticMediaKey,
+} from './direct-media.mjs';
 import {
   identityAliasVersion,
   learnShowAlias,
@@ -231,7 +243,7 @@ export class TraktClient {
       response = await this.#fetchApi(path, method, body, token);
     }
     const data = await this.#handleResponse(response, { accept409, upstreamPath: path });
-    return { data, headers: response.headers };
+    return { data, headers: response.headers, status: response.status };
   }
 
   async requestAllPages(profileId, path, { limit = 100, maxPages = this.config.pullMaxPages } = {}) {
@@ -515,35 +527,7 @@ export class TraktClient {
   }
 
   async applyBulkHistory(profileId, event, add) {
-    for (const video of event.videos) {
-      if (/^(kitsu|mal|anilist|anidb):/i.test(String(video.videoId || ''))) {
-        throw new BridgeError('Anime/absolute episode numbering is not mapped safely in v0.3.x', {
-          status: 422,
-          code: 'anime_numbering_unsupported',
-        });
-      }
-    }
-
-    const resolved = await this.resolveShow(event);
-    const watchedAt = new Date((Number(event.at) || Math.floor(Date.now() / 1000)) * 1000).toISOString();
-    const grouped = new Map();
-    for (const video of event.videos) {
-      const season = toInt(video.season);
-      const episode = toInt(video.episode);
-      if (!grouped.has(season)) grouped.set(season, new Set());
-      grouped.get(season).add(episode);
-    }
-
-    const seasons = [...grouped.entries()]
-      .sort(([a], [b]) => a - b)
-      .map(([number, episodes]) => ({
-        number,
-        episodes: [...episodes]
-          .sort((a, b) => a - b)
-          .map((episode) => add ? { number: episode, watched_at: watchedAt } : { number: episode }),
-      }));
-
-    const body = { shows: [{ ids: resolved.show.ids, seasons }] };
+    const { body } = directBulkHistoryPayload(event, add);
     const path = add ? '/sync/history' : '/sync/history/remove';
     await this.request(profileId, path, { method: 'POST', body });
     return {
@@ -552,6 +536,7 @@ export class TraktClient {
       videos: event.videos.length,
       part: Number(event.part),
       parts: Number(event.parts),
+      transport: 'direct-provider-ids',
     };
   }
 
@@ -563,46 +548,68 @@ export class TraktClient {
     if (plan.kind === 'scrobble') {
       const sourceWatermark = observeSourcePlaybackWatermark(this.db, profileId, event);
       if (sourceWatermark?.stale) return stalePlaybackResult(sourceWatermark, 'source');
-    }
 
-    const media = await this.resolveMedia(event);
+      const progress = Number(plan.progress.toFixed(3));
+      const { target, body } = directScrobblePayload(event, progress);
+      const response = await this.requestDetailed(
+        profileId,
+        `/scrobble/${plan.action}`,
+        {
+          method: 'POST',
+          body,
+          accept409: plan.action === 'stop',
+        },
+      );
+      const scrobbleResult = response.data;
+      const canonicalMedia = mediaFromScrobbleResponse(target, scrobbleResult);
 
-    if (plan.kind === 'scrobble') {
-      const watermark = observePlaybackWatermark(this.db, profileId, media, event);
-      if (watermark?.stale) return stalePlaybackResult(watermark, 'canonical');
+      // Preserve the canonical watermark when Trakt gives us canonical ids back,
+      // but never block the hot path on a metadata resolver.
+      if (canonicalMedia) {
+        observePlaybackWatermark(this.db, profileId, canonicalMedia, event);
+      }
 
-      const payload = { progress: Number(plan.progress.toFixed(3)) };
-      if (media.kind === 'movie') payload.movie = media.movie;
-      else payload.episode = media.episode;
-      const scrobbleResult = await this.request(profileId, `/scrobble/${plan.action}`, {
-        method: 'POST',
-        body: payload,
-        accept409: plan.action === 'stop',
-      });
-
-      if (plan.action === 'stop' && scrobbleResult?.action === 'scrobble') {
-        rememberHistoryState(this.db, profileId, media, event, {
+      const semanticKey = sourceSemanticMediaKey(event);
+      if (
+        plan.action === 'stop'
+        && (response.status === 409 || scrobbleResult?.action === 'scrobble')
+      ) {
+        rememberHistoryStateByKey(this.db, profileId, semanticKey, event, {
           state: 'played',
-          source: 'scrobble-stop',
+          source: response.status === 409 ? 'scrobble-stop-duplicate' : 'scrobble-stop',
           ttlSeconds: this.config.historyDedupeSeconds,
         });
+        if (canonicalMedia) {
+          rememberHistoryState(this.db, profileId, canonicalMedia, event, {
+            state: 'played',
+            source: response.status === 409 ? 'scrobble-stop-duplicate' : 'scrobble-stop',
+            ttlSeconds: this.config.historyDedupeSeconds,
+          });
+        }
       }
 
       let identityAlias = null;
-      // AIOStreams can emit an unfinished `stop` that the bridge safely maps to
-      // Trakt `/scrobble/pause`. The identity evidence is the successful
-      // AIOStreams stop event, not the Trakt action name.
-      if (event.event === 'stop' && media.kind === 'episode') {
+      // Learn the AIOStreams spelling from the canonical show returned by the
+      // successful Trakt scrobble instead of resolving it before the write.
+      if (
+        event.event === 'stop'
+        && target.kind === 'episode'
+        && canonicalMedia?.show?.ids
+      ) {
         identityAlias = learnShowAlias(
           this.db,
           profileId,
-          media.show?.ids,
+          canonicalMedia.show.ids,
           event.metaId,
         );
       }
+
       return {
         action: `scrobble:${plan.action}`,
-        progress: payload.progress,
+        progress,
+        transport: 'direct-provider-ids',
+        upstreamStatus: response.status,
+        upstreamAction: scrobbleResult?.action || null,
         ...(identityAlias?.changed ? {
           identityAlias: {
             traktShowId: identityAlias.traktShowId,
@@ -616,13 +623,15 @@ export class TraktClient {
     }
 
     if (plan.kind === 'watchlist-add' || plan.kind === 'watchlist-remove') {
-      const item = media.kind === 'movie'
-        ? { ids: media.movie.ids }
-        : { ids: media.show.ids };
-      const body = media.kind === 'movie' ? { movies: [item] } : { shows: [item] };
-      const path = plan.kind === 'watchlist-add' ? '/sync/watchlist' : '/sync/watchlist/remove';
+      const { body } = directWatchlistPayload(event);
+      const path = plan.kind === 'watchlist-add'
+        ? '/sync/watchlist'
+        : '/sync/watchlist/remove';
       await this.request(profileId, path, { method: 'POST', body });
-      return { action: plan.kind === 'watchlist-add' ? 'watchlist:add' : 'watchlist:remove' };
+      return {
+        action: plan.kind === 'watchlist-add' ? 'watchlist:add' : 'watchlist:remove',
+        transport: 'direct-provider-ids',
+      };
     }
 
     const historyState = plan.kind === 'history-add'
@@ -631,13 +640,17 @@ export class TraktClient {
         ? 'unplayed'
         : null;
     if (!historyState) {
-      throw new BridgeError('Unknown event plan', { status: 500, code: 'invalid_plan' });
+      throw new BridgeError('Unknown event plan', {
+        status: 500,
+        code: 'invalid_plan',
+      });
     }
 
-    const duplicate = recentEquivalentHistoryState(
+    const semanticKey = sourceSemanticMediaKey(event);
+    const duplicate = recentEquivalentHistoryStateByKey(
       this.db,
       profileId,
-      media,
+      semanticKey,
       event,
       historyState,
       this.config.historyDedupeSeconds,
@@ -653,31 +666,40 @@ export class TraktClient {
       };
     }
 
-    const watchedAt = new Date((Number(event.at) || Math.floor(Date.now() / 1000)) * 1000).toISOString();
-    const item = media.kind === 'movie'
-      ? { ids: media.movie.ids, watched_at: watchedAt }
-      : { ids: media.episode.ids, watched_at: watchedAt };
-    const body = media.kind === 'movie' ? { movies: [item] } : { episodes: [item] };
+    const { body } = directHistoryPayload(
+      event,
+      plan.kind === 'history-remove',
+    );
 
     if (plan.kind === 'history-add') {
-      await this.request(profileId, '/sync/history', { method: 'POST', body });
-      rememberHistoryState(this.db, profileId, media, event, {
+      await this.request(profileId, '/sync/history', {
+        method: 'POST',
+        body,
+      });
+      rememberHistoryStateByKey(this.db, profileId, semanticKey, event, {
         state: 'played',
         source: 'history',
         ttlSeconds: this.config.historyDedupeSeconds,
       });
-      return { action: 'history:add' };
+      return {
+        action: 'history:add',
+        transport: 'direct-provider-ids',
+      };
     }
 
-    if (body.movies) body.movies = body.movies.map(({ ids }) => ({ ids }));
-    if (body.episodes) body.episodes = body.episodes.map(({ ids }) => ({ ids }));
-    await this.request(profileId, '/sync/history/remove', { method: 'POST', body });
-    rememberHistoryState(this.db, profileId, media, event, {
+    await this.request(profileId, '/sync/history/remove', {
+      method: 'POST',
+      body,
+    });
+    rememberHistoryStateByKey(this.db, profileId, semanticKey, event, {
       state: 'unplayed',
       source: 'history-remove',
       ttlSeconds: this.config.historyDedupeSeconds,
     });
-    return { action: 'history:remove' };
+    return {
+      action: 'history:remove',
+      transport: 'direct-provider-ids',
+    };
   }
 }
 
