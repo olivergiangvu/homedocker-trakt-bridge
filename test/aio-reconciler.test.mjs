@@ -78,6 +78,7 @@ function makeAioDb(path) {
       item_key TEXT NOT NULL,
       event TEXT NOT NULL,
       status TEXT NOT NULL,
+      body TEXT,
       created_at INTEGER NOT NULL,
       delivered_at INTEGER,
       last_error TEXT
@@ -128,6 +129,8 @@ function config(path, overrides = {}) {
     aioReconcileIntervalSeconds: 15,
     aioReconcileGraceSeconds: 30,
     aioReconcileQuietSeconds: 300,
+    aioReconcileCoverageLookbackSeconds: 180,
+    aioReconcilePositionToleranceMs: 2000,
     aioReconcileMaxRows: 100,
     aioReconcileSinkName: 'homedocker-trakt-bridge',
     aioReconcileSinkInstanceId: 'e3fe3b0',
@@ -299,10 +302,11 @@ test('delivery coverage is specific to the HomeDocker sink', () => {
 
     aio.prepare(`
       INSERT INTO watch_deliveries
-        (sink_id, item_key, event, status, created_at, delivered_at)
+        (sink_id, item_key, event, status, body, created_at, delivered_at)
       VALUES (
         'sink-meta', 'e|tt10009170:2:7',
-        'stop', 'delivered', 100005, 101000
+        'stop', 'delivered', '{"positionMs":443904}',
+        100005, 101000
       )
     `).run();
 
@@ -343,10 +347,11 @@ test('HomeDocker stop delivery marks settled state as covered', () => {
 
     aio.prepare(`
       INSERT INTO watch_deliveries
-        (sink_id, item_key, event, status, created_at, delivered_at)
+        (sink_id, item_key, event, status, body, created_at, delivered_at)
       VALUES (
         'sink-home', 'e|tt10009170:2:7',
-        'stop', 'delivered', 100005, 101000
+        'stop', 'delivered', '{"positionMs":500000}',
+        100005, 101000
       )
     `).run();
 
@@ -366,7 +371,145 @@ test('HomeDocker stop delivery marks settled state as covered', () => {
       'covered_by_homedocker_playback_delivery',
     );
     assert.equal(detail.delivery.event, 'stop');
+    assert.equal(detail.delivery.positionMs, 500000);
+    assert.equal(detail.delivery.positionDeltaMs, 0);
     assert.equal(detail.sink.addonInstanceId, 'e3fe3b0');
+  } finally {
+    aio.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('rc7 covers a later UserData row with an equivalent delivered stop 65s earlier', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'aio-rc7-late-userdata-'));
+  const path = join(dir, 'db.sqlite');
+  const aio = makeAioDb(path);
+  const bridge = new FakeBridgeDb();
+
+  try {
+    addHomeDockerSink(aio);
+    seedAioReconcileCursor(bridge, 0);
+
+    insertResume(aio, {
+      positionMs: 651269,
+      updatedAt: 165235,
+    });
+
+    aio.prepare(`
+      INSERT INTO watch_deliveries
+        (sink_id, item_key, event, status, body, created_at, delivered_at)
+      VALUES (
+        'sink-home', 'e|tt10009170:2:7',
+        'stop', 'delivered', '{"positionMs":651281}',
+        100074, 146714
+      )
+    `).run();
+
+    const result = reconcileAioOnce({
+      config: config(path),
+      db: bridge,
+      nowMs: 465235,
+    });
+
+    assert.equal(result.settled, 1);
+    assert.equal(result.candidates, 0);
+    assert.equal(result.covered, 1);
+
+    const detail = JSON.parse(bridge.events[0].detail);
+    assert.equal(
+      detail.decision,
+      'covered_by_homedocker_playback_delivery',
+    );
+    assert.equal(detail.delivery.event, 'stop');
+    assert.equal(detail.delivery.positionMs, 651281);
+    assert.equal(detail.delivery.positionDeltaMs, 12);
+  } finally {
+    aio.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('rc7 does not cover a delivered stop whose playback position differs materially', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'aio-rc7-position-mismatch-'));
+  const path = join(dir, 'db.sqlite');
+  const aio = makeAioDb(path);
+  const bridge = new FakeBridgeDb();
+
+  try {
+    addHomeDockerSink(aio);
+    seedAioReconcileCursor(bridge, 0);
+
+    insertResume(aio, {
+      positionMs: 651269,
+      updatedAt: 165235,
+    });
+
+    aio.prepare(`
+      INSERT INTO watch_deliveries
+        (sink_id, item_key, event, status, body, created_at, delivered_at)
+      VALUES (
+        'sink-home', 'e|tt10009170:2:7',
+        'stop', 'delivered', '{"positionMs":624539}',
+        100074, 146714
+      )
+    `).run();
+
+    const result = reconcileAioOnce({
+      config: config(path),
+      db: bridge,
+      nowMs: 465235,
+    });
+
+    assert.equal(result.settled, 1);
+    assert.equal(result.candidates, 1);
+    assert.equal(result.covered, 0);
+
+    const detail = JSON.parse(bridge.events[0].detail);
+    assert.equal(
+      detail.decision,
+      'settled_missing_homedocker_playback_delivery',
+    );
+    assert.equal(detail.delivery, null);
+  } finally {
+    aio.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('rc7 does not treat pending or errored playback deliveries as coverage', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'aio-rc7-undelivered-'));
+  const path = join(dir, 'db.sqlite');
+  const aio = makeAioDb(path);
+  const bridge = new FakeBridgeDb();
+
+  try {
+    addHomeDockerSink(aio);
+    seedAioReconcileCursor(bridge, 0);
+
+    insertResume(aio, {
+      positionMs: 651269,
+      updatedAt: 165235,
+    });
+
+    aio.prepare(`
+      INSERT INTO watch_deliveries
+        (sink_id, item_key, event, status, body, created_at, last_error)
+      VALUES (
+        'sink-home', 'e|tt10009170:2:7',
+        'stop', 'error', '{"positionMs":651281}',
+        100074, 'upstream failure'
+      )
+    `).run();
+
+    const result = reconcileAioOnce({
+      config: config(path),
+      db: bridge,
+      nowMs: 465235,
+    });
+
+    assert.equal(result.settled, 1);
+    assert.equal(result.candidates, 1);
+    assert.equal(result.covered, 0);
   } finally {
     aio.close();
     rmSync(dir, { recursive: true, force: true });

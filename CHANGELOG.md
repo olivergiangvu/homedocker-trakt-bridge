@@ -2,6 +2,24 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+## [1.2.0-rc.7] - 2026-10-05
+
+### Fixed
+- Detect-only AIO coverage now correlates the final local resume row with **delivered** HomeDocker playback events by playback position instead of relying on a narrow +/-15 second timestamp window.
+- A valid HomeDocker start/pause/stop can cover a later generic UserData row when its positive `positionMs` is within 2000 ms of the final AIO position and was delivered within the bounded 180-second lookback.
+- Pending or errored delivery rows never count as coverage, and materially different playback positions remain missing.
+
+### Canary evidence
+- VidHub delivered a HomeDocker stop at 651281 ms for `tt36885662:1:3`; AIO later refreshed the local row to 651269 ms about 65.16 seconds later while also emitting a zero-position `unplayed`.
+- rc.6 incorrectly classified that final row as missing because it searched only +/-15 seconds around the latest AIO timestamp.
+- The captured stop and final local row differ by only 12 ms, providing a deterministic regression fixture for rc.7.
+
+### Safety
+- rc.7 retains rc.6's 300-second per-item quiescence and exact HomeDocker sink matching.
+- The reconciler remains detect-only and never calls/writes Trakt or writes AIOStreams.
+- AIO access remains read-only and DB schema remains `1`.
+- rc.4 transport/rate-limit behavior remains unchanged.
+
 ## [1.2.0-rc.6] - 2026-10-05
 
 ### Changed

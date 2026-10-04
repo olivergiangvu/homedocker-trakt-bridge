@@ -19,12 +19,12 @@ const REQUIRED_SINK_COLUMNS = [
 ];
 
 const REQUIRED_DELIVERY_COLUMNS = [
-  'sink_id', 'item_key', 'event', 'status',
+  'sink_id', 'item_key', 'event', 'status', 'body',
   'created_at', 'delivered_at', 'last_error',
 ];
 
 const PLAYBACK_EVENTS = ['start', 'pause', 'stop'];
-const DELIVERY_MATCH_MS = 15_000;
+const DELIVERY_FORWARD_MS = 15_000;
 
 function defaultCursor(updatedAt = 0) {
   return { updatedAt, uuid: '', persona: '', itemKey: '' };
@@ -196,30 +196,64 @@ export function resolveHomeDockerSink(db, row, {
   };
 }
 
-export function findNearbyAioPlaybackDelivery(
+export function findEquivalentAioPlaybackDelivery(
   db,
   row,
   sinkId,
-  windowMs = DELIVERY_MATCH_MS,
+  {
+    lookbackMs,
+    forwardMs = DELIVERY_FORWARD_MS,
+    positionToleranceMs,
+  },
 ) {
   const at = Number(row.updated_at);
-  return db.prepare(`
-    SELECT event, status, created_at, delivered_at, last_error
+  const positionMs = Number(row.position_ms);
+
+  const rows = db.prepare(`
+    SELECT
+      event, status, created_at, delivered_at, last_error, body
     FROM watch_deliveries
     WHERE
       sink_id = ?
       AND item_key = ?
+      AND status = 'delivered'
       AND event IN ('start', 'pause', 'stop')
       AND created_at BETWEEN ? AND ?
     ORDER BY ABS(created_at - ?) ASC
-    LIMIT 1
-  `).get(
+  `).all(
     String(sinkId),
     String(row.item_key),
-    at - windowMs,
-    at + windowMs,
+    at - Number(lookbackMs),
+    at + Number(forwardMs),
     at,
-  ) || null;
+  );
+
+  for (const delivery of rows) {
+    let body = null;
+    try {
+      body = JSON.parse(String(delivery.body || 'null'));
+    } catch {
+      body = null;
+    }
+
+    const deliveredPositionMs = Number(body?.positionMs);
+    if (!Number.isFinite(deliveredPositionMs) || deliveredPositionMs <= 0) {
+      continue;
+    }
+
+    const positionDeltaMs = Math.abs(deliveredPositionMs - positionMs);
+    if (positionDeltaMs > Number(positionToleranceMs)) {
+      continue;
+    }
+
+    return {
+      ...delivery,
+      body_position_ms: deliveredPositionMs,
+      position_delta_ms: positionDeltaMs,
+    };
+  }
+
+  return null;
 }
 
 function rowToPending(row, firstSeenAt = Date.now()) {
@@ -299,6 +333,12 @@ function deliveryDetail(delivery) {
     lastError: delivery.last_error == null
       ? null
       : String(delivery.last_error),
+    positionMs: delivery.body_position_ms == null
+      ? null
+      : Number(delivery.body_position_ms),
+    positionDeltaMs: delivery.position_delta_ms == null
+      ? null
+      : Number(delivery.position_delta_ms),
   };
 }
 
@@ -429,10 +469,16 @@ function settlePendingRows({
       continue;
     }
 
-    const delivery = findNearbyAioPlaybackDelivery(
+    const delivery = findEquivalentAioPlaybackDelivery(
       aio,
       current,
       resolved.sink.id,
+      {
+        lookbackMs:
+          Number(config.aioReconcileCoverageLookbackSeconds) * 1000,
+        positionToleranceMs:
+          Number(config.aioReconcilePositionToleranceMs),
+      },
     );
 
     const isCovered = Boolean(delivery);
@@ -646,6 +692,10 @@ export function startAioReconciler({ config, db }) {
     intervalSeconds: config.aioReconcileIntervalSeconds,
     graceSeconds: config.aioReconcileGraceSeconds,
     quietSeconds: config.aioReconcileQuietSeconds,
+    coverageLookbackSeconds:
+      config.aioReconcileCoverageLookbackSeconds,
+    positionToleranceMs:
+      config.aioReconcilePositionToleranceMs,
     sinkName: config.aioReconcileSinkName,
     sinkInstanceId: config.aioReconcileSinkInstanceId || null,
     writesTrakt: false,

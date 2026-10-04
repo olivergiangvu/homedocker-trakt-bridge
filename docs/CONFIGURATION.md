@@ -74,7 +74,7 @@ Lower values such as 120 or 60 seconds can improve freshness in some deployments
 
 AIOStreams has its own watch-state pull cadence. Bridge TTL alone does not guarantee the same end-to-end client refresh interval, and no AIOStreams `WATCH_STATE_*` environment override is required for the v1.0 baseline while upstream defaults already provide satisfactory freshness.
 
-## Optional AIO local-state reconciler (rc.6 detect-only)
+## Optional AIO local-state reconciler (rc.7 detect-only)
 
 AIOStreams remains unmodified. The bridge can optionally inspect the AIOStreams SQLite database through a **read-only mount** to detect local resume-state changes that were not accompanied by a watch-state playback delivery.
 
@@ -84,7 +84,7 @@ The feature is disabled by default:
 AIO_RECONCILER_MODE=off
 ```
 
-For the rc.6 detect-only canary:
+For the rc.7 detect-only canary:
 
 ```env
 AIO_RECONCILER_MODE=detect
@@ -92,6 +92,8 @@ AIO_DB_PATH=/aio-data/db.sqlite
 AIO_RECONCILE_INTERVAL_SECONDS=15
 AIO_RECONCILE_GRACE_SECONDS=30
 AIO_RECONCILE_QUIET_SECONDS=300
+AIO_RECONCILE_COVERAGE_LOOKBACK_SECONDS=180
+AIO_RECONCILE_POSITION_TOLERANCE_MS=2000
 AIO_RECONCILE_SINK_NAME=homedocker-trakt-bridge
 AIO_RECONCILE_SINK_INSTANCE_ID=e3fe3b0
 AIO_RECONCILE_MAX_ROWS=100
@@ -112,13 +114,15 @@ Detect mode:
 - keeps one restart-safe pending candidate per AIO item and replaces it whenever a newer local row arrives
 - requires the item to remain unchanged for `AIO_RECONCILE_QUIET_SECONDS` (default 300s) before classifying it as settled
 - checks playback coverage only against the configured HomeDocker sink, optionally pinned by AIO addon instance ID
+- coverage requires a **delivered** HomeDocker `start`, `pause`, or `stop` whose positive `positionMs` matches the final AIO row within `AIO_RECONCILE_POSITION_TOLERANCE_MS`
+- coverage may look backward up to `AIO_RECONCILE_COVERAGE_LOOKBACK_SECONDS` because AIO can write a later generic UserData row after an already-delivered stop
 - stores only its own cursor/pending/settled watermarks in the bridge database
 - logs a settled missing-delivery candidate only after the quiescence window; intermediate rows are not emitted as final candidates
 - never calls Trakt and never writes to AIOStreams
 
 The first enabled rc.6 run establishes a fresh v2 baseline cursor and does not replay historical AIO rows. The detector also requires exactly one connected bridge profile; ambiguous multi-profile deployments fail safe. If the configured HomeDocker sink cannot be resolved uniquely, settlement is blocked rather than guessed.
 
-This remains intentionally an observation phase. The 300s quiet window reduces false finalization from sparse UserData updates but is not treated as proof that playback ended. A later write-capable reconciler must still compare a settled candidate against current Trakt playback before synthesizing any stop, and must fail safe on ambiguous/backward recovery so native Trakt remains authoritative when it already holds the same or newer state.
+This remains intentionally an observation phase. The 300s quiet window reduces false finalization from sparse UserData updates but is not treated as proof that playback ended. The bounded position-aware coverage lookback prevents a later generic UserData/unplayed row from falsely hiding a valid HomeDocker stop that carried the same resume point. A later write-capable reconciler must still compare a settled candidate against current Trakt playback before synthesizing any stop, and must fail safe on ambiguous/backward recovery so native Trakt remains authoritative when it already holds the same or newer state.
 
 ## Duplicate-history guard
 
