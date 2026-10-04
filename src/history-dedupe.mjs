@@ -18,34 +18,44 @@ function markerKey(profileId, mediaKey) {
   return `${PREFIX}${profileId}:${sha256(mediaKey)}`;
 }
 
-export function rememberHistoryState(db, profileId, media, event, {
+function validMediaKey(value) {
+  const key = typeof value === 'string' ? value.trim() : '';
+  return key || null;
+}
+
+export function rememberHistoryStateByKey(db, profileId, mediaKey, event, {
   state,
   source,
   ttlSeconds,
 }) {
   const ttl = Number(ttlSeconds);
-  if (!['played', 'unplayed'].includes(state) || !Number.isFinite(ttl) || ttl <= 0) return null;
-  const mediaKey = canonicalMediaKey(media);
-  if (!mediaKey) return null;
+  const key = validMediaKey(mediaKey);
+  if (!key || !['played', 'unplayed'].includes(state) || !Number.isFinite(ttl) || ttl <= 0) return null;
 
   const marker = {
     state,
     source: String(source || 'history'),
     eventId: typeof event?.id === 'string' ? event.id : null,
     eventAt: eventAtSeconds(event),
-    mediaKey,
+    mediaKey: key,
   };
-  db.cacheSet(markerKey(profileId, mediaKey), marker, ttl);
+  db.cacheSet(markerKey(profileId, key), marker, ttl);
   return marker;
 }
 
-export function recentEquivalentHistoryState(db, profileId, media, event, state, ttlSeconds) {
+export function recentEquivalentHistoryStateByKey(
+  db,
+  profileId,
+  mediaKey,
+  event,
+  state,
+  ttlSeconds,
+) {
   const ttl = Number(ttlSeconds);
-  if (!['played', 'unplayed'].includes(state) || !Number.isFinite(ttl) || ttl <= 0) return null;
-  const mediaKey = canonicalMediaKey(media);
-  if (!mediaKey) return null;
+  const key = validMediaKey(mediaKey);
+  if (!key || !['played', 'unplayed'].includes(state) || !Number.isFinite(ttl) || ttl <= 0) return null;
 
-  const marker = db.cacheGet(markerKey(profileId, mediaKey));
+  const marker = db.cacheGet(markerKey(profileId, key));
   if (!marker || marker.state !== state) return null;
 
   const incomingAt = eventAtSeconds(event);
@@ -62,4 +72,21 @@ export function recentEquivalentHistoryState(db, profileId, media, event, state,
     signedDeltaSeconds,
     distanceSeconds,
   };
+}
+
+export function rememberHistoryState(db, profileId, media, event, options) {
+  const mediaKey = canonicalMediaKey(media);
+  return rememberHistoryStateByKey(db, profileId, mediaKey, event, options);
+}
+
+export function recentEquivalentHistoryState(db, profileId, media, event, state, ttlSeconds) {
+  const mediaKey = canonicalMediaKey(media);
+  return recentEquivalentHistoryStateByKey(
+    db,
+    profileId,
+    mediaKey,
+    event,
+    state,
+    ttlSeconds,
+  );
 }
