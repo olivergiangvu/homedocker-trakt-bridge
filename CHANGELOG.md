@@ -2,6 +2,26 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+
+## [1.2.0-rc.4] - 2026-10-04
+
+### Fixed
+- Headerless or unnamed Trakt `429` responses are now isolated by authenticated write family instead of poisoning every POST. `/sync/history*`, `/scrobble/*`, and `/sync/watchlist*` keep independent cooldowns while authenticated reads remain separate.
+- A headerless `/sync/history/remove` throttle can no longer block latency-sensitive playback `start`, `pause`, or `stop` scrobbles. This directly addresses the rc.3 HomeDocker canary where a redundant AIOStreams `unplayed` event armed the old global write cooldown and delayed the real 19.86% stop.
+- Explicit Trakt `AUTHED_API_POST_LIMIT` metadata remains authoritative and still cools every authenticated write family. Unknown named/shared limits remain conservative shared cooldowns.
+- Rate-limit persistence advances to `rate-limit:v3:*`. A still-active v2 write cooldown is conservatively honored once as an all-write legacy window, then new observations use family-specific v3 state.
+
+### Canary evidence
+- rc.3 removed public resolver requests from the playback hot path successfully: the control stop for `tt36885662:1:3` reached Trakt through `direct-provider-ids` and returned HTTP 201 with `action=pause`.
+- The subsequent AIOStreams `unplayed` payload carried `Played=false`, position 0 and the same provider IDs, then `/sync/history/remove` returned headerless 429 with Retry-After. Under rc.3 this armed `LOCAL_WRITE_COOLDOWN`, causing later pause/start/stop events to be rejected locally.
+- A newer stop watermark still prevented the older retried start from overtaking it, confirming the stale-playback guard remained effective during the failure.
+
+### Safety
+- The global authenticated write queue and 1100 ms pacing remain unchanged; only cooldown scope is split.
+- Explicit Mark Unplayed is not heuristically suppressed. AIOStreams' generic UserData update and explicit PlayedItems-delete paths can produce indistinguishable `unplayed` payloads, so rc.4 preserves semantic correctness instead of guessing user intent.
+- DB schema remains `1`; pull identity, pull cache, semantic history dedupe, direct provider-ID transport and AIOStreams scheduler settings are unchanged.
+- Native Trakt remains enabled during qualification.
+
 ## [1.2.0-rc.3] - 2026-10-04
 
 ### Changed
