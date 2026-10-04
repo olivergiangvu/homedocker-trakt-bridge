@@ -2,6 +2,23 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+## [Unreleased]
+
+### Fixed
+- Adds canonical Trakt-ID semantic dedupe for repeated single-item `played` / `unplayed` events that arrive with different AIOStreams event IDs.
+- Records a short-lived watched marker after Trakt confirms `/scrobble/stop` with `action=scrobble`, preventing a following explicit `played` event from adding the same viewing to `/sync/history` a second time.
+- Keeps opposite state transitions valid, so `played -> unplayed -> played` is never collapsed into one state.
+
+### Added
+- `HISTORY_DEDUPE_SECONDS`, default `300`, backed by the existing restart-safe SQLite cache. Set it to `0` only for diagnostics.
+- Regression tests for stop-to-played duplication, repeated played marks, opposite-state transitions, separate media and expiry outside the dedupe window.
+
+### Safety
+- Dedupe keys use the resolved canonical Trakt movie/episode ID rather than raw IMDb/TMDb spelling, so provider aliases do not create parallel dedupe identities.
+- A Trakt stop is treated as watched only when Trakt itself returns `action=scrobble`; stops that Trakt classifies as `pause` do not suppress a later explicit played mark.
+- No DB schema migration, pull-state representation change or pull-cache namespace change is required.
+- This guard only deduplicates the Bridge write lane. A separate native Trakt client remains an independent writer and must be evaluated separately if duplicates remain during canary testing.
+
 ## [1.0.0] - 2026-10-04
 
 ### Stable release

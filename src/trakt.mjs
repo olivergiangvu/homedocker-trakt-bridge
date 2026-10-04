@@ -1,5 +1,6 @@
 import { BridgeError } from './errors.mjs';
 import { providerIdsForEvent } from './media-ids.mjs';
+import { recentEquivalentHistoryState, rememberHistoryState } from './history-dedupe.mjs';
 import {
   identityAliasVersion,
   learnShowAlias,
@@ -427,11 +428,19 @@ export class TraktClient {
       const payload = { progress: Number(plan.progress.toFixed(3)) };
       if (media.kind === 'movie') payload.movie = media.movie;
       else payload.episode = media.episode;
-      await this.request(profileId, `/scrobble/${plan.action}`, {
+      const scrobbleResult = await this.request(profileId, `/scrobble/${plan.action}`, {
         method: 'POST',
         body: payload,
         accept409: plan.action === 'stop',
       });
+
+      if (plan.action === 'stop' && scrobbleResult?.action === 'scrobble') {
+        rememberHistoryState(this.db, profileId, media, event, {
+          state: 'played',
+          source: 'scrobble-stop',
+          ttlSeconds: this.config.historyDedupeSeconds,
+        });
+      }
 
       let identityAlias = null;
       // AIOStreams can emit an unfinished `stop` that the bridge safely maps to
@@ -470,6 +479,34 @@ export class TraktClient {
       return { action: plan.kind === 'watchlist-add' ? 'watchlist:add' : 'watchlist:remove' };
     }
 
+    const historyState = plan.kind === 'history-add'
+      ? 'played'
+      : plan.kind === 'history-remove'
+        ? 'unplayed'
+        : null;
+    if (!historyState) {
+      throw new BridgeError('Unknown event plan', { status: 500, code: 'invalid_plan' });
+    }
+
+    const duplicate = recentEquivalentHistoryState(
+      this.db,
+      profileId,
+      media,
+      event,
+      historyState,
+      this.config.historyDedupeSeconds,
+    );
+    if (duplicate) {
+      return {
+        action: 'history:deduped',
+        ignored: 'recent_history_equivalent',
+        state: historyState,
+        duplicateOf: duplicate.eventId,
+        duplicateSource: duplicate.source,
+        deltaSeconds: duplicate.signedDeltaSeconds,
+      };
+    }
+
     const watchedAt = new Date((Number(event.at) || Math.floor(Date.now() / 1000)) * 1000).toISOString();
     const item = media.kind === 'movie'
       ? { ids: media.movie.ids, watched_at: watchedAt }
@@ -478,15 +515,23 @@ export class TraktClient {
 
     if (plan.kind === 'history-add') {
       await this.request(profileId, '/sync/history', { method: 'POST', body });
+      rememberHistoryState(this.db, profileId, media, event, {
+        state: 'played',
+        source: 'history',
+        ttlSeconds: this.config.historyDedupeSeconds,
+      });
       return { action: 'history:add' };
     }
-    if (plan.kind === 'history-remove') {
-      if (body.movies) body.movies = body.movies.map(({ ids }) => ({ ids }));
-      if (body.episodes) body.episodes = body.episodes.map(({ ids }) => ({ ids }));
-      await this.request(profileId, '/sync/history/remove', { method: 'POST', body });
-      return { action: 'history:remove' };
-    }
-    throw new BridgeError('Unknown event plan', { status: 500, code: 'invalid_plan' });
+
+    if (body.movies) body.movies = body.movies.map(({ ids }) => ({ ids }));
+    if (body.episodes) body.episodes = body.episodes.map(({ ids }) => ({ ids }));
+    await this.request(profileId, '/sync/history/remove', { method: 'POST', body });
+    rememberHistoryState(this.db, profileId, media, event, {
+      state: 'unplayed',
+      source: 'history-remove',
+      ttlSeconds: this.config.historyDedupeSeconds,
+    });
+    return { action: 'history:remove' };
   }
 }
 
