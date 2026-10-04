@@ -2,7 +2,7 @@
 
 This is the versioned user manual for HomeDocker Trakt Bridge.
 
-The repository and GHCR package are public. `v1.0.0` is the stable release line, promoted from the accepted v0.9.2 candidate after extended HomeDocker production burn-in.
+The repository and GHCR package are public. `v1.2.0` is the stable release line, promoted from the fully qualified v1.2.0-rc.7 HomeDocker canary.
 
 ## User guides
 
@@ -40,7 +40,7 @@ These pages are intentionally kept out of the main README because most users do 
 
 - [Architecture](ARCHITECTURE.md) — protocol boundaries and authority model
 - [Development](DEVELOPMENT.md) — contributor notes, identity edge cases, tests and release engineering
-- [Release acceptance records](releases/) — pre-1.0 canary, published-artifact and HomeDocker acceptance history
+- [Release acceptance records](releases/) — canary, published-artifact and HomeDocker acceptance history
 - [Security policy](../SECURITY.md)
 - [Changelog](../CHANGELOG.md)
 

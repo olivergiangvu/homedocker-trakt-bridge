@@ -2,6 +2,24 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+## [1.2.0] - 2026-10-05
+
+### Stable release
+- Promotes the fully qualified `v1.2.0-rc.7` HomeDocker canary to stable without adding new production behavior after the accepted rc.7 logic.
+- Keeps direct provider-ID playback/history transport, source playback watermarks, family-scoped ambiguous write cooldowns, v1.1 semantic history dedupe, and native-Trakt coexistence safeguards.
+- Adds the optional read-only AIO local-state reconciler as a stable v1.2 capability while keeping `AIO_RECONCILER_MODE=off` as the public default.
+
+### HomeDocker qualification
+- The accepted rc.7 canary ran the exact immutable image `sha256:2fc1725aae1c57c86f428c94cd018d5767327628f52c03610600eeee563b18c3`, whose release workflow also passed exact-published-digest health/readiness smoke testing.
+- Position-aware coverage, mismatched-position rejection, pending/error exclusion, 300-second settlement, restart-safe pending persistence, same-item coalescing, preserved `firstSeenAt`, exactly-once settlement and detect-only semantics all passed.
+- The final restart qualification settled as `covered_by_homedocker_playback_delivery` with `candidate=false` and `writesTrakt=false`.
+- `scripts/qualify-aio-restart-persistence.sh` codifies the restart/coalescing qualification and keeps coverage outcome independent from restart-persistence acceptance.
+
+### Compatibility and safety
+- DB schema remains `1`; no database migration or pull-cache purge is required from v1.1.0.
+- The optional AIO reconciler never writes Trakt or AIOStreams in `detect` mode and remains disabled by default.
+- Immediate rollback is the qualified rc.7 exact digest; `v1.1.0` remains the prior stable fallback line.
+
 ## [1.2.0-rc.7] - 2026-10-05
 
 ### Fixed

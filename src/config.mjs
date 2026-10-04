@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 export const APP_NAME = 'HomeDocker Trakt Bridge';
-export const APP_VERSION = '1.2.0-rc.7';
+export const APP_VERSION = '1.2.0';
 
 function requireEnv(name) {
   const value = process.env[name]?.trim();
