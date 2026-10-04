@@ -396,7 +396,7 @@ test('Managed Trakt: explicit authenticated POST bucket still blocks every write
     }),
     (err) => err instanceof BridgeError
       && err.code === 'trakt_rate_cooldown'
-      && err.rateLimit?.name === 'LOCAL_SCROBBLE_COOLDOWN',
+      && err.rateLimit?.name === 'LOCAL_WRITE_COOLDOWN',
   );
 
   assert.equal(historyCalls, 1);
