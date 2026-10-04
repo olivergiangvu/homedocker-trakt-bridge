@@ -1,7 +1,7 @@
 import { BridgeError } from './errors.mjs';
 import { providerIdsForEvent } from './media-ids.mjs';
 import { recentEquivalentHistoryState, rememberHistoryState } from './history-dedupe.mjs';
-import { observePlaybackWatermark } from './playback-watermark.mjs';
+import { observePlaybackWatermark, observeSourcePlaybackWatermark } from './playback-watermark.mjs';
 import {
   identityAliasVersion,
   learnShowAlias,
@@ -18,6 +18,8 @@ import {
 
 const AUTH_BASE = 'https://auth.trakt.tv';
 const API_BASE = 'https://api.trakt.tv';
+const PUBLIC_RATE_LIMIT_CACHE_KEY = 'public-rate-limit:v1';
+const DEFAULT_PUBLIC_RATE_COOLDOWN_MS = 60_000;
 
 function toInt(value) {
   const n = Number(value);
@@ -56,11 +58,66 @@ function safeUpstreamDetail(parsed) {
   return String(value).replace(/\s+/g, ' ').slice(0, 240);
 }
 
+function retryAfterMs(value) {
+  if (value == null || value === '') return null;
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric >= 0) {
+    if (numeric > 1e12) return Math.max(0, numeric - Date.now());
+    if (numeric > 1e9) return Math.max(0, numeric * 1000 - Date.now());
+    return numeric * 1000;
+  }
+  const date = Date.parse(String(value));
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : null;
+}
+
+function retryAfterSeconds(until) {
+  return String(Math.max(1, Math.ceil((until - Date.now()) / 1000)));
+}
+
+function stalePlaybackResult(watermark, source = 'canonical') {
+  return {
+    action: 'playback:stale-deduped',
+    ignored: 'stale_playback_event',
+    watermarkSource: source,
+    incomingAt: watermark.incomingAt,
+    newestAt: watermark.newestAt,
+    newestEventId: watermark.newestEventId,
+    newestEvent: watermark.newestEvent,
+    deltaSeconds: watermark.deltaSeconds,
+  };
+}
+
 export class TraktClient {
   constructor(config, db) {
     this.config = config;
     this.db = db;
     this.refreshing = new Map();
+  }
+
+  #publicCooldownUntil() {
+    const stored = this.db.cacheGet?.(PUBLIC_RATE_LIMIT_CACHE_KEY);
+    const until = Number(stored?.until || 0);
+    return until > Date.now() ? until : 0;
+  }
+
+  #armPublicCooldown(retryAfter) {
+    const wait = retryAfterMs(retryAfter) ?? DEFAULT_PUBLIC_RATE_COOLDOWN_MS;
+    const until = Date.now() + Math.max(1000, wait);
+    const ttlSeconds = Math.max(1, Math.ceil((until - Date.now()) / 1000) + 5);
+    this.db.cacheSet?.(PUBLIC_RATE_LIMIT_CACHE_KEY, { until }, ttlSeconds);
+    return until;
+  }
+
+  #throwIfPublicCooling(path) {
+    const until = this.#publicCooldownUntil();
+    if (!until) return;
+    throw new BridgeError('Trakt public metadata rate limit cooldown is active', {
+      status: 429,
+      retryAfter: retryAfterSeconds(until),
+      code: 'trakt_public_rate_cooldown',
+      upstreamPath: path,
+      rateLimit: { name: 'PUBLIC_METADATA_COOLDOWN' },
+    });
   }
 
   apiHeaders(accessToken = null) {
@@ -199,11 +256,19 @@ export class TraktClient {
   }
 
   async publicRequest(path) {
+    this.#throwIfPublicCooling(path);
+
     const response = await fetch(`${API_BASE}${path}`, {
       headers: this.apiHeaders(),
       signal: AbortSignal.timeout(3500),
     });
-    return this.#handleResponse(response, { upstreamPath: path });
+
+    try {
+      return await this.#handleResponse(response, { upstreamPath: path });
+    } catch (err) {
+      if (err?.status === 429) this.#armPublicCooldown(err.retryAfter);
+      throw err;
+    }
   }
 
   async #fetchApi(path, method, body, token) {
@@ -450,21 +515,16 @@ export class TraktClient {
     if (plan.kind === 'bulk-history-add') return this.applyBulkHistory(profileId, event, true);
     if (plan.kind === 'bulk-history-remove') return this.applyBulkHistory(profileId, event, false);
 
+    if (plan.kind === 'scrobble') {
+      const sourceWatermark = observeSourcePlaybackWatermark(this.db, profileId, event);
+      if (sourceWatermark?.stale) return stalePlaybackResult(sourceWatermark, 'source');
+    }
+
     const media = await this.resolveMedia(event);
 
     if (plan.kind === 'scrobble') {
       const watermark = observePlaybackWatermark(this.db, profileId, media, event);
-      if (watermark?.stale) {
-        return {
-          action: 'playback:stale-deduped',
-          ignored: 'stale_playback_event',
-          incomingAt: watermark.incomingAt,
-          newestAt: watermark.newestAt,
-          newestEventId: watermark.newestEventId,
-          newestEvent: watermark.newestEvent,
-          deltaSeconds: watermark.deltaSeconds,
-        };
-      }
+      if (watermark?.stale) return stalePlaybackResult(watermark, 'canonical');
 
       const payload = { progress: Number(plan.progress.toFixed(3)) };
       if (media.kind === 'movie') payload.movie = media.movie;
