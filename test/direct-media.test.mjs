@@ -97,6 +97,13 @@ test('source semantic key stays independent of provider-id subset differences', 
   );
 });
 
+test('movie source identity remains a movie when scope is omitted', () => {
+  assert.equal(
+    sourceSemanticMediaKey({ metaId: 'tt1234567', videoId: 'tt1234567' }),
+    'movie:video:tt1234567',
+  );
+});
+
 test('scrobble response can teach canonical Trakt ids without a public lookup', () => {
   const target = directMediaTarget({
     scope: 'episode',
