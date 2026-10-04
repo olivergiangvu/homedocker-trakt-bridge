@@ -2,6 +2,30 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+## [1.2.0-rc.1] - 2026-10-04
+
+### Added
+- Persistent per-profile, per-canonical-Trakt-item playback watermarks for `start`, `pause`, and `stop` transitions.
+- Structured, sanitized upstream Trakt diagnostics for 422/429 responses, including endpoint, `Retry-After`, parsed `X-Ratelimit` metadata, and bounded upstream error detail.
+- Separate read, write, and shared/security rate-limit cooldown lanes.
+
+### Fixed
+- Older AIOStreams playback retries can no longer overtake a newer playback transition and rewind Trakt resume state after a 429/422 delay.
+- Playback ordering is based on event time rather than progress, so legitimate newer backwards seeks remain valid.
+- A confirmed Trakt `AUTHED_API_POST_LIMIT` cooldown no longer unnecessarily blocks GET-based pull convergence.
+
+### Safety
+- Unknown or headerless 429 responses remain conservative shared cooldowns that block both reads and writes.
+- The playback watermark is persisted in the existing SQLite cache and is advanced before the upstream write, so restart or a failed newer write cannot reopen the stale-retry race.
+- Equal event timestamps are allowed because AIOStreams timestamps have one-second resolution and legitimate transition edges may share a second.
+- v1.1 semantic history dedupe and legitimate rewatch behavior are unchanged.
+- DB schema remains `1`; no migration is required.
+- Pause-422 recovery is intentionally not included in rc.1. The candidate first captures the real sanitized Trakt response so recovery can be designed from evidence rather than guesswork.
+
+### HomeDocker canary
+- Native Trakt remains enabled on supported clients such as VidHub and Strand.
+- Acceptance focuses on stale-retry prevention, rate-limit lane isolation, diagnostic quality, and eventual state convergence under shared account-level Trakt pressure.
+
 ## [1.1.0] - 2026-10-04
 
 ### Stable release
