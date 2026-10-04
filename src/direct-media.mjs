@@ -178,20 +178,18 @@ export function directBulkHistoryPayload(event, add) {
  */
 export function sourceSemanticMediaKey(event = {}) {
   const scope = String(event.scope || '').toLowerCase();
+  const episodeLike = scope === 'episode'
+    || Number.isInteger(Number(event.season))
+    || Number.isInteger(Number(event.episode));
   const videoId = String(event.videoId || '').trim();
   if (videoId) {
-    const kind = scope === 'movie' ? 'movie' : 'episode';
-    return `${kind}:video:${videoId}`;
+    return `${episodeLike ? 'episode' : 'movie'}:video:${videoId}`;
   }
 
   const metaId = String(event.metaId || '').trim();
   if (!metaId) return null;
 
-  if (
-    scope === 'episode'
-    || Number.isInteger(Number(event.season))
-    || Number.isInteger(Number(event.episode))
-  ) {
+  if (episodeLike) {
     const season = int(event.season);
     const episode = int(event.episode);
     if (season == null || episode == null) return null;
