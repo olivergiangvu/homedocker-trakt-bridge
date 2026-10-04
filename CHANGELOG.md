@@ -2,12 +2,19 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
-## [1.1.0-rc.1] - 2026-10-04
+## [1.1.0] - 2026-10-04
 
-### Release candidate
-- First canary candidate for the post-v1.0 duplicate-history guard.
-- `v1.0.0` remains the stable production release while this candidate is qualified on HomeDocker.
+### Stable release
+- Promotes the accepted `v1.1.0-rc.1` duplicate-history canary to stable after HomeDocker production qualification.
+- Live canary evidence confirmed restart-safe semantic dedupe for same-state events with different AIOStreams event IDs, while preserving legitimate later rewatches.
+- `v1.0.0` remains the deterministic rollback line; DB schema stays at `1`.
 
+### Canary qualification
+- A repeated `unplayed` event for the same canonical episode arrived with a different event ID 118 seconds later and was correctly ignored as `recent_history_equivalent`.
+- A normal `played` event produced one `history:add`.
+- A real rewatch roughly 34 minutes later, outside the 300-second semantic window, produced a new `history:add` and Trakt history increased by exactly one play.
+- Runtime remained ready with schema `1`, one connected profile, zero container restarts and no canary errors.
+- The completed `scrobble/stop -> played` overlap is covered by automated regression tests; the HomeDocker client path used during qualification emitted explicit `played` without a completion `stop`.
 
 ### Fixed
 - Adds canonical Trakt-ID semantic dedupe for repeated single-item `played` / `unplayed` events that arrive with different AIOStreams event IDs.
