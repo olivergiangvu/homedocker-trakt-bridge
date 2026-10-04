@@ -146,6 +146,58 @@ Only after RC3-A passes:
 
 This is intended to beat Odin's 120-second native-writer blind spot without returning to rc.2's high request amplification.
 
+## AIOStreams 2.35.9 pull scheduling audit
+
+A second source-level audit found an important boundary outside the bridge.
+
+AIOStreams 2.35.9 parses an addon's `watchState.pull.ttlSeconds` into the
+resolved sink capability, but that value is not persisted into `watch_sinks`
+and is not consulted by the pull scheduler.
+
+The actual pull timing is controlled by AIOStreams' own runtime settings:
+
+- `WATCH_STATE_DELIVERY_INTERVAL`: default 60s;
+- `WATCH_STATE_PULL_TTL`: default 300s for on-demand shelf refresh;
+- `WATCH_STATE_PULL_INTERVAL`: default 1800s for background reads;
+- `WATCH_STATE_PULL_SWEEP_INTERVAL`: default 60s.
+
+Therefore HomeDocker's current `PULL_HINT_SECONDS=60` is advertised in the
+manifest but does **not** currently make AIOStreams 2.35.9 poll the bridge every
+60 seconds.
+
+This explains part of the asymmetric Odin handoff result:
+
+- an own bridge write can invalidate the bridge's cache immediately, but
+  AIOStreams still has to decide when to ask for a fresh pull;
+- Odin can appear perfect when its scheduled pull happens to land between the
+  first client's stop and the second client's open;
+- the reverse direction can drift when a native Trakt writer changes state
+  outside Odin and AIOStreams has not yet performed its next pull.
+
+Deployment implication:
+
+RC3 transport canary should initially avoid changing AIOStreams scheduling so
+the transport change is isolated. A later latency canary may lower
+`WATCH_STATE_PULL_TTL` and/or `WATCH_STATE_DELIVERY_INTERVAL`, but only
+together with a low-cost activity probe in the bridge so faster checks do not
+become full Trakt state reloads.
+
+## External/native writer blind spot
+
+A successful push through Odin or HomeDocker can invalidate that bridge's own
+pull cache. A native Trakt integration on Strand or VidHub cannot.
+
+The current Trakt API gives a low-cost signal for this case through
+`/sync/last_activities`:
+
+- `movies.paused_at`;
+- `episodes.paused_at`;
+- broader per-domain activity timestamps.
+
+RC3-B should use those timestamps as a probe before deciding whether the
+playback/watched endpoints actually need to be fetched. This is preferable to
+blindly shrinking the full-state cache TTL.
+
 ## Required invariants
 
 For a normal episode pause/unfinished stop with a usable provider ID:
