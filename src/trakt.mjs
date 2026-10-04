@@ -87,6 +87,28 @@ function stalePlaybackResult(watermark, source = 'canonical') {
   };
 }
 
+function resolverAliasKeys(type, ids = {}) {
+  const keys = [];
+  const prefix = `resolver:v2:${type}`;
+  if (ids.imdb) keys.push(`${prefix}:imdb:${String(ids.imdb).toLowerCase()}`);
+  if (toInt(ids.tmdb) != null) keys.push(`${prefix}:tmdb:${toInt(ids.tmdb)}`);
+  if (toInt(ids.tvdb) != null) keys.push(`${prefix}:tvdb:${toInt(ids.tvdb)}`);
+  if (toInt(ids.trakt) != null) keys.push(`${prefix}:trakt:${toInt(ids.trakt)}`);
+  return [...new Set(keys)];
+}
+
+function resolverCacheGet(db, type, ids = {}) {
+  for (const key of resolverAliasKeys(type, ids)) {
+    const cached = db.cacheGet(key);
+    if (cached) return cached;
+  }
+  return null;
+}
+
+function resolverCacheSet(db, type, ids, payload) {
+  for (const key of resolverAliasKeys(type, ids)) db.cacheSet(key, payload);
+}
+
 export class TraktClient {
   constructor(config, db) {
     this.config = config;
@@ -368,9 +390,17 @@ export class TraktClient {
 
   async resolveMovie(event) {
     const ids = providerIdsForEvent(event);
-    const key = `movie:${event.metaId || ''}:${JSON.stringify(ids)}`;
-    const cached = this.db.cacheGet(key);
-    if (cached) return { kind: 'movie', movie: cached };
+
+    const aliasCached = resolverCacheGet(this.db, 'movie', ids);
+    if (aliasCached) return { kind: 'movie', movie: aliasCached };
+
+    // Backward-compatible one-time migration from the pre-v1.2 resolver key.
+    const legacyKey = `movie:${event.metaId || ''}:${JSON.stringify(ids)}`;
+    const legacyCached = this.db.cacheGet(legacyKey);
+    if (legacyCached) {
+      resolverCacheSet(this.db, 'movie', { ...ids, ...(legacyCached.ids || {}) }, legacyCached);
+      return { kind: 'movie', movie: legacyCached };
+    }
 
     const hit = await this.lookupExternal(ids, 'movie');
     const movie = hit?.movie;
@@ -382,15 +412,23 @@ export class TraktClient {
       year: Number(movie.year),
       ids: normalizeMovieIds(movie.ids),
     };
-    this.db.cacheSet(key, normalized);
+    resolverCacheSet(this.db, 'movie', { ...ids, ...normalized.ids }, normalized);
     return { kind: 'movie', movie: normalized };
   }
 
   async resolveShow(event) {
     const ids = providerIdsForEvent(event);
-    const key = `show:${event.metaId || ''}:${JSON.stringify(ids)}`;
-    const cached = this.db.cacheGet(key);
-    if (cached) return { kind: 'show', show: cached };
+
+    const aliasCached = resolverCacheGet(this.db, 'show', ids);
+    if (aliasCached) return { kind: 'show', show: aliasCached };
+
+    // Backward-compatible one-time migration from the pre-v1.2 resolver key.
+    const legacyKey = `show:${event.metaId || ''}:${JSON.stringify(ids)}`;
+    const legacyCached = this.db.cacheGet(legacyKey);
+    if (legacyCached) {
+      resolverCacheSet(this.db, 'show', { ...ids, ...(legacyCached.ids || {}) }, legacyCached);
+      return { kind: 'show', show: legacyCached };
+    }
 
     const hit = await this.lookupExternal(ids, 'show');
     const show = hit?.show;
@@ -398,7 +436,7 @@ export class TraktClient {
       throw new BridgeError('Could not resolve show to Trakt', { status: 422, code: 'show_unresolved' });
     }
     const normalized = { ids: normalizeShowIds(show.ids) };
-    this.db.cacheSet(key, normalized);
+    resolverCacheSet(this.db, 'show', { ...ids, ...normalized.ids }, normalized);
     return { kind: 'show', show: normalized };
   }
 
@@ -425,11 +463,18 @@ export class TraktClient {
       throw new BridgeError('Could not resolve show to Trakt', { status: 422, code: 'show_unresolved' });
     }
 
+    const canonicalKey = `episode:v2:trakt-show:${showTraktId}:${season}:${episode}`;
+    const canonicalCached = this.db.cacheGet(canonicalKey);
+    if (canonicalCached) {
+      return { kind: 'episode', episode: canonicalCached, show: resolvedShow.show };
+    }
+
     const ids = providerIdsForEvent(event);
-    const key = `episode:${event.metaId || ''}:${season}:${episode}:${JSON.stringify(ids)}`;
-    const cached = this.db.cacheGet(key);
-    if (cached) {
-      return { kind: 'episode', episode: cached, show: resolvedShow.show };
+    const legacyKey = `episode:${event.metaId || ''}:${season}:${episode}:${JSON.stringify(ids)}`;
+    const legacyCached = this.db.cacheGet(legacyKey);
+    if (legacyCached) {
+      this.db.cacheSet(canonicalKey, legacyCached);
+      return { kind: 'episode', episode: legacyCached, show: resolvedShow.show };
     }
 
     const ep = await this.publicRequest(`/shows/${showTraktId}/seasons/${season}/episodes/${episode}`);
@@ -439,7 +484,7 @@ export class TraktClient {
     }
     const normalized = { ids: { trakt: traktEpisodeId } };
     if (toInt(ep?.ids?.tvdb) != null) normalized.ids.tvdb = toInt(ep.ids.tvdb);
-    this.db.cacheSet(key, normalized);
+    this.db.cacheSet(canonicalKey, normalized);
     return { kind: 'episode', episode: normalized, show: resolvedShow.show };
   }
 
