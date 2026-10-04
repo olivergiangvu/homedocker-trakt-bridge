@@ -122,7 +122,32 @@ Detect mode:
 
 The first enabled v1.2 run establishes a fresh v2 baseline cursor and does not replay historical AIO rows. The detector also requires exactly one connected bridge profile; ambiguous multi-profile deployments fail safe. If the configured HomeDocker sink cannot be resolved uniquely, settlement is blocked rather than guessed.
 
-This remains intentionally an observation phase. The 300s quiet window reduces false finalization from sparse UserData updates but is not treated as proof that playback ended. The bounded position-aware coverage lookback prevents a later generic UserData/unplayed row from falsely hiding a valid HomeDocker stop that carried the same resume point. A later write-capable reconciler must still compare a settled candidate against current Trakt playback before synthesizing any stop, and must fail safe on ambiguous/backward recovery so native Trakt remains authoritative when it already holds the same or newer state.
+This remains intentionally an observation phase. The 300s quiet window reduces false finalization from sparse UserData updates but is not treated as proof that playback ended. The bounded position-aware coverage lookback prevents a later generic UserData/unplayed row from falsely hiding a valid HomeDocker stop that carried the same resume point.
+
+### Experimental compare-only mode (v1.3 development)
+
+The next reconciler phase adds an opt-in comparison mode:
+
+```env
+AIO_RECONCILER_MODE=compare
+```
+
+Compare mode keeps the entire v1.2 detector unchanged, then places only settled missing-delivery candidates onto a separate restart-safe comparison queue. That queue uses authenticated Trakt **GET** playback endpoints to classify whether native Trakt already holds the same/newer state, is older/behind, or has no matching current playback.
+
+Compare mode:
+
+- keeps the AIO SQLite mount read-only
+- preserves v1.2 sink/delivery/quiet-window qualification
+- uses the existing Trakt read/shared cooldown lanes
+- never calls Trakt POST/PUT/DELETE endpoints
+- gives a newer native-Trakt timestamp precedence even when its numeric progress is lower
+- treats equivalent or ahead Trakt progress as authoritative
+- classifies older-and-behind Trakt playback as a recovery candidate only
+- fails closed on unusable or ambiguous media identity
+- keeps Trakt read failures/rate limits retryable instead of turning them into a write decision
+- persists compare terminal markers separately from v1.2 detect settlement markers
+
+There is still **no automatic Trakt recovery write in compare mode**. A later guarded writeback phase must be qualified separately before it can synthesize any playback update.
 
 ## Duplicate-history guard
 

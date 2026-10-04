@@ -6,6 +6,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  classifyTraktPlaybackCandidate,
+  aioReconcileOperationalSnapshot,
+  compareAioCandidatesOnce,
   reconcileAioOnce,
   resolveHomeDockerSink,
   seedAioReconcileCursor,
@@ -583,6 +586,254 @@ test('exact sink instance id fails safe when it does not match', () => {
 
     assert.equal(resolved.status, 'missing');
     assert.equal(resolved.sink, null);
+  } finally {
+    aio.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
+test('compare classifier lets newer native Trakt playback win', () => {
+  const item = {
+    kind: 'episode',
+    baseId: 'tt10009170',
+    season: 2,
+    episode: 7,
+    positionMs: 900000,
+    durationMs: 1500000,
+    updatedAt: 100000,
+  };
+
+  const result = classifyTraktPlaybackCandidate(item, [{
+    progress: 20,
+    paused_at: new Date(200000).toISOString(),
+    episode: {
+      season: 2,
+      number: 7,
+      ids: { trakt: 7007 },
+    },
+    show: {
+      ids: { imdb: 'tt10009170', trakt: 1000 },
+    },
+  }]);
+
+  assert.equal(result.decision, 'trakt_same_or_newer');
+  assert.equal(result.reason, 'trakt_timestamp_same_or_newer');
+  assert.equal(result.candidate, false);
+});
+
+test('compare classifier marks older behind Trakt playback stale', () => {
+  const item = {
+    kind: 'episode',
+    baseId: 'tt10009170',
+    season: 2,
+    episode: 7,
+    positionMs: 900000,
+    durationMs: 1500000,
+    updatedAt: 200000,
+  };
+
+  const result = classifyTraktPlaybackCandidate(item, [{
+    progress: 40,
+    paused_at: new Date(100000).toISOString(),
+    episode: {
+      season: 2,
+      number: 7,
+      ids: { trakt: 7007 },
+    },
+    show: {
+      ids: { imdb: 'tt10009170', trakt: 1000 },
+    },
+  }], {
+    positionToleranceMs: 2000,
+  });
+
+  assert.equal(result.decision, 'trakt_stale_candidate');
+  assert.equal(result.reason, 'trakt_older_and_behind');
+  assert.equal(result.candidate, true);
+  assert.equal(result.trakt.positionMs, 600000);
+});
+
+test('compare classifier marks missing playback without writing', () => {
+  const result = classifyTraktPlaybackCandidate({
+    kind: 'movie',
+    baseId: 'tt0111161',
+    positionMs: 300000,
+    durationMs: 600000,
+    updatedAt: 200000,
+  }, [{
+    progress: 50,
+    paused_at: new Date(100000).toISOString(),
+    movie: {
+      ids: { imdb: 'tt0068646', trakt: 2 },
+    },
+  }]);
+
+  assert.equal(result.decision, 'trakt_playback_missing_candidate');
+  assert.equal(result.candidate, true);
+  assert.equal(result.trakt, null);
+});
+
+test('compare classifier fails closed for unusable identity', () => {
+  const result = classifyTraktPlaybackCandidate({
+    kind: 'episode',
+    baseId: 'unknown-id',
+    season: 1,
+    episode: 1,
+    positionMs: 300000,
+    durationMs: 600000,
+    updatedAt: 200000,
+  }, []);
+
+  assert.equal(result.decision, 'trakt_compare_ambiguous');
+  assert.equal(result.reason, 'candidate_identity_unusable');
+  assert.equal(result.candidate, false);
+});
+
+test('compare mode stages detect candidate then classifies Trakt state read-only', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'aio-v13-compare-'));
+  const path = join(dir, 'db.sqlite');
+  const aio = makeAioDb(path);
+  const bridge = new FakeBridgeDb();
+  const calls = [];
+
+  const trakt = {
+    async requestAllPages(profileId, requestPath, options) {
+      calls.push({ profileId, requestPath, options });
+      return [{
+        progress: 40,
+        paused_at: new Date(100000).toISOString(),
+        episode: {
+          season: 2,
+          number: 7,
+          ids: { trakt: 7007 },
+        },
+        show: {
+          ids: { imdb: 'tt10009170', trakt: 1000 },
+        },
+      }];
+    },
+  };
+
+  try {
+    addHomeDockerSink(aio);
+    seedAioReconcileCursor(bridge, 0);
+    insertResume(aio, {
+      positionMs: 900000,
+      updatedAt: 200000,
+    });
+
+    const detected = reconcileAioOnce({
+      config: config(path, {
+        aioReconcilerMode: 'compare',
+      }),
+      db: bridge,
+      nowMs: 500000,
+    });
+
+    assert.equal(detected.settled, 1);
+    assert.equal(detected.candidates, 1);
+    assert.equal(bridge.events.length, 1);
+
+    const compared = await compareAioCandidatesOnce({
+      config: config(path, {
+        aioReconcilerMode: 'compare',
+      }),
+      db: bridge,
+      trakt,
+      nowMs: 500000,
+    });
+
+    assert.equal(compared.compared, 1);
+    assert.equal(compared.stale, 1);
+    assert.equal(compared.pending, 0);
+    assert.equal(calls.length, 1);
+    assert.equal(
+      calls[0].requestPath,
+      '/sync/playback/episodes?extended=full',
+    );
+
+    assert.equal(bridge.events.length, 2);
+    const detail = JSON.parse(bridge.events[1].detail);
+    assert.equal(detail.action, 'aio-reconcile:compare-settled');
+    assert.equal(detail.decision, 'trakt_stale_candidate');
+    assert.equal(detail.writesTrakt, false);
+
+    const snapshot = aioReconcileOperationalSnapshot(bridge);
+    assert.equal(snapshot.compare.awaiting, 0);
+    assert.equal(snapshot.compare.total, 1);
+    assert.equal(snapshot.compare.staleCandidate, 1);
+    assert.equal(snapshot.compare.sameOrNewer, 0);
+  } finally {
+    aio.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('compare mode keeps candidate retryable when Trakt GET is rate limited', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'aio-v13-compare-retry-'));
+  const path = join(dir, 'db.sqlite');
+  const aio = makeAioDb(path);
+  const bridge = new FakeBridgeDb();
+
+  const trakt = {
+    async requestAllPages() {
+      const error = new Error('rate limited');
+      error.status = 429;
+      error.code = 'trakt_rate_cooldown';
+      error.retryAfter = '120';
+      throw error;
+    },
+  };
+
+  try {
+    addHomeDockerSink(aio);
+    seedAioReconcileCursor(bridge, 0);
+    insertResume(aio, {
+      positionMs: 900000,
+      updatedAt: 200000,
+    });
+
+    reconcileAioOnce({
+      config: config(path, {
+        aioReconcilerMode: 'compare',
+      }),
+      db: bridge,
+      nowMs: 500000,
+    });
+
+    const first = await compareAioCandidatesOnce({
+      config: config(path, {
+        aioReconcilerMode: 'compare',
+      }),
+      db: bridge,
+      trakt,
+      nowMs: 500000,
+    });
+
+    assert.equal(first.compared, 0);
+    assert.equal(first.unavailable, 1);
+    assert.equal(first.pending, 1);
+    assert.equal(bridge.events.length, 1);
+
+    const second = await compareAioCandidatesOnce({
+      config: config(path, {
+        aioReconcilerMode: 'compare',
+      }),
+      db: bridge,
+      trakt,
+      nowMs: 550000,
+    });
+
+    assert.equal(second.compared, 0);
+    assert.equal(second.unavailable, 0);
+    assert.equal(second.pending, 1);
+    assert.equal(bridge.events.length, 1);
+
+    const snapshot = aioReconcileOperationalSnapshot(bridge, 550000);
+    assert.equal(snapshot.compare.awaiting, 1);
+    assert.equal(snapshot.compare.retrying, 1);
+    assert.equal(snapshot.compare.total, 0);
   } finally {
     aio.close();
     rmSync(dir, { recursive: true, force: true });

@@ -8,7 +8,7 @@ const config = loadConfig();
 const db = new BridgeDb(config);
 const trakt = new ManagedTraktClient(config, db);
 const server = createServer({ config, db, trakt });
-const aioReconciler = startAioReconciler({ config, db });
+const aioReconciler = startAioReconciler({ config, db, trakt });
 
 server.listen(config.port, '0.0.0.0', () => {
   console.log(JSON.stringify({
