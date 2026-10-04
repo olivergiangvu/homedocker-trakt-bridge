@@ -2,6 +2,33 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+## [1.2.0-rc.3] - 2026-10-04
+
+### Changed
+- Playback, history, bulk-history and watchlist writes now use Trakt-compatible provider IDs directly on the normal hot path instead of blocking on public metadata resolution.
+- Episode scrobbles follow the original Odin transport shape: parent show IDs plus season/episode numbering.
+- Successful scrobble responses can teach canonical Trakt IDs and show aliases opportunistically without adding a pre-write lookup.
+- Unfinished AIOStreams stops below Trakt's completion threshold use `/scrobble/stop`; the 80-89% gap remains mapped to pause when AIOStreams still reports `played=false`, preserving AIOStreams' 90% watched threshold.
+
+### Fixed
+- Removes the public `/search/*` and `/shows/*/seasons/*/episodes/*` resolver fan-out from normal playback writes, eliminating the rc.1/rc.2 resolver-429 critical path.
+- Headerless/unnamed 429 responses now cool only the request lane that actually failed. A failed write no longer pre-emptively blocks recovery GETs, while an independently failing read still arms its own cooldown.
+- Semantic history dedupe can use stable AIOStreams source identity when canonical Trakt IDs are not available before the write, retaining v1.1 duplicate suppression without reintroducing resolver calls.
+- Accepted Trakt stop responses, including current `action=stop`, legacy `action=scrobble`, and accepted 409 duplicates, seed completion dedupe so the following explicit `played` echo does not add a second Bridge history row.
+
+### Audit evidence
+- Original Odin Trakt Bridge reproduced AIOStreams redundant `unplayed` events yet successfully resumed one VidHub -> Strand handoff at 544787 ms -> 544786 ms, showing the AIO noise alone is not the root cause.
+- Repeated Odin testing still showed intermittent Strand -> VidHub drift and duplicate history, so rc.3 borrows Odin's lean transport while retaining HomeDocker stale-event and semantic-dedupe safeguards.
+- AIOStreams 2.35.9 host audit confirmed active sinks are scheduled for background pull at ~1800 seconds by default; the bridge's manifest pull hint does not replace AIOStreams' own scheduler cadence.
+- The same audit captured repeated `played` deliveries and redundant `unplayed` deliveries reaching Odin on first attempt, validating the need to retain HomeDocker semantic dedupe and to address external/native-writer freshness separately.
+
+### Safety
+- Source playback watermark remains first in the playback path, so an older queued retry cannot overtake a newer event even if the newer Trakt write fails.
+- DB schema remains `1`; no migration or cache purge is required.
+- `PULL_IDENTITY_MODE=trakt`, `HISTORY_DEDUPE_SECONDS=300`, and current HomeDocker pull cache settings remain unchanged for the rc.3-A transport canary.
+- AIOStreams `WATCH_STATE_*` settings remain unchanged during rc.3-A qualification. Activity-aware pull scheduling is deferred until the lean transport canary passes.
+- Native Trakt remains enabled on supported clients during qualification.
+
 ## [1.2.0-rc.2] - 2026-10-04
 
 ### Fixed
