@@ -89,7 +89,6 @@ test('successful Trakt stop scrobble suppresses the following explicit played hi
   const stop = await client.applyEvent('p1', {
     id: 'stop-1',
     ...movieIdentity,
-    ...movieIdentity,
     event: 'stop',
     at: 1000,
     played: true,
@@ -146,6 +145,7 @@ test('a stop treated by Trakt as pause does not suppress a later explicit played
 
   await client.applyEvent('p1', {
     id: 'stop-1',
+    ...movieIdentity,
     event: 'stop',
     at: 1000,
     played: true,
@@ -171,6 +171,7 @@ test('repeated played marks are suppressed but an unplayed transition re-arms pl
 
   const first = await client.applyEvent('p1', {
     id: 'played-1',
+    ...movieIdentity,
     event: 'played',
     at: 1000,
   }, { kind: 'history-add' });
