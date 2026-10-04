@@ -84,7 +84,7 @@ const movieIdentity = {
 };
 
 test('successful Trakt stop scrobble suppresses the following explicit played history add', async () => {
-  const { client, calls } = fakeClient('scrobble');
+  const { client, calls } = fakeClient('stop');
 
   const stop = await client.applyEvent('p1', {
     id: 'stop-1',
@@ -109,6 +109,32 @@ test('successful Trakt stop scrobble suppresses the following explicit played hi
 
   assert.equal(played.ignored, 'recent_history_equivalent');
   assert.equal(played.duplicateSource, 'scrobble-stop');
+  assert.deepEqual(calls.map((x) => x.path), ['/scrobble/stop']);
+});
+
+test('a legacy action=scrobble stop remains accepted for backward compatibility', async () => {
+  const { client, calls } = fakeClient('scrobble');
+
+  await client.applyEvent('p1', {
+    id: 'stop-legacy',
+    ...movieIdentity,
+    event: 'stop',
+    at: 1000,
+    played: true,
+  }, {
+    kind: 'scrobble',
+    action: 'stop',
+    progress: 95,
+  });
+
+  const played = await client.applyEvent('p1', {
+    id: 'played-legacy',
+    ...movieIdentity,
+    event: 'played',
+    at: 1005,
+  }, { kind: 'history-add' });
+
+  assert.equal(played.ignored, 'recent_history_equivalent');
   assert.deepEqual(calls.map((x) => x.path), ['/scrobble/stop']);
 });
 
