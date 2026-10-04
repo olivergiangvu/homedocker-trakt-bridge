@@ -1,6 +1,6 @@
 {
   "name": "homedocker-trakt-bridge",
-  "version": "1.2.0-rc.4",
+  "version": "1.2.0-rc.5",
   "private": true,
   "type": "module",
   "description": "Self-hosted bidirectional AIOStreams watch_state v2 and Trakt bridge",
@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node src/index.mjs",
     "test": "node --test",
-    "check": "node --check src/index.mjs && node --check src/server.mjs && node --check src/trakt.mjs && node --check src/managed-trakt.mjs && node --check src/db.mjs && node --check src/migrations.mjs && node --check src/operational-status.mjs && node --check src/diagnostics.mjs && node --check src/pull-state.mjs && node --check src/pull-cache.mjs && node --check src/bulk-dedupe.mjs && node --check src/history-dedupe.mjs && node --check src/playback-watermark.mjs && node --check src/media-ids.mjs && node --check src/direct-media.mjs && node --check src/identity-alias.mjs"
+    "check": "node --check src/index.mjs && node --check src/server.mjs && node --check src/trakt.mjs && node --check src/managed-trakt.mjs && node --check src/db.mjs && node --check src/migrations.mjs && node --check src/operational-status.mjs && node --check src/diagnostics.mjs && node --check src/pull-state.mjs && node --check src/pull-cache.mjs && node --check src/bulk-dedupe.mjs && node --check src/history-dedupe.mjs && node --check src/playback-watermark.mjs && node --check src/media-ids.mjs && node --check src/direct-media.mjs && node --check src/identity-alias.mjs && node --check src/aio-reconciler.mjs"
   },
   "license": "MIT"
 }
