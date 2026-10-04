@@ -33,7 +33,18 @@ export function createServer({ config, db, trakt }) {
       } else {
         res.end();
       }
-      console.error(JSON.stringify({ level: 'error', status: e.status, code: e.code, message: e.message, retryAfter: e.retryAfter || null, upstreamPath: e.upstreamPath || null, ms: Date.now() - started }));
+      console.error(JSON.stringify({
+        level: 'error',
+        status: e.status,
+        code: e.code,
+        message: e.message,
+        retryAfter: e.retryAfter || null,
+        upstreamPath: e.upstreamPath || null,
+        upstreamStatus: e.upstreamStatus || null,
+        upstreamDetail: e.upstreamDetail || null,
+        rateLimit: e.rateLimit || null,
+        ms: Date.now() - started,
+      }));
     }
   });
 }
@@ -243,12 +254,27 @@ async function processPull(res, { profileId, since, db, trakt, config }) {
       return sendJson(res, 200, stale);
     }
 
-    const parts = [`${err.code || 'error'}:${err.message}`];
-    if (err.upstreamPath) parts.push(`endpoint=${err.upstreamPath}`);
-    if (err.retryAfter) parts.push(`retry_after=${err.retryAfter}`);
-    db.logEvent({ profileId, eventId, event: 'pull', status: 'error', detail: parts.join(' ') });
+    db.logEvent({
+      profileId,
+      eventId,
+      event: 'pull',
+      status: 'error',
+      detail: JSON.stringify(errorDetail(err)),
+    });
     throw err;
   }
+}
+
+function errorDetail(err) {
+  return {
+    error: err?.code || 'error',
+    message: err?.message || 'Unknown error',
+    upstreamPath: err?.upstreamPath || null,
+    upstreamStatus: err?.upstreamStatus || null,
+    retryAfter: err?.retryAfter || null,
+    upstreamDetail: err?.upstreamDetail || null,
+    rateLimit: err?.rateLimit || null,
+  };
 }
 
 function pullDetail(payload, extra = {}) {
@@ -298,10 +324,13 @@ async function processPush(res, { profileId, body, db, trakt, config }) {
       db.markProcessed(profileId, body.id, JSON.stringify(result));
       db.logEvent({ profileId, eventId: body.id, event: body.event, status: result.ignored ? 'ignored' : 'ok', detail: JSON.stringify(result) });
     } catch (err) {
-      const parts = [`${err.code || 'error'}:${err.message}`];
-      if (err.upstreamPath) parts.push(`endpoint=${err.upstreamPath}`);
-      if (err.retryAfter) parts.push(`retry_after=${err.retryAfter}`);
-      db.logEvent({ profileId, eventId: body.id, event: body.event, status: 'error', detail: parts.join(' ') });
+      db.logEvent({
+        profileId,
+        eventId: body.id,
+        event: body.event,
+        status: 'error',
+        detail: JSON.stringify(errorDetail(err)),
+      });
       throw err;
     }
   })().finally(() => inflight.delete(inflightKey));
