@@ -56,20 +56,29 @@ test('does not swallow transient upstream failures while trying aliases', async 
   );
 });
 
-test('learns the AIOStreams IMDb spelling after an unfinished stop mapped to Trakt pause', async () => {
-  const client = fakeClient(async (path) => {
-    if (path.startsWith('/search/imdb/')) {
-      return [{
-        type: 'show',
-        show: { ids: { trakt: 123, imdb: 'tt44051354', tmdb: 456, tvdb: 789 } },
-      }];
-    }
-    if (path === '/shows/123/seasons/1/episodes/6') {
-      return { ids: { trakt: 9001, tvdb: 8001 } };
-    }
-    throw new Error(`unexpected public path ${path}`);
+test('learns the AIOStreams IMDb spelling from the direct scrobble response without public lookup', async () => {
+  let publicCalls = 0;
+  const client = fakeClient(async () => {
+    publicCalls += 1;
+    throw new Error('public resolver must not be used on the playback hot path');
   });
-  client.request = async () => ({});
+  client.requestDetailed = async (_profileId, path, options) => {
+    assert.equal(path, '/scrobble/pause');
+    assert.deepEqual(options.body, {
+      show: { ids: { imdb: 'tt44094505' } },
+      episode: { season: 1, number: 6 },
+      progress: 30.603,
+    });
+    return {
+      status: 201,
+      headers: new Headers(),
+      data: {
+        action: 'pause',
+        episode: { ids: { trakt: 9001, tvdb: 8001 } },
+        show: { ids: { trakt: 123, imdb: 'tt44051354', tmdb: 456, tvdb: 789 } },
+      },
+    };
+  };
 
   const result = await client.applyEvent('profile-a', {
     event: 'stop',
@@ -88,17 +97,22 @@ test('learns the AIOStreams IMDb spelling after an unfinished stop mapped to Tra
   assert.equal(result.identityAlias.preferredMetaId, 'tt44094505');
   assert.equal(result.identityAlias.traktImdb, 'tt44051354');
   assert.equal(loadIdentityAliases(client.db, 'profile-a').shows['123'].preferredMetaId, 'tt44094505');
+  assert.equal(publicCalls, 0);
 });
 
 test('does not learn an alias from a plain pause event', async () => {
-  const client = fakeClient(async (path) => {
-    if (path.startsWith('/search/imdb/')) {
-      return [{ type: 'show', show: { ids: { trakt: 123, imdb: 'tt44051354' } } }];
-    }
-    if (path === '/shows/123/seasons/1/episodes/6') return { ids: { trakt: 9001 } };
-    throw new Error(`unexpected public path ${path}`);
+  const client = fakeClient(async () => {
+    throw new Error('public resolver must not be used');
   });
-  client.request = async () => ({});
+  client.requestDetailed = async () => ({
+    status: 201,
+    headers: new Headers(),
+    data: {
+      action: 'pause',
+      episode: { ids: { trakt: 9001 } },
+      show: { ids: { trakt: 123, imdb: 'tt44051354' } },
+    },
+  });
 
   const result = await client.applyEvent('profile-a', {
     event: 'pause',

@@ -16,8 +16,10 @@ test('parses supported AIOStreams meta id spellings', () => {
 });
 
 test('normalizes only valid shared provider ids', () => {
-  assert.deepEqual(normalizeProviderIds({ imdb: 'TT0903747', tmdb: '1396', tvdb: 81189, mal: 1 }), {
-    imdb: 'tt0903747', tmdb: 1396, tvdb: 81189,
+  assert.deepEqual(normalizeProviderIds({
+    imdb: 'TT0903747', tmdb: '1396', tvdb: 81189, trakt: '42', mal: 1,
+  }), {
+    imdb: 'tt0903747', tmdb: 1396, tvdb: 81189, trakt: 42,
   });
   assert.deepEqual(normalizeProviderIds({ imdb: 'bad', tmdb: 'x', tvdb: -1 }), {});
 });

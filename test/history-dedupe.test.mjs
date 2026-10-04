@@ -53,29 +53,42 @@ test('opposite state, another item, and an event outside the window are not dedu
   assert.equal(recentEquivalentHistoryState(db, 'p1', episodeA, { at: 1301 }, 'played', 300), null);
 });
 
-function fakeClient(scrobbleAction = 'scrobble') {
+function fakeClient(scrobbleAction = 'scrobble', scrobbleStatus = 201) {
   const db = fakeDb();
   const client = new TraktClient({
     historyDedupeSeconds: 300,
   }, db);
   const calls = [];
-  client.resolveMedia = async () => ({
-    kind: 'movie',
-    movie: { title: 'Test', year: 2026, ids: { trakt: 101 } },
-  });
+  client.requestDetailed = async (_profileId, path, options) => {
+    calls.push({ path, options: structuredClone(options) });
+    return {
+      status: scrobbleStatus,
+      headers: new Headers(),
+      data: {
+        action: scrobbleAction,
+        movie: { ids: { trakt: 101, imdb: 'tt1234567' } },
+      },
+    };
+  };
   client.request = async (_profileId, path, options) => {
     calls.push({ path, options: structuredClone(options) });
-    if (path === '/scrobble/stop') return { action: scrobbleAction };
     return {};
   };
   return { client, db, calls };
 }
 
+const movieIdentity = {
+  scope: 'movie',
+  metaId: 'tt1234567',
+  videoId: 'tt1234567',
+};
+
 test('successful Trakt stop scrobble suppresses the following explicit played history add', async () => {
-  const { client, calls } = fakeClient('scrobble');
+  const { client, calls } = fakeClient('stop');
 
   const stop = await client.applyEvent('p1', {
     id: 'stop-1',
+    ...movieIdentity,
     event: 'stop',
     at: 1000,
     played: true,
@@ -88,6 +101,8 @@ test('successful Trakt stop scrobble suppresses the following explicit played hi
 
   const played = await client.applyEvent('p1', {
     id: 'played-1',
+    ...movieIdentity,
+    ...movieIdentity,
     event: 'played',
     at: 1005,
   }, { kind: 'history-add' });
@@ -97,11 +112,66 @@ test('successful Trakt stop scrobble suppresses the following explicit played hi
   assert.deepEqual(calls.map((x) => x.path), ['/scrobble/stop']);
 });
 
+test('a legacy action=scrobble stop remains accepted for backward compatibility', async () => {
+  const { client, calls } = fakeClient('scrobble');
+
+  await client.applyEvent('p1', {
+    id: 'stop-legacy',
+    ...movieIdentity,
+    event: 'stop',
+    at: 1000,
+    played: true,
+  }, {
+    kind: 'scrobble',
+    action: 'stop',
+    progress: 95,
+  });
+
+  const played = await client.applyEvent('p1', {
+    id: 'played-legacy',
+    ...movieIdentity,
+    event: 'played',
+    at: 1005,
+  }, { kind: 'history-add' });
+
+  assert.equal(played.ignored, 'recent_history_equivalent');
+  assert.deepEqual(calls.map((x) => x.path), ['/scrobble/stop']);
+});
+
+test('accepted Trakt 409 stop also suppresses the following played echo', async () => {
+  const { client, calls } = fakeClient(undefined, 409);
+
+  const stop = await client.applyEvent('p1', {
+    id: 'stop-409',
+    ...movieIdentity,
+    event: 'stop',
+    at: 1000,
+    played: true,
+  }, {
+    kind: 'scrobble',
+    action: 'stop',
+    progress: 95,
+  });
+  assert.equal(stop.upstreamStatus, 409);
+
+  const played = await client.applyEvent('p1', {
+    id: 'played-after-409',
+    ...movieIdentity,
+    event: 'played',
+    at: 1005,
+  }, { kind: 'history-add' });
+
+  assert.equal(played.ignored, 'recent_history_equivalent');
+  assert.equal(played.duplicateSource, 'scrobble-stop-duplicate');
+  assert.deepEqual(calls.map((x) => x.path), ['/scrobble/stop']);
+});
+
 test('a stop treated by Trakt as pause does not suppress a later explicit played mark', async () => {
   const { client, calls } = fakeClient('pause');
 
   await client.applyEvent('p1', {
     id: 'stop-1',
+    ...movieIdentity,
     event: 'stop',
     at: 1000,
     played: true,
@@ -113,6 +183,7 @@ test('a stop treated by Trakt as pause does not suppress a later explicit played
 
   const played = await client.applyEvent('p1', {
     id: 'played-1',
+    ...movieIdentity,
     event: 'played',
     at: 1005,
   }, { kind: 'history-add' });
@@ -126,6 +197,7 @@ test('repeated played marks are suppressed but an unplayed transition re-arms pl
 
   const first = await client.applyEvent('p1', {
     id: 'played-1',
+    ...movieIdentity,
     event: 'played',
     at: 1000,
   }, { kind: 'history-add' });
@@ -133,6 +205,7 @@ test('repeated played marks are suppressed but an unplayed transition re-arms pl
 
   const duplicate = await client.applyEvent('p1', {
     id: 'played-2',
+    ...movieIdentity,
     event: 'played',
     at: 1140,
   }, { kind: 'history-add' });
@@ -140,6 +213,7 @@ test('repeated played marks are suppressed but an unplayed transition re-arms pl
 
   const unplayed = await client.applyEvent('p1', {
     id: 'unplayed-1',
+    ...movieIdentity,
     event: 'unplayed',
     at: 1150,
   }, { kind: 'history-remove' });
@@ -147,6 +221,7 @@ test('repeated played marks are suppressed but an unplayed transition re-arms pl
 
   const replayed = await client.applyEvent('p1', {
     id: 'played-3',
+    ...movieIdentity,
     event: 'played',
     at: 1160,
   }, { kind: 'history-add' });

@@ -214,18 +214,18 @@ test('Trakt HTTP: pagination follows the upstream page count and keeps order', a
 
 test('Bridge HTTP: successful push is idempotent across duplicate delivery and restart', async (t) => {
   let historyCalls = 0;
+  let publicMetadataCalls = 0;
   const mock = await startJsonServer(async (req) => {
-    if (req.path === '/search/imdb/tt44051354') {
-      assert.equal(req.search, '?type=show');
-      return { status: 200, body: [{ type: 'show', show: { ids: { trakt: 263102, imdb: 'tt44051354', tmdb: 276470, tvdb: 480791 } } }] };
-    }
-    if (req.path === '/shows/263102/seasons/1/episodes/7') {
-      return { status: 200, body: { ids: { trakt: 900007, tvdb: 100007 } } };
+    if (req.path.startsWith('/search/') || req.path.startsWith('/shows/')) {
+      publicMetadataCalls += 1;
+      return { status: 500, body: { error: 'public_metadata_must_not_be_used' } };
     }
     if (req.path === '/sync/history' && req.method === 'POST') {
       historyCalls += 1;
       assert.equal(req.headers.authorization, 'Bearer access-live');
-      assert.equal(req.json.episodes[0].ids.trakt, 900007);
+      assert.equal(req.json.shows[0].ids.imdb, 'tt44051354');
+      assert.equal(req.json.shows[0].seasons[0].number, 1);
+      assert.equal(req.json.shows[0].seasons[0].episodes[0].number, 7);
       return { status: 201, body: { added: { episodes: 1 } } };
     }
     return null;
@@ -268,6 +268,7 @@ test('Bridge HTTP: successful push is idempotent across duplicate delivery and r
   response = await postJson(pushUrl(runtime.baseUrl, config, profileId), body);
   assert.equal(response.status, 204);
   assert.equal(historyCalls, 1, 'processed event must remain idempotent after restart');
+  assert.equal(publicMetadataCalls, 0, 'direct history push must not invoke public metadata');
 });
 
 test('Bridge HTTP: a retryable 429 is not marked processed and the same event can recover', async (t) => {

@@ -93,7 +93,15 @@ export function planEvent(event) {
       const progress = progressPercent(event);
       if (progress == null) return event.played === true ? { kind: 'history-add' } : { kind: 'ignore', reason: 'duration_unknown' };
       if (belowTraktScrobbleMinimum(progress)) return event.played === true ? { kind: 'history-add' } : { kind: 'ignore', reason: 'progress_below_trakt_minimum' };
-      if (event.played !== true) return { kind: 'scrobble', action: 'pause', progress };
+
+      // Preserve the client's stop semantic where Trakt will also classify it
+      // as resumable. Trakt completes a /scrobble/stop at >=80%, while AIOStreams
+      // defaults to a 90% played threshold. For the 80-89% gap, trust AIO's
+      // played=false decision and send pause so we never mark an unfinished item
+      // watched merely because Trakt uses a lower completion threshold.
+      if (event.played !== true && progress >= 80) {
+        return { kind: 'scrobble', action: 'pause', progress };
+      }
       return { kind: 'scrobble', action: 'stop', progress };
     }
     default: throw new BridgeError('Unsupported event', { status: 422, code: 'unsupported_event' });

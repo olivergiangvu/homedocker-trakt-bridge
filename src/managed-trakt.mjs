@@ -32,10 +32,17 @@ function isWriteMethod(method) {
   return ['POST', 'PUT', 'DELETE'].includes(String(method || 'GET').toUpperCase());
 }
 
-function laneForRateLimit(rateLimit) {
+function laneForRateLimit(rateLimit, method = 'GET') {
   const name = String(rateLimit?.name || '').toUpperCase();
   if (name === 'AUTHED_API_POST_LIMIT') return 'write';
   if (name === 'AUTHED_API_GET_LIMIT') return 'read';
+
+  // Headerless/unnamed 429s are ambiguous. Do not pre-emptively close the
+  // opposite lane: a recovery GET after a failed write is part of the
+  // cross-client self-healing path. If the opposite lane is truly throttled,
+  // its own request will observe 429 and arm that lane independently.
+  if (!name) return isWriteMethod(method) ? 'write' : 'read';
+
   return 'shared';
 }
 
@@ -144,12 +151,16 @@ export class ManagedTraktClient extends TraktClient {
     };
   }
 
-  #observeRateLimit(profileId, headers) {
+  #observeRateLimit(profileId, headers, method = 'GET') {
     const observed = parseRateLimitHeader(headers);
     if (!observed) return;
     this.rateLimits.set(profileId, observed);
     if (observed.remaining === 0 && observed.until) {
-      this.#armRateCooldown(profileId, observed.until, laneForRateLimit(observed));
+      this.#armRateCooldown(
+        profileId,
+        observed.until,
+        laneForRateLimit(observed, method),
+      );
     }
   }
 
@@ -173,7 +184,7 @@ export class ManagedTraktClient extends TraktClient {
           this.#armRateCooldown(
             profileId,
             err.retryAfter,
-            laneForRateLimit(err.rateLimit),
+            laneForRateLimit(err.rateLimit, 'POST'),
           );
         }
         throw err;
@@ -191,14 +202,14 @@ export class ManagedTraktClient extends TraktClient {
       this.#throwIfCooling(profileId, path, 'read');
       try {
         const result = await super.requestDetailed(profileId, path, options);
-        this.#observeRateLimit(profileId, result.headers);
+        this.#observeRateLimit(profileId, result.headers, method);
         return result;
       } catch (err) {
         if (err?.status === 429) {
           this.#armRateCooldown(
             profileId,
             err.retryAfter,
-            laneForRateLimit(err.rateLimit),
+            laneForRateLimit(err.rateLimit, method),
           );
         }
         throw err;
@@ -208,7 +219,7 @@ export class ManagedTraktClient extends TraktClient {
     if (isWriteMethod(method)) {
       return this.#pacedWrite(profileId, path, async () => {
         const result = await super.requestDetailed(profileId, path, options);
-        this.#observeRateLimit(profileId, result.headers);
+        this.#observeRateLimit(profileId, result.headers, method);
         return result;
       });
     }
