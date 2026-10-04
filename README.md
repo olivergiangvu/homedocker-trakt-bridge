@@ -31,7 +31,7 @@ The operator dashboard exposes connection health, pull identity, authoritative w
 - retry-safe and restart-safe processing
 - Trakt rate-limit protection and bounded stale fallback
 - native Trakt + AIOStreams coexistence
-- optional read-only AIO local-state gap detection with per-item settlement and position-aware delivery correlation (rc.7 canary)
+- optional read-only AIO local-state gap detection with per-item settlement, restart-safe coalescing and position-aware delivery correlation
 - lightweight operator dashboard with health and sync status
 
 ## Quick start
@@ -115,8 +115,10 @@ For sensitive vulnerabilities, follow **[SECURITY.md](SECURITY.md)** instead of 
 
 ## Project status
 
-`v1.1.0` remains the current stable release. `v1.2.0-rc.4` remains the current HomeDocker runtime canary for issue #58 and has passed direct transport, rate-limit isolation and native-Trakt coexistence qualification in both VidHub → Strand and Strand → VidHub tests.
+`v1.2.0` is the stable release line promoted from the fully qualified `v1.2.0-rc.7` HomeDocker canary.
 
-`v1.2.0-rc.6` hardens the detect-only recovery layer tracked in issue #64. It does **not** modify AIOStreams and does **not** write Trakt. When explicitly enabled, the bridge reads the AIOStreams SQLite database through a read-only mount, coalesces same-item local updates, waits for a 300-second quiet window, and evaluates playback coverage only against the configured HomeDocker sink before emitting a settled diagnostic. This specifically prevents the observed intermediate 06:02 UserData state from being treated as final when the same Strand session later advanced to 08:56.
+The v1.2 line keeps native-Trakt coexistence safeguards, direct provider-ID playback transport, family-scoped rate-limit recovery, semantic history dedupe, and the optional read-only AIO local-state reconciler. The reconciler remains **disabled by default**; when enabled in `detect` mode it never writes Trakt or AIOStreams, persists pending candidates across restart, coalesces newer same-item local rows, waits for the configured quiet window, and correlates final state only with an equivalent delivered HomeDocker playback position.
+
+DB schema remains `1`; no database migration or pull-cache purge is required from v1.1.
 
 License: [MIT](LICENSE).
