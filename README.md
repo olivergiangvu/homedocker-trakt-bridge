@@ -114,8 +114,8 @@ For sensitive vulnerabilities, follow **[SECURITY.md](SECURITY.md)** instead of 
 
 ## Project status
 
-`v1.1.0` remains the current stable release. `v1.2.0-rc.3` is the current HomeDocker transport-hardening canary candidate for issue #58; the HomeDocker host remains pinned to the accepted rc.2 digest until rc.3 qualification.
+`v1.1.0` remains the current stable release. `v1.2.0-rc.4` is the current HomeDocker transport-hardening candidate for issue #58. rc.3 proved the direct provider-ID transport but failed qualification because a headerless `/sync/history/remove` 429 could cool the entire authenticated write lane and block later playback scrobbles.
 
-rc.3 keeps the rc.1/rc.2 stale-playback, semantic-dedupe, diagnostics and retry safeguards, but removes public metadata resolution from the normal playback/history hot path in favor of Odin-style direct provider-ID writes. Native Trakt remains enabled during qualification, and AIOStreams scheduling is intentionally unchanged for the rc.3-A transport canary.
+rc.4 keeps the rc.3 Odin-style direct transport, stale-playback watermark, semantic dedupe and native-Trakt coexistence, while splitting ambiguous write cooldowns into scrobble, history and watchlist families. Explicit Trakt POST-bucket metadata still blocks all writes. AIOStreams scheduling remains intentionally unchanged for this transport canary.
 
 License: [MIT](LICENSE).
