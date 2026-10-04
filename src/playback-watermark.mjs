@@ -1,4 +1,5 @@
 const PREFIX = 'playback-watermark:v1:';
+const SOURCE_PREFIX = 'playback-source-watermark:v1:';
 const DEFAULT_TTL_SECONDS = 24 * 60 * 60;
 
 function canonicalTraktId(media) {
@@ -13,22 +14,39 @@ function eventAtSeconds(event) {
   return raw > 1e11 ? Math.floor(raw / 1000) : Math.floor(raw);
 }
 
-function keyFor(profileId, media) {
+function canonicalKeyFor(profileId, media) {
   const traktId = canonicalTraktId(media);
   if (!traktId) return null;
   return `${PREFIX}${profileId}:${media.kind}:${traktId}`;
 }
 
-export function observePlaybackWatermark(
-  db,
-  profileId,
-  media,
-  event,
-  ttlSeconds = DEFAULT_TTL_SECONDS,
-) {
-  if (!['start', 'pause', 'stop'].includes(String(event?.event || ''))) return null;
+function sourceIdentity(event) {
+  const scope = String(event?.scope || '').toLowerCase();
 
-  const key = keyFor(profileId, media);
+  if (scope === 'episode' || event?.videoId) {
+    const videoId = String(event?.videoId || '').trim();
+    if (videoId) return `episode:${videoId}`;
+
+    const metaId = String(event?.metaId || '').trim();
+    const season = Number(event?.season);
+    const episode = Number(event?.episode);
+    if (metaId && Number.isInteger(season) && Number.isInteger(episode)) {
+      return `episode:${metaId}:${season}:${episode}`;
+    }
+  }
+
+  const metaId = String(event?.metaId || '').trim();
+  if (metaId) return `${scope || 'item'}:${metaId}`;
+  return null;
+}
+
+function sourceKeyFor(profileId, event) {
+  const identity = sourceIdentity(event);
+  if (!identity) return null;
+  return `${SOURCE_PREFIX}${profileId}:${identity}`;
+}
+
+function observe(db, key, event, ttlSeconds) {
   const incomingAt = eventAtSeconds(event);
   if (!key || !incomingAt) return null;
 
@@ -47,7 +65,7 @@ export function observePlaybackWatermark(
   }
 
   // Equal timestamps are intentionally allowed. AIOStreams' protocol timestamp
-  // resolution is one second and legitimate start/stop edges can share a value.
+  // resolution is one second and legitimate transition edges can share a value.
   if (incomingAt > newestAt) {
     db.cacheSet(key, {
       at: incomingAt,
@@ -61,4 +79,25 @@ export function observePlaybackWatermark(
     incomingAt,
     newestAt: Math.max(newestAt, incomingAt),
   };
+}
+
+export function observeSourcePlaybackWatermark(
+  db,
+  profileId,
+  event,
+  ttlSeconds = DEFAULT_TTL_SECONDS,
+) {
+  if (!['start', 'pause', 'stop'].includes(String(event?.event || ''))) return null;
+  return observe(db, sourceKeyFor(profileId, event), event, ttlSeconds);
+}
+
+export function observePlaybackWatermark(
+  db,
+  profileId,
+  media,
+  event,
+  ttlSeconds = DEFAULT_TTL_SECONDS,
+) {
+  if (!['start', 'pause', 'stop'].includes(String(event?.event || ''))) return null;
+  return observe(db, canonicalKeyFor(profileId, media), event, ttlSeconds);
 }
