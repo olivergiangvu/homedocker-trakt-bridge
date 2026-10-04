@@ -146,6 +146,22 @@ Only after RC3-A passes:
 
 This is intended to beat Odin's 120-second native-writer blind spot without returning to rc.2's high request amplification.
 
+## Current Trakt scrobble response audit
+
+The current official Trakt API schema returns scrobble `action` as one of:
+
+- `start`;
+- `pause`;
+- `stop`.
+
+HomeDocker v1.1/rc.2 still carried an older assumption that a completed stop could
+be identified only by `action=scrobble`. RC3 accepts the current
+`action=stop` response, retains `action=scrobble` as backward compatibility,
+and treats an accepted HTTP 409 stop as an already-recorded completion.
+
+This closes a latent duplicate-history regression in the completion -> explicit
+`played` sequence without adopting Odin's narrow >=80% marker.
+
 ## AIOStreams 2.35.9 pull scheduling audit
 
 A second source-level audit found an important boundary outside the bridge.
