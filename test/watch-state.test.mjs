@@ -63,7 +63,7 @@ test('exactly 1% remains a valid Trakt scrobble boundary', () => {
   );
   assert.deepEqual(
     planEvent({ event: 'stop', positionMs: 1000, durationMs: 100000, played: false }),
-    { kind: 'scrobble', action: 'pause', progress: 1 },
+    { kind: 'scrobble', action: 'stop', progress: 1 },
   );
 });
 
