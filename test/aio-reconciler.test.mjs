@@ -830,7 +830,7 @@ test('compare mode keeps candidate retryable when Trakt GET is rate limited', as
     assert.equal(second.pending, 1);
     assert.equal(bridge.events.length, 1);
 
-    const snapshot = aioReconcileOperationalSnapshot(bridge);
+    const snapshot = aioReconcileOperationalSnapshot(bridge, 550000);
     assert.equal(snapshot.compare.awaiting, 1);
     assert.equal(snapshot.compare.retrying, 1);
     assert.equal(snapshot.compare.total, 0);
