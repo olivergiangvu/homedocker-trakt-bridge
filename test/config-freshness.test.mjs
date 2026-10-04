@@ -17,11 +17,12 @@ function withEnv(values, fn) {
     'PULL_CACHE_TTL_SECONDS',
     'PULL_HINT_SECONDS',
     'PULL_TTL_SECONDS',
+    'HISTORY_DEDUPE_SECONDS',
   ]);
   const before = new Map([...keys].map((key) => [key, process.env[key]]));
   try {
     for (const [key, value] of Object.entries(REQUIRED)) process.env[key] = value;
-    for (const key of ['PULL_CACHE_TTL_SECONDS', 'PULL_HINT_SECONDS', 'PULL_TTL_SECONDS']) delete process.env[key];
+    for (const key of ['PULL_CACHE_TTL_SECONDS', 'PULL_HINT_SECONDS', 'PULL_TTL_SECONDS', 'HISTORY_DEDUPE_SECONDS']) delete process.env[key];
     for (const [key, value] of Object.entries(values)) {
       if (value == null) delete process.env[key];
       else process.env[key] = String(value);
@@ -58,5 +59,14 @@ test('legacy PULL_TTL_SECONDS remains an upgrade fallback', () => {
     const config = loadConfig();
     assert.equal(config.pullCacheTtlSeconds, 90);
     assert.equal(config.pullHintSeconds, 90);
+  });
+});
+
+test('history semantic dedupe defaults to 300 seconds and can be disabled', () => {
+  withEnv({}, () => {
+    assert.equal(loadConfig().historyDedupeSeconds, 300);
+  });
+  withEnv({ HISTORY_DEDUPE_SECONDS: 0 }, () => {
+    assert.equal(loadConfig().historyDedupeSeconds, 0);
   });
 });

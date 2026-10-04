@@ -74,6 +74,25 @@ Lower values such as 120 or 60 seconds can improve freshness in some deployments
 
 AIOStreams has its own watch-state pull cadence. Bridge TTL alone does not guarantee the same end-to-end client refresh interval, and no AIOStreams `WATCH_STATE_*` environment override is required for the v1.0 baseline while upstream defaults already provide satisfactory freshness.
 
+## Duplicate-history guard
+
+The default semantic history guard is:
+
+```env
+HISTORY_DEDUPE_SECONDS=300
+```
+
+AIOStreams can legitimately emit more than one event around the end of a viewing session. Trakt also creates a history entry itself when a successful `/scrobble/stop` is classified as `action=scrobble`. The bridge therefore keeps a short, restart-safe marker for the canonical Trakt movie/episode and suppresses only an equivalent state write inside this window.
+
+The guard covers both:
+
+- a completed Trakt scrobble followed shortly by an explicit AIOStreams `played` mark
+- repeated same-state `played` or `unplayed` marks with different AIOStreams event IDs
+
+An opposite state transition is never suppressed, so `played -> unplayed -> played` remains valid. A same-state event outside the configured window is also processed normally, preserving legitimate later rewatches. The marker uses the existing SQLite cache and requires no database migration.
+
+Set `HISTORY_DEDUPE_SECONDS=0` only when diagnosing raw upstream behavior. This guard cannot see writes made directly by another Trakt client, so native Trakt integrations can still be a separate duplicate-history writer.
+
 ## Reverse proxy
 
 The default Compose file binds the application to loopback only:
