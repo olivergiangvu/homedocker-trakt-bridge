@@ -7,6 +7,7 @@ const PENDING_KEY = 'aio-reconcile:v2:pending';
 const SETTLED_PREFIX = 'aio-reconcile:v2:settled:';
 const COMPARE_PENDING_KEY = 'aio-reconcile:v3:compare-pending';
 const COMPARE_SETTLED_PREFIX = 'aio-reconcile:v3:compare-settled:';
+const COMPARE_STATS_KEY = 'aio-reconcile:v3:compare-stats';
 const COMPARE_RETRY_BASE_MS = 60_000;
 const COMPARE_RETRY_MAX_MS = 15 * 60_000;
 const CACHE_TTL_SECONDS = 10 * 365 * 24 * 3600;
@@ -308,6 +309,63 @@ function comparePendingMap(db) {
 
 function storeComparePendingMap(db, value) {
   db.cacheSet(COMPARE_PENDING_KEY, value, CACHE_TTL_SECONDS);
+}
+
+function compareStats(db) {
+  const value = db.cacheGet(COMPARE_STATS_KEY);
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value
+    : {
+        total: 0,
+        sameOrNewer: 0,
+        staleCandidate: 0,
+        missingCandidate: 0,
+        ambiguous: 0,
+        lastDecision: null,
+        lastAt: null,
+      };
+}
+
+function rememberCompareDecision(db, decision, nowMs = Date.now()) {
+  const stats = { ...compareStats(db) };
+  stats.total = Number(stats.total || 0) + 1;
+  if (decision === 'trakt_same_or_newer') {
+    stats.sameOrNewer = Number(stats.sameOrNewer || 0) + 1;
+  } else if (decision === 'trakt_stale_candidate') {
+    stats.staleCandidate = Number(stats.staleCandidate || 0) + 1;
+  } else if (decision === 'trakt_playback_missing_candidate') {
+    stats.missingCandidate = Number(stats.missingCandidate || 0) + 1;
+  } else {
+    stats.ambiguous = Number(stats.ambiguous || 0) + 1;
+  }
+  stats.lastDecision = decision;
+  stats.lastAt = Number(nowMs);
+  db.cacheSet(COMPARE_STATS_KEY, stats, CACHE_TTL_SECONDS);
+  return stats;
+}
+
+export function aioReconcileOperationalSnapshot(db) {
+  const detectPending = pendingMap(db);
+  const comparePending = comparePendingMap(db);
+  const stats = compareStats(db);
+  const compareItems = Object.values(comparePending);
+
+  return {
+    detectPending: Object.keys(detectPending).length,
+    compare: {
+      awaiting: compareItems.length,
+      retrying: compareItems.filter(
+        (item) => Number(item.nextAttemptAt || 0) > Date.now()
+      ).length,
+      total: Number(stats.total || 0),
+      sameOrNewer: Number(stats.sameOrNewer || 0),
+      staleCandidate: Number(stats.staleCandidate || 0),
+      missingCandidate: Number(stats.missingCandidate || 0),
+      ambiguous: Number(stats.ambiguous || 0),
+      lastDecision: stats.lastDecision || null,
+      lastAt: stats.lastAt == null ? null : Number(stats.lastAt),
+    },
+  };
 }
 
 function stageComparePending(db, profileId, row, firstSeenAt, nowMs) {
@@ -921,6 +979,7 @@ function logCompareSettled(db, item, result) {
     updatedAt: Number(item.updatedAt),
     decision: result.decision,
   }, CACHE_TTL_SECONDS);
+  rememberCompareDecision(db, result.decision);
 
   db.logEvent({
     profileId: item.profileId,
