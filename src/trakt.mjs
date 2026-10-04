@@ -570,9 +570,12 @@ export class TraktClient {
       }
 
       const semanticKey = sourceSemanticMediaKey(event);
+      const stopConfirmedPlayed = response.status === 409
+        || scrobbleResult?.action === 'stop'
+        || scrobbleResult?.action === 'scrobble';
       if (
         plan.action === 'stop'
-        && (response.status === 409 || scrobbleResult?.action === 'scrobble')
+        && stopConfirmedPlayed
       ) {
         rememberHistoryStateByKey(this.db, profileId, semanticKey, event, {
           state: 'played',
