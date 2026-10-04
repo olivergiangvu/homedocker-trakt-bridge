@@ -1,6 +1,7 @@
 import { APP_NAME, APP_VERSION } from './config.mjs';
 import { SCHEMA_VERSION } from './migrations.mjs';
 import { summarizeRecentEvents } from './diagnostics.mjs';
+import { aioReconcileOperationalSnapshot } from './aio-reconciler.mjs';
 
 export const ACTIVE_ERROR_WINDOW_SECONDS = 30 * 60;
 
@@ -215,6 +216,7 @@ export function buildProfileOperationalStatus({ db, config, profileId }) {
       aliasCount: aliases.length,
       aliases,
     },
+    reconciler: aioReconcileOperationalSnapshot(db),
   };
 }
 
