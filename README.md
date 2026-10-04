@@ -31,7 +31,7 @@ The operator dashboard exposes connection health, pull identity, authoritative w
 - retry-safe and restart-safe processing
 - Trakt rate-limit protection and bounded stale fallback
 - native Trakt + AIOStreams coexistence
-- optional read-only AIO local-state gap detection with per-item settlement (rc.6 canary)
+- optional read-only AIO local-state gap detection with per-item settlement and position-aware delivery correlation (rc.7 canary)
 - lightweight operator dashboard with health and sync status
 
 ## Quick start
