@@ -7,7 +7,7 @@ services:
       - .env
     volumes:
       - trakt_bridge_data:/app/data
-      # Optional rc.5 detect-only reconciler input. Keep read-only.
+      # Optional rc.6 detect-only reconciler input. Keep read-only.
       # Enable only together with AIO_RECONCILER_MODE=detect.
       # - /var/lib/docker/volumes/aiostreams_data/_data:/aio-data:ro
     # Terminate HTTPS at the host reverse proxy. Keep the app loopback-only.

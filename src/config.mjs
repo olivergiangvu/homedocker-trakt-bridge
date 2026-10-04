@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 export const APP_NAME = 'HomeDocker Trakt Bridge';
-export const APP_VERSION = '1.2.0-rc.5';
+export const APP_VERSION = '1.2.0-rc.6';
 
 function requireEnv(name) {
   const value = process.env[name]?.trim();
@@ -72,6 +72,9 @@ export function loadConfig() {
     aioDbPath: (process.env.AIO_DB_PATH || '/aio-data/db.sqlite').trim(),
     aioReconcileIntervalSeconds: intEnv('AIO_RECONCILE_INTERVAL_SECONDS', 15, 5, 3600),
     aioReconcileGraceSeconds: intEnv('AIO_RECONCILE_GRACE_SECONDS', 30, 5, 3600),
+    aioReconcileQuietSeconds: intEnv('AIO_RECONCILE_QUIET_SECONDS', 300, 60, 7200),
+    aioReconcileSinkName: (process.env.AIO_RECONCILE_SINK_NAME || 'homedocker-trakt-bridge').trim(),
+    aioReconcileSinkInstanceId: (process.env.AIO_RECONCILE_SINK_INSTANCE_ID || '').trim() || null,
     aioReconcileMaxRows: intEnv('AIO_RECONCILE_MAX_ROWS', 100, 1, 5000),
     userAgent: (process.env.USER_AGENT || `${APP_NAME.replaceAll(' ', '-')}/${APP_VERSION}`).trim(),
   };

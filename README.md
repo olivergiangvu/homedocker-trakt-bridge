@@ -31,7 +31,7 @@ The operator dashboard exposes connection health, pull identity, authoritative w
 - retry-safe and restart-safe processing
 - Trakt rate-limit protection and bounded stale fallback
 - native Trakt + AIOStreams coexistence
-- optional read-only AIO local-state gap detection (rc.5 canary)
+- optional read-only AIO local-state gap detection with per-item settlement (rc.6 canary)
 - lightweight operator dashboard with health and sync status
 
 ## Quick start
@@ -117,6 +117,6 @@ For sensitive vulnerabilities, follow **[SECURITY.md](SECURITY.md)** instead of 
 
 `v1.1.0` remains the current stable release. `v1.2.0-rc.4` remains the current HomeDocker runtime canary for issue #58 and has passed direct transport, rate-limit isolation and native-Trakt coexistence qualification in both VidHub → Strand and Strand → VidHub tests.
 
-`v1.2.0-rc.5` is being developed separately under issue #64 as a detect-only recovery layer. It does **not** modify AIOStreams and does **not** write Trakt. When explicitly enabled, the bridge reads the AIOStreams SQLite database through a read-only mount and records cases where local resume state changed without a matching AIO playback delivery. This isolates the Jellyfin UserData handoff gap before any write-capable reconciliation is considered.
+`v1.2.0-rc.6` hardens the detect-only recovery layer tracked in issue #64. It does **not** modify AIOStreams and does **not** write Trakt. When explicitly enabled, the bridge reads the AIOStreams SQLite database through a read-only mount, coalesces same-item local updates, waits for a 300-second quiet window, and evaluates playback coverage only against the configured HomeDocker sink before emitting a settled diagnostic. This specifically prevents the observed intermediate 06:02 UserData state from being treated as final when the same Strand session later advanced to 08:56.
 
 License: [MIT](LICENSE).
