@@ -3,8 +3,9 @@ import { TraktClient, parseRateLimitHeader } from './trakt.mjs';
 
 const WRITE_INTERVAL_MS = 1100;
 const DEFAULT_RATE_COOLDOWN_MS = 60_000;
-const RATE_LIMIT_CACHE_PREFIX = 'rate-limit:v2:';
-const LEGACY_RATE_LIMIT_CACHE_PREFIX = 'rate-limit:v1:';
+const RATE_LIMIT_CACHE_PREFIX = 'rate-limit:v3:';
+const LEGACY_RATE_LIMIT_V2_CACHE_PREFIX = 'rate-limit:v2:';
+const LEGACY_RATE_LIMIT_V1_CACHE_PREFIX = 'rate-limit:v1:';
 
 function sleep(ms) {
   if (!(ms > 0)) return Promise.resolve();
@@ -32,22 +33,63 @@ function isWriteMethod(method) {
   return ['POST', 'PUT', 'DELETE'].includes(String(method || 'GET').toUpperCase());
 }
 
-function laneForRateLimit(rateLimit, method = 'GET') {
+function writeLaneForPath(path = '') {
+  const value = String(path || '');
+  if (value.startsWith('/scrobble/')) return 'scrobble';
+  if (value === '/sync/history' || value === '/sync/history/remove') return 'history';
+  if (value === '/sync/watchlist' || value === '/sync/watchlist/remove') return 'watchlist';
+  return 'write';
+}
+
+function laneForRateLimit(rateLimit, method = 'GET', path = '') {
   const name = String(rateLimit?.name || '').toUpperCase();
   if (name === 'AUTHED_API_POST_LIMIT') return 'write';
   if (name === 'AUTHED_API_GET_LIMIT') return 'read';
 
-  // Headerless/unnamed 429s are ambiguous. Do not pre-emptively close the
-  // opposite lane: a recovery GET after a failed write is part of the
-  // cross-client self-healing path. If the opposite lane is truly throttled,
-  // its own request will observe 429 and arm that lane independently.
-  if (!name) return isWriteMethod(method) ? 'write' : 'read';
+  // Headerless/unnamed 429s are ambiguous. Keep them local to the request
+  // family that actually failed. A history/remove security limit must not
+  // poison the latency-sensitive scrobble lane, and vice versa. If Trakt
+  // explicitly identifies its shared authenticated POST bucket, the rule
+  // above still cools every write lane.
+  if (!name) {
+    if (!isWriteMethod(method)) return 'read';
+    return writeLaneForPath(path);
+  }
 
   return 'shared';
 }
 
 function emptyCooldowns() {
-  return { readUntil: 0, writeUntil: 0, sharedUntil: 0 };
+  return {
+    readUntil: 0,
+    allWriteUntil: 0,
+    scrobbleUntil: 0,
+    historyUntil: 0,
+    watchlistUntil: 0,
+    sharedUntil: 0,
+  };
+}
+
+function cooldownKeyForLane(lane) {
+  switch (lane) {
+    case 'read': return 'readUntil';
+    case 'write': return 'allWriteUntil';
+    case 'scrobble': return 'scrobbleUntil';
+    case 'history': return 'historyUntil';
+    case 'watchlist': return 'watchlistUntil';
+    default: return 'sharedUntil';
+  }
+}
+
+function localCooldownName(lane) {
+  switch (lane) {
+    case 'read': return 'LOCAL_READ_COOLDOWN';
+    case 'scrobble': return 'LOCAL_SCROBBLE_COOLDOWN';
+    case 'history': return 'LOCAL_HISTORY_COOLDOWN';
+    case 'watchlist': return 'LOCAL_WATCHLIST_COOLDOWN';
+    case 'write': return 'LOCAL_WRITE_COOLDOWN';
+    default: return 'LOCAL_SHARED_COOLDOWN';
+  }
 }
 
 export class ManagedTraktClient extends TraktClient {
@@ -64,8 +106,12 @@ export class ManagedTraktClient extends TraktClient {
     return `${RATE_LIMIT_CACHE_PREFIX}${profileId}`;
   }
 
-  #legacyCooldownKey(profileId) {
-    return `${LEGACY_RATE_LIMIT_CACHE_PREFIX}${profileId}`;
+  #legacyV2CooldownKey(profileId) {
+    return `${LEGACY_RATE_LIMIT_V2_CACHE_PREFIX}${profileId}`;
+  }
+
+  #legacyV1CooldownKey(profileId) {
+    return `${LEGACY_RATE_LIMIT_V1_CACHE_PREFIX}${profileId}`;
   }
 
   #loadCooldowns(profileId) {
@@ -73,13 +119,28 @@ export class ManagedTraktClient extends TraktClient {
     if (memory) return memory;
 
     const persisted = this.db.cacheGet?.(this.#cooldownKey(profileId));
-    const legacy = persisted ? null : this.db.cacheGet?.(this.#legacyCooldownKey(profileId));
+    const legacyV2 = persisted
+      ? null
+      : this.db.cacheGet?.(this.#legacyV2CooldownKey(profileId));
+    const legacyV1 = persisted || legacyV2
+      ? null
+      : this.db.cacheGet?.(this.#legacyV1CooldownKey(profileId));
+
     const state = {
-      readUntil: Number(persisted?.readUntil || 0),
-      writeUntil: Number(persisted?.writeUntil || 0),
+      ...emptyCooldowns(),
+      readUntil: Number(persisted?.readUntil ?? legacyV2?.readUntil ?? 0),
+      // A v2 write cooldown did not record which write family caused it. Keep
+      // that one legacy window conservative, then all new 429s use v3 lanes.
+      allWriteUntil: Number(
+        persisted?.allWriteUntil ?? legacyV2?.writeUntil ?? 0
+      ),
+      scrobbleUntil: Number(persisted?.scrobbleUntil || 0),
+      historyUntil: Number(persisted?.historyUntil || 0),
+      watchlistUntil: Number(persisted?.watchlistUntil || 0),
       sharedUntil: Math.max(
         Number(persisted?.sharedUntil || 0),
-        Number(legacy?.until || 0),
+        Number(legacyV2?.sharedUntil || 0),
+        Number(legacyV1?.until || 0),
       ),
     };
     this.rateCooldowns.set(profileId, state);
@@ -88,7 +149,14 @@ export class ManagedTraktClient extends TraktClient {
 
   #saveCooldowns(profileId, state) {
     this.rateCooldowns.set(profileId, state);
-    const until = Math.max(state.readUntil, state.writeUntil, state.sharedUntil);
+    const until = Math.max(
+      state.readUntil,
+      state.allWriteUntil,
+      state.scrobbleUntil,
+      state.historyUntil,
+      state.watchlistUntil,
+      state.sharedUntil,
+    );
     const ttlSeconds = Math.max(1, Math.ceil((until - Date.now()) / 1000) + 5);
     this.db.cacheSet?.(this.#cooldownKey(profileId), state, ttlSeconds);
   }
@@ -97,23 +165,34 @@ export class ManagedTraktClient extends TraktClient {
     const state = this.#loadCooldowns(profileId);
     const now = Date.now();
 
-    for (const key of ['readUntil', 'writeUntil', 'sharedUntil']) {
+    for (const key of [
+      'readUntil',
+      'allWriteUntil',
+      'scrobbleUntil',
+      'historyUntil',
+      'watchlistUntil',
+      'sharedUntil',
+    ]) {
       if (state[key] <= now) state[key] = 0;
     }
 
-    const laneUntil = lane === 'read' ? state.readUntil : state.writeUntil;
-    return Math.max(state.sharedUntil, laneUntil);
+    if (lane === 'read') {
+      return Math.max(state.sharedUntil, state.readUntil);
+    }
+
+    if (lane === 'write') {
+      return Math.max(state.sharedUntil, state.allWriteUntil);
+    }
+
+    const specific = Number(state[cooldownKeyForLane(lane)] || 0);
+    return Math.max(state.sharedUntil, state.allWriteUntil, specific);
   }
 
   #armRateCooldown(profileId, retryAfter, lane = 'shared') {
     const wait = retryAfterMs(retryAfter) ?? DEFAULT_RATE_COOLDOWN_MS;
     const proposed = Date.now() + Math.max(1000, wait);
     const state = { ...this.#loadCooldowns(profileId) };
-    const key = lane === 'read'
-      ? 'readUntil'
-      : lane === 'write'
-        ? 'writeUntil'
-        : 'sharedUntil';
+    const key = cooldownKeyForLane(lane);
     state[key] = Math.max(Number(state[key] || 0), proposed);
     this.#saveCooldowns(profileId, state);
     return state[key];
@@ -127,7 +206,7 @@ export class ManagedTraktClient extends TraktClient {
       retryAfter: retryAfterSeconds(until),
       code: 'trakt_rate_cooldown',
       upstreamPath: path,
-      rateLimit: { name: lane === 'read' ? 'LOCAL_READ_COOLDOWN' : 'LOCAL_WRITE_COOLDOWN' },
+      rateLimit: { name: localCooldownName(lane) },
     });
   }
 
@@ -135,12 +214,32 @@ export class ManagedTraktClient extends TraktClient {
     const state = this.#loadCooldowns(profileId);
     const writeNotBefore = Number(this.writeNotBefore.get(profileId) || 0);
     const now = Date.now();
-    const seconds = (until) => Math.max(0, Math.ceil((Number(until || 0) - now) / 1000));
+    const seconds = (until) => Math.max(
+      0,
+      Math.ceil((Number(until || 0) - now) / 1000)
+    );
     const sharedSeconds = seconds(state.sharedUntil);
-    const readSeconds = Math.max(sharedSeconds, seconds(state.readUntil));
-    const writeSeconds = Math.max(
+    const allWriteSeconds = Math.max(
       sharedSeconds,
-      seconds(state.writeUntil),
+      seconds(state.allWriteUntil),
+    );
+    const readSeconds = Math.max(sharedSeconds, seconds(state.readUntil));
+    const scrobbleSeconds = Math.max(
+      allWriteSeconds,
+      seconds(state.scrobbleUntil),
+    );
+    const historySeconds = Math.max(
+      allWriteSeconds,
+      seconds(state.historyUntil),
+    );
+    const watchlistSeconds = Math.max(
+      allWriteSeconds,
+      seconds(state.watchlistUntil),
+    );
+    const writeSeconds = Math.max(
+      scrobbleSeconds,
+      historySeconds,
+      watchlistSeconds,
       seconds(writeNotBefore),
     );
     return {
@@ -148,10 +247,14 @@ export class ManagedTraktClient extends TraktClient {
       sharedCooldownSeconds: sharedSeconds,
       readCooldownSeconds: readSeconds,
       writeCooldownSeconds: writeSeconds,
+      allWriteCooldownSeconds: allWriteSeconds,
+      scrobbleCooldownSeconds: scrobbleSeconds,
+      historyCooldownSeconds: historySeconds,
+      watchlistCooldownSeconds: watchlistSeconds,
     };
   }
 
-  #observeRateLimit(profileId, headers, method = 'GET') {
+  #observeRateLimit(profileId, headers, method = 'GET', path = '') {
     const observed = parseRateLimitHeader(headers);
     if (!observed) return;
     this.rateLimits.set(profileId, observed);
@@ -159,17 +262,18 @@ export class ManagedTraktClient extends TraktClient {
       this.#armRateCooldown(
         profileId,
         observed.until,
-        laneForRateLimit(observed, method),
+        laneForRateLimit(observed, method, path),
       );
     }
   }
 
   async #pacedWrite(profileId, path, task) {
+    const lane = writeLaneForPath(path);
     const previous = this.writeQueues.get(profileId) || Promise.resolve();
     const run = previous.catch(() => undefined).then(async () => {
       // A long upstream Retry-After must be returned to AIOStreams immediately;
       // holding its HTTP request open would exceed its delivery timeout.
-      this.#throwIfCooling(profileId, path, 'write');
+      this.#throwIfCooling(profileId, path, lane);
 
       const notBefore = Number(this.writeNotBefore.get(profileId) || 0);
       await sleep(Math.max(0, notBefore - Date.now()));
@@ -184,7 +288,7 @@ export class ManagedTraktClient extends TraktClient {
           this.#armRateCooldown(
             profileId,
             err.retryAfter,
-            laneForRateLimit(err.rateLimit, 'POST'),
+            laneForRateLimit(err.rateLimit, 'POST', path),
           );
         }
         throw err;
@@ -202,14 +306,14 @@ export class ManagedTraktClient extends TraktClient {
       this.#throwIfCooling(profileId, path, 'read');
       try {
         const result = await super.requestDetailed(profileId, path, options);
-        this.#observeRateLimit(profileId, result.headers, method);
+        this.#observeRateLimit(profileId, result.headers, method, path);
         return result;
       } catch (err) {
         if (err?.status === 429) {
           this.#armRateCooldown(
             profileId,
             err.retryAfter,
-            laneForRateLimit(err.rateLimit, method),
+            laneForRateLimit(err.rateLimit, method, path),
           );
         }
         throw err;
@@ -219,7 +323,7 @@ export class ManagedTraktClient extends TraktClient {
     if (isWriteMethod(method)) {
       return this.#pacedWrite(profileId, path, async () => {
         const result = await super.requestDetailed(profileId, path, options);
-        this.#observeRateLimit(profileId, result.headers, method);
+        this.#observeRateLimit(profileId, result.headers, method, path);
         return result;
       });
     }
