@@ -20,10 +20,17 @@ test('progress is computed and clamped', () => {
   assert.equal(progressPercent({ positionMs: 0 }), null);
 });
 
-test('AIOStreams unfinished stop preserves stop semantics and lets Trakt classify resume', () => {
-  const plan = planEvent({ event: 'stop', positionMs: 850, durationMs: 1000, played: false });
+test('AIOStreams unfinished stop below Trakt completion threshold uses stop transport', () => {
+  const plan = planEvent({ event: 'stop', positionMs: 350, durationMs: 1000, played: false });
   assert.equal(plan.kind, 'scrobble');
   assert.equal(plan.action, 'stop');
+  assert.equal(plan.progress, 35);
+});
+
+test('AIOStreams played=false in the Trakt 80-89% completion gap remains a pause', () => {
+  const plan = planEvent({ event: 'stop', positionMs: 850, durationMs: 1000, played: false });
+  assert.equal(plan.kind, 'scrobble');
+  assert.equal(plan.action, 'pause');
   assert.equal(plan.progress, 85);
 });
 
