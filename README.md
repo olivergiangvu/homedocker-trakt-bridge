@@ -114,8 +114,8 @@ For sensitive vulnerabilities, follow **[SECURITY.md](SECURITY.md)** instead of 
 
 ## Project status
 
-`v1.1.0` is the current stable release line. It adds restart-safe semantic history dedupe for repeated `played` / `unplayed` marks with different event IDs and for the completed-scrobble → explicit-played overlap tracked in issue #40.
+`v1.1.0` remains the current stable production release. `v1.2.0-rc.1` is the HomeDocker canary for issue #58 and hardens coexistence with native Trakt clients under shared user-level rate pressure.
 
-HomeDocker canary qualification confirmed a duplicate `unplayed` inside the 300-second window was suppressed, a normal `played` produced one Trakt history add, and a real rewatch roughly 34 minutes later remained valid and increased Trakt history by exactly one play. DB schema remains `1`; `v1.0.0` remains the deterministic rollback line.
+The rc.1 candidate adds persistent stale-playback protection, safe 422/429 diagnostics, and separate read/write/shared cooldown lanes while keeping DB schema `1`. Production should stay on the immutable v1.1.0 digest until the rc.1 HomeDocker canary passes with native Trakt still enabled on supported clients.
 
 License: [MIT](LICENSE).
