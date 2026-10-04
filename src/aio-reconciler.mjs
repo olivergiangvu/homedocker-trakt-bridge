@@ -344,7 +344,10 @@ function rememberCompareDecision(db, decision, nowMs = Date.now()) {
   return stats;
 }
 
-export function aioReconcileOperationalSnapshot(db) {
+export function aioReconcileOperationalSnapshot(
+  db,
+  nowMs = Date.now(),
+) {
   const detectPending = pendingMap(db);
   const comparePending = comparePendingMap(db);
   const stats = compareStats(db);
@@ -355,7 +358,7 @@ export function aioReconcileOperationalSnapshot(db) {
     compare: {
       awaiting: compareItems.length,
       retrying: compareItems.filter(
-        (item) => Number(item.nextAttemptAt || 0) > Date.now()
+        (item) => Number(item.nextAttemptAt || 0) > Number(nowMs)
       ).length,
       total: Number(stats.total || 0),
       sameOrNewer: Number(stats.sameOrNewer || 0),
