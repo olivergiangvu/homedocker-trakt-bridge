@@ -2,6 +2,24 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+## [1.3.0-rc.2] - 2026-10-05
+
+### Fixed
+- Adds an opt-in, fail-open AIO false-`unplayed` guard for a reproduced Jellyfin UserData echo where the client reports `Played=false` while the same request leaves a positive resume position.
+- Suppression requires the exact AIO delivery event, the configured HomeDocker sink, a contemporaneous local `played=0` positive resume row, and an equivalent **delivered** HomeDocker playback event.
+- Explicit Mark Unwatched remains untouched because a real clear-history transition leaves no positive resume row; bulk marks are excluded.
+- Guard failures or ambiguous AIO evidence preserve the existing Trakt `/sync/history/remove` path.
+
+### Canary evidence
+- Stable AIOStreams 2.35.9 and exact nightly `2026.10.04.1829-nightly` both reproduced the same false-`unplayed` pattern.
+- Nightly canary item `e|tt14261112:2:6` retained local resume `398930/1740000` while AIO queued `unplayed positionMs=0 played=false`; the preceding HomeDocker stop at `398928ms` had already been delivered.
+- AIO's Jellyfin UserData route processes `Played=false` before `PlaybackPositionTicks`, explaining why the outbound queue can contradict the final local row.
+
+### Safety
+- `AIO_UNPLAYED_ECHO_GUARD=false` remains the public default.
+- AIO SQLite remains read-only and no database migration is added.
+- v1.3 compare-only semantics remain unchanged; RC2 does not add Phase B recovery writes.
+
 ## [1.3.0-rc.1] - 2026-10-05
 
 ### Added
