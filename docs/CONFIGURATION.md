@@ -149,6 +149,29 @@ Compare mode:
 
 There is still **no automatic Trakt recovery write in compare mode**. A later guarded writeback phase must be qualified separately before it can synthesize any playback update.
 
+
+### AIO false-unplayed echo guard (v1.3 RC2)
+
+Some Jellyfin-compatible clients can POST a single UserData update that contains both `Played=false` and a positive `PlaybackPositionTicks`. AIOStreams currently processes the played flag first and can queue an `unplayed` push before the same request stores the positive resume position. This creates a contradictory outbound history-remove even though AIO's final local state remains unfinished playback.
+
+RC2 adds an opt-in Bridge-side guard:
+
+```env
+AIO_UNPLAYED_ECHO_GUARD=true
+```
+
+The guard only suppresses a single-item `unplayed` when all of the following are proven from the read-only AIO SQLite database:
+
+- the exact AIO delivery event ID is present on the configured HomeDocker sink
+- the event is `played=false`, `positionMs=0`, with a valid duration
+- the matching current AIO row is `origin=local`, `played=0`, and still has a positive resume position
+- that final local row was updated within the same tightly bounded UserData transaction window
+- a **delivered** HomeDocker `start`, `pause`, or `stop` already carries the same positive position within the normal coverage lookback/tolerance
+
+If any proof is missing, ambiguous, stale, undelivered, or the AIO database cannot be read, the guard fails open and preserves the existing `/sync/history/remove` behavior. Bulk marks are outside this guard. An explicit Mark Unwatched that leaves the AIO row at position 0 is therefore never suppressed.
+
+The guard is disabled by default for public installs and does not write AIOStreams.
+
 ## Duplicate-history guard
 
 The default semantic history guard is:
