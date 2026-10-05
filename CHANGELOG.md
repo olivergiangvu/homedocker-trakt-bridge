@@ -2,6 +2,25 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+## [1.3.0-rc.3] - 2026-10-05
+
+### Fixed
+- Extends the opt-in AIO false-`unplayed` guard to a second reproduced Jellyfin UserData shape where `Played=false` is followed by `PlaybackPositionTicks=0` in the same request.
+- This zero-position composite can temporarily leave AIO at `played=0, position_ms=0` while also stamping `last_played_at`; RC2 intentionally failed open because it only trusted a contemporaneous positive resume row.
+- RC3 suppresses that zero-position echo only when the exact delivery is matched, the local row is contemporaneous, duration matches, and `last_played_at` was also stamped in the same tight window. A standalone explicit Mark Unwatched does not update `last_played_at` and therefore still fails open to the normal history-remove path.
+- The existing RC2 positive-resume guard remains unchanged and still requires an equivalent delivered HomeDocker playback event.
+
+### HomeDocker evidence
+- Playback echo capture: `unplayed` at 12:52:20.893 left `position_ms=0`, `played=0`, `updated_at=12:52:20.910`, and `last_played_at=12:52:20.910`; positive playback resumed shortly afterward.
+- Controlled explicit Mark Unwatched capture: local state changed to `position_ms=0, played=0` at 12:55:03.120 while `last_played_at` remained at the earlier 12:54:51.678 value.
+- AIOStreams source confirms the distinction: explicit `unplayed` clears played/position without touching `lastPlayedAt`, while a `stop` write always stamps `lastPlayedAt`, including a zero-position stop.
+
+### Safety
+- `AIO_UNPLAYED_ECHO_GUARD=false` remains the public default.
+- The guard still requires the exact HomeDocker sink and exact AIO delivery identity.
+- Ambiguous/missing/stale evidence fails open to the existing Trakt history-remove path.
+- AIO SQLite remains read-only; DB schema and compare-only reconciler semantics remain unchanged.
+
 ## [1.3.0-rc.2] - 2026-10-05
 
 ### Fixed
