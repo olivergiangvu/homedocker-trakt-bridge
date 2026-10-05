@@ -150,7 +150,7 @@ Compare mode:
 There is still **no automatic Trakt recovery write in compare mode**. A later guarded writeback phase must be qualified separately before it can synthesize any playback update.
 
 
-### AIO false-unplayed echo guard (v1.3 RC2)
+### AIO false-unplayed echo guard (v1.3 RC3)
 
 Some Jellyfin-compatible clients can POST a single UserData update that contains both `Played=false` and a positive `PlaybackPositionTicks`. AIOStreams currently processes the played flag first and can queue an `unplayed` push before the same request stores the positive resume position. This creates a contradictory outbound history-remove even though AIO's final local state remains unfinished playback.
 
@@ -160,15 +160,14 @@ RC2 adds an opt-in Bridge-side guard:
 AIO_UNPLAYED_ECHO_GUARD=true
 ```
 
-The guard only suppresses a single-item `unplayed` when all of the following are proven from the read-only AIO SQLite database:
+The guard only suppresses a single-item `unplayed` when the exact AIO delivery is proven to be one of two reproduced composite UserData echoes:
 
-- the exact AIO delivery event ID is present on the configured HomeDocker sink
-- the event is `played=false`, `positionMs=0`, with a valid duration
-- the matching current AIO row is `origin=local`, `played=0`, and still has a positive resume position
-- that final local row was updated within the same tightly bounded UserData transaction window
-- a **delivered** HomeDocker `start`, `pause`, or `stop` already carries the same positive position within the normal coverage lookback/tolerance
+- **Positive-resume echo:** the current AIO row is `origin=local`, `played=0`, still has a positive resume position, was updated in the same tightly bounded transaction window, and an equivalent **delivered** HomeDocker `start`, `pause`, or `stop` already carries that positive position.
+- **Zero-position stop echo (RC3):** the current row is `origin=local`, `played=0`, `position_ms=0`, and both `updated_at` and `last_played_at` were stamped contemporaneously with the exact `unplayed` delivery. AIO's explicit `unplayed` write does not update `last_played_at`; a subsequent stop write does, even at position zero.
 
-If any proof is missing, ambiguous, stale, undelivered, or the AIO database cannot be read, the guard fails open and preserves the existing `/sync/history/remove` behavior. Bulk marks are outside this guard. An explicit Mark Unwatched that leaves the AIO row at position 0 is therefore never suppressed.
+The RC3 discriminator is based on AIO's own local-provider semantics rather than a loose "recent playback" heuristic. A controlled explicit Mark Unwatched left `last_played_at` unchanged and therefore remained outside the guard.
+
+If any proof is missing, ambiguous, or stale, or the AIO database cannot be read, the guard fails open and preserves the existing `/sync/history/remove` behavior. Bulk marks remain outside this guard.
 
 The guard is disabled by default for public installs and does not write AIOStreams.
 

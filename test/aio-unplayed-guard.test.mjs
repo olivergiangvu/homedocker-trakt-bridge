@@ -75,6 +75,7 @@ function putState(db, {
   played = 0,
   origin = 'local',
   updatedAt = 1000150,
+  lastPlayedAt = updatedAt,
 } = {}) {
   db.prepare(`
     INSERT INTO watch_state
@@ -91,7 +92,7 @@ function putState(db, {
     played,
     origin,
     updatedAt,
-    updatedAt,
+    lastPlayedAt,
   );
 }
 
@@ -170,6 +171,7 @@ test('suppresses exact AIO false-unplayed echo backed by matching delivered play
     assert.ok(result);
     assert.equal(result.ignored, 'aio_false_unplayed_echo');
     assert.equal(result.itemKey, 'e|tt14261112:2:6');
+    assert.equal(result.guardVariant, 'positive_resume');
     assert.equal(result.aioPositionMs, 398930);
     assert.equal(result.playbackEvent, 'stop');
     assert.equal(result.playbackPositionMs, 398928);
@@ -181,14 +183,65 @@ test('suppresses exact AIO false-unplayed echo backed by matching delivered play
   }
 });
 
-test('explicit Mark Unwatched state with zero resume position is never suppressed', () => {
+test('suppresses zero-position UserData echo when stop semantics stamp last_played_at', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'aio-unplayed-zero-echo-'));
+  const db = makeDb(join(dir, 'db.sqlite'));
+
+  try {
+    addSink(db);
+    putState(db, {
+      positionMs: 0,
+      updatedAt: 1000019,
+      lastPlayedAt: 1000018,
+    });
+    addUnplayed(db);
+
+    const result = classify(db);
+    assert.ok(result);
+    assert.equal(result.ignored, 'aio_false_unplayed_echo');
+    assert.equal(result.guardVariant, 'userdata_zero_position_stop');
+    assert.equal(result.aioPositionMs, 0);
+    assert.equal(result.stateDeltaMs, 19);
+    assert.equal(result.lastPlayedDeltaMs, 18);
+    assert.equal(result.writesTrakt, false);
+  } finally {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('explicit Mark Unwatched zero state with unchanged last_played_at is never suppressed', () => {
   const dir = mkdtempSync(join(tmpdir(), 'aio-unplayed-explicit-'));
   const db = makeDb(join(dir, 'db.sqlite'));
 
   try {
     addSink(db);
-    putState(db, { positionMs: 0, updatedAt: 1000150 });
+    putState(db, {
+      positionMs: 0,
+      updatedAt: 1000150,
+      lastPlayedAt: 900000,
+    });
     addPlayback(db);
+    addUnplayed(db);
+
+    assert.equal(classify(db), null);
+  } finally {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('zero-position row fails open when last_played_at is stale', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'aio-unplayed-zero-stale-'));
+  const db = makeDb(join(dir, 'db.sqlite'));
+
+  try {
+    addSink(db);
+    putState(db, {
+      positionMs: 0,
+      updatedAt: 1000100,
+      lastPlayedAt: 997000,
+    });
     addUnplayed(db);
 
     assert.equal(classify(db), null);

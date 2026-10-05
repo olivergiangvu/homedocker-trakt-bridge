@@ -90,23 +90,48 @@ function matchingDuration(event, row) {
     && Math.round(eventDuration) === Math.round(rowDuration);
 }
 
-function isContradictingResumeRow(event, row, delivery) {
+function isContemporaneousLocalRow(event, row, delivery) {
   if (!row) return false;
   if (String(row.origin) !== 'local') return false;
   if (Number(row.played) !== 0) return false;
-  if (!(Number(row.position_ms) > 0)) return false;
   if (!matchingDuration(event, row)) return false;
 
   const updatedAt = Number(row.updated_at);
   const deliveryAt = Number(delivery.created_at);
   if (!Number.isFinite(updatedAt) || !Number.isFinite(deliveryAt)) return false;
 
-  // The VidHub/Jellyfin echo is produced inside one UserData request:
-  // AIO first queues Played=false as unplayed, then writes the positive
-  // PlaybackPositionTicks as a stop/resume row. Require that contradiction to
-  // be contemporaneous rather than suppressing a later real Mark Unwatched.
   return updatedAt >= deliveryAt
     && updatedAt - deliveryAt <= STATE_SKEW_MS;
+}
+
+function isContradictingResumeRow(event, row, delivery) {
+  return isContemporaneousLocalRow(event, row, delivery)
+    && Number(row.position_ms) > 0;
+}
+
+function isZeroPositionUserDataEcho(event, row, delivery) {
+  if (!isContemporaneousLocalRow(event, row, delivery)) return false;
+  if (Number(row.position_ms) !== 0) return false;
+
+  const lastPlayedAt = Number(row.last_played_at);
+  const deliveryAt = Number(delivery.created_at);
+  const updatedAt = Number(row.updated_at);
+  if (!Number.isFinite(lastPlayedAt)) return false;
+
+  /*
+   * AIO's explicit `unplayed` record clears played/position but deliberately
+   * does NOT touch last_played_at. The generic Jellyfin UserData route can,
+   * however, process Played=false and then a numeric PlaybackPositionTicks in
+   * the same request. That second stop write always stamps last_played_at,
+   * including when the position is zero.
+   *
+   * Therefore a zero-position row whose updated_at AND last_played_at both
+   * move contemporaneously with the exact unplayed delivery is direct evidence
+   * of the composite UserData echo, not merely "recent playback".
+   */
+  return lastPlayedAt >= deliveryAt
+    && lastPlayedAt - deliveryAt <= STATE_SKEW_MS
+    && Math.abs(updatedAt - lastPlayedAt) <= STATE_SKEW_MS;
 }
 
 export function classifyAioFalseUnplayedEcho(
@@ -159,7 +184,7 @@ export function classifyAioFalseUnplayedEcho(
   const unplayedDelivery = exactDeliveries[0];
 
   const row = currentRow(aio, scope, itemKey);
-  if (!isContradictingResumeRow(event, row, unplayedDelivery)) return null;
+  if (!row) return null;
 
   const resolved = resolveHomeDockerSink(aio, row, {
     sinkName,
@@ -167,9 +192,31 @@ export function classifyAioFalseUnplayedEcho(
   });
   if (resolved.status !== 'ok') return null;
 
-  // Suppress only when the same positive resume position already has a
-  // delivered HomeDocker playback event. If the positive playback never made
-  // it to the bridge, fail open and preserve the existing history-remove path.
+  if (isZeroPositionUserDataEcho(event, row, unplayedDelivery)) {
+    return {
+      action: 'history:guarded',
+      ignored: 'aio_false_unplayed_echo',
+      guardVariant: 'userdata_zero_position_stop',
+      itemKey,
+      eventCreatedAt: Number(unplayedDelivery.created_at),
+      stateUpdatedAt: Number(row.updated_at),
+      stateDeltaMs:
+        Number(row.updated_at) - Number(unplayedDelivery.created_at),
+      stateLastPlayedAt: Number(row.last_played_at),
+      lastPlayedDeltaMs:
+        Number(row.last_played_at) - Number(unplayedDelivery.created_at),
+      aioPositionMs: 0,
+      aioDurationMs: Number(row.duration_ms),
+      sinkInstanceId: resolved.sink.addonInstanceId,
+      writesTrakt: false,
+    };
+  }
+
+  if (!isContradictingResumeRow(event, row, unplayedDelivery)) return null;
+
+  // Positive-resume variant: suppress only when the same position already has
+  // a delivered HomeDocker playback event. If the playback never made it to
+  // the bridge, fail open and preserve the existing history-remove path.
   const playback = findEquivalentAioPlaybackDelivery(
     aio,
     row,
@@ -184,6 +231,7 @@ export function classifyAioFalseUnplayedEcho(
   return {
     action: 'history:guarded',
     ignored: 'aio_false_unplayed_echo',
+    guardVariant: 'positive_resume',
     itemKey,
     eventCreatedAt: Number(unplayedDelivery.created_at),
     stateUpdatedAt: Number(row.updated_at),
