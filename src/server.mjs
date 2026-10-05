@@ -8,6 +8,7 @@ import { buildManifest, planEvent, validatePushEvent } from './watch-state.mjs';
 import { formatEventTime, summarizeRecentEvents } from './diagnostics.mjs';
 import { cachedPullPayload, makePullCacheEntry, stalePullPayload } from './pull-cache.mjs';
 import { coveredByRecentBulk, rememberBulkCoverage } from './bulk-dedupe.mjs';
+import { detectAioFalseUnplayedEcho } from './aio-unplayed-guard.mjs';
 import {
   buildProfileOperationalStatus,
   buildReadiness,
@@ -293,6 +294,19 @@ function pullDetail(payload, extra = {}) {
 
 async function processPush(res, { profileId, body, db, trakt, config }) {
   if (db.isProcessed(profileId, body.id)) return noContent(res);
+
+  const unplayedEcho = detectAioFalseUnplayedEcho(config, body);
+  if (unplayedEcho) {
+    db.markProcessed(profileId, body.id, JSON.stringify(unplayedEcho));
+    db.logEvent({
+      profileId,
+      eventId: body.id,
+      event: body.event,
+      status: 'ignored',
+      detail: JSON.stringify(unplayedEcho),
+    });
+    return noContent(res);
+  }
 
   const coverage = coveredByRecentBulk(db, profileId, body, config.bulkSingleDedupeSeconds);
   if (coverage) {
