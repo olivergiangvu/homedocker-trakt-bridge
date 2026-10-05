@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 export const APP_NAME = 'HomeDocker Trakt Bridge';
-export const APP_VERSION = '1.3.0-rc.1';
+export const APP_VERSION = '1.3.0-rc.2';
 
 function requireEnv(name) {
   const value = process.env[name]?.trim();
@@ -33,6 +33,15 @@ function enumEnv(name, fallback, allowed) {
     throw new Error(`${name} must be one of: ${allowed.join(', ')}`);
   }
   return value;
+}
+
+function boolEnv(name, fallback = false) {
+  const raw = process.env[name];
+  if (raw == null || raw.trim() === '') return fallback;
+  const value = raw.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(value)) return true;
+  if (['0', 'false', 'no', 'off'].includes(value)) return false;
+  throw new Error(`${name} must be a boolean`);
 }
 
 export function loadConfig() {
@@ -70,6 +79,7 @@ export function loadConfig() {
     pullIdentityMode: enumEnv('PULL_IDENTITY_MODE', 'trakt', ['trakt', 'aiostreams']),
     aioReconcilerMode: enumEnv('AIO_RECONCILER_MODE', 'off', ['off', 'detect', 'compare']),
     aioDbPath: (process.env.AIO_DB_PATH || '/aio-data/db.sqlite').trim(),
+    aioUnplayedEchoGuard: boolEnv('AIO_UNPLAYED_ECHO_GUARD', false),
     aioReconcileIntervalSeconds: intEnv('AIO_RECONCILE_INTERVAL_SECONDS', 15, 5, 3600),
     aioReconcileGraceSeconds: intEnv('AIO_RECONCILE_GRACE_SECONDS', 30, 5, 3600),
     aioReconcileQuietSeconds: intEnv('AIO_RECONCILE_QUIET_SECONDS', 300, 60, 7200),
