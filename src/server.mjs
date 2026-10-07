@@ -9,6 +9,7 @@ import { formatEventTime, summarizeRecentEvents } from './diagnostics.mjs';
 import { cachedPullPayload, makePullCacheEntry, stalePullPayload } from './pull-cache.mjs';
 import { coveredByRecentBulk, rememberBulkCoverage } from './bulk-dedupe.mjs';
 import { detectAioFalseUnplayedEcho } from './aio-unplayed-guard.mjs';
+import { detectAioHistoryEcho } from './aio-history-guard.mjs';
 import {
   buildProfileOperationalStatus,
   buildReadiness,
@@ -295,7 +296,14 @@ function pullDetail(payload, extra = {}) {
 async function processPush(res, { profileId, body, db, trakt, config }) {
   if (db.isProcessed(profileId, body.id)) return noContent(res);
 
-  const unplayedEcho = detectAioFalseUnplayedEcho(config, body);
+  const historyEcho = detectAioHistoryEcho(
+    config,
+    db,
+    profileId,
+    body,
+  );
+  const unplayedEcho = historyEcho
+    || detectAioFalseUnplayedEcho(config, body);
   if (unplayedEcho) {
     db.markProcessed(profileId, body.id, JSON.stringify(unplayedEcho));
     db.logEvent({
