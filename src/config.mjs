@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 export const APP_NAME = 'HomeDocker Trakt Bridge';
-export const APP_VERSION = '1.3.0-rc.3';
+export const APP_VERSION = '1.3.0-rc.4';
 
 function requireEnv(name) {
   const value = process.env[name]?.trim();
@@ -80,6 +80,13 @@ export function loadConfig() {
     aioReconcilerMode: enumEnv('AIO_RECONCILER_MODE', 'off', ['off', 'detect', 'compare']),
     aioDbPath: (process.env.AIO_DB_PATH || '/aio-data/db.sqlite').trim(),
     aioUnplayedEchoGuard: boolEnv('AIO_UNPLAYED_ECHO_GUARD', false),
+    aioHistoryEchoGuard: boolEnv('AIO_HISTORY_ECHO_GUARD', false),
+    aioHistoryEvidenceIntervalMs: intEnv('AIO_HISTORY_EVIDENCE_INTERVAL_MS', 1000, 250, 5000),
+    aioHistoryEvidenceLookbackSeconds: intEnv('AIO_HISTORY_EVIDENCE_LOOKBACK_SECONDS', 120, 10, 3600),
+    aioHistoryEvidenceMaxRows: intEnv('AIO_HISTORY_EVIDENCE_MAX_ROWS', 500, 10, 5000),
+    aioHistoryCohortWindowMs: intEnv('AIO_HISTORY_COHORT_WINDOW_MS', 5000, 500, 30000),
+    aioHistoryCohortMinItems: intEnv('AIO_HISTORY_COHORT_MIN_ITEMS', 3, 2, 100),
+    canonicalHistoryMaxAgeSeconds: intEnv('CANONICAL_HISTORY_MAX_AGE_SECONDS', 900, 60, 86400),
     aioReconcileIntervalSeconds: intEnv('AIO_RECONCILE_INTERVAL_SECONDS', 15, 5, 3600),
     aioReconcileGraceSeconds: intEnv('AIO_RECONCILE_GRACE_SECONDS', 30, 5, 3600),
     aioReconcileQuietSeconds: intEnv('AIO_RECONCILE_QUIET_SECONDS', 300, 60, 7200),
