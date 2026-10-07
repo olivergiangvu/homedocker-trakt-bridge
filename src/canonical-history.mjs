@@ -99,6 +99,36 @@ export function rememberCanonicalWatchedSnapshot(
   return snapshot;
 }
 
+export function verifyCanonicalWatchedSnapshot(
+  db,
+  profileId,
+  version,
+  {
+    nowMs = Date.now(),
+  } = {},
+) {
+  if (!db?.cacheGet || !db?.cacheSet) return null;
+  if (!version) return null;
+
+  const key = snapshotKey(profileId);
+  const snapshot = db.cacheGet(key);
+  if (!snapshot || typeof snapshot !== 'object') return null;
+  if (String(snapshot.version || '') !== String(version)) return null;
+
+  const next = {
+    ...snapshot,
+    capturedAt: Number(nowMs),
+    lastVerifiedAt: Number(nowMs),
+  };
+
+  db.cacheSet(key, next, CACHE_TTL_SECONDS);
+  return {
+    version: String(version),
+    capturedAt: next.capturedAt,
+    items: Object.keys(next.items || {}).length,
+  };
+}
+
 export function canonicalHistoryState(
   db,
   profileId,

@@ -6,6 +6,7 @@ import {
   mutateCanonicalBulkHistoryState,
   mutateCanonicalHistoryState,
   rememberCanonicalWatchedSnapshot,
+  verifyCanonicalWatchedSnapshot,
 } from '../src/canonical-history.mjs';
 
 class MemoryDb {
@@ -220,4 +221,46 @@ test('canonical lookup matches a watched IMDb snapshot from an alternate AIO vid
   assert.equal(state.known, true);
   assert.equal(state.watched, true);
   assert.equal(state.itemKey, 'e|tt1000000:1:2');
+});
+
+
+test('verified unchanged canonical version refreshes age without changing membership', () => {
+  const db = new MemoryDb();
+  rememberCanonicalWatchedSnapshot(db, 'p1', {
+    movies: ['tt2000000'],
+    episodes: ['tt1000000:1:2'],
+  }, { version: 'v1', nowMs: 1000 });
+
+  const verified = verifyCanonicalWatchedSnapshot(
+    db, 'p1', 'v1', { nowMs: 900000 },
+  );
+  assert.ok(verified);
+  assert.equal(verified.version, 'v1');
+  assert.equal(verified.capturedAt, 900000);
+
+  const state = canonicalHistoryState(
+    db, 'p1', episodeEvent(),
+    { nowMs: 900500, maxAgeSeconds: 900 },
+  );
+  assert.equal(state.known, true);
+  assert.equal(state.watched, true);
+});
+
+test('different canonical version never refreshes a stale snapshot', () => {
+  const db = new MemoryDb();
+  rememberCanonicalWatchedSnapshot(db, 'p1', {
+    movies: [], episodes: ['tt1000000:1:2'],
+  }, { version: 'v1', nowMs: 1000 });
+
+  const verified = verifyCanonicalWatchedSnapshot(
+    db, 'p1', 'v2', { nowMs: 900000 },
+  );
+  assert.equal(verified, null);
+
+  const state = canonicalHistoryState(
+    db, 'p1', episodeEvent(),
+    { nowMs: 900000, maxAgeSeconds: 300 },
+  );
+  assert.equal(state.known, false);
+  assert.equal(state.reason, 'snapshot_stale');
 });

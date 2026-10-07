@@ -29,6 +29,7 @@ import {
 } from './pull-state.mjs';
 import {
   rememberCanonicalWatchedSnapshot,
+  verifyCanonicalWatchedSnapshot,
   mutateCanonicalHistoryState,
   mutateCanonicalBulkHistoryState,
 } from './canonical-history.mjs';
@@ -364,7 +365,14 @@ export class TraktClient {
       ),
     };
 
-    if (!includeChangedStateForSince(since, version)) return payload;
+    if (!includeChangedStateForSince(since, version)) {
+      verifyCanonicalWatchedSnapshot(
+        this.db,
+        profileId,
+        version,
+      );
+      return payload;
+    }
 
     try {
       const [movieWatched, showWatched, movieWatchlist, showWatchlist] = await Promise.all([
