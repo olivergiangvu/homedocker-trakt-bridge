@@ -161,9 +161,17 @@ export function captureAioHistoryEvidenceOnce({
       if (!eventId) continue;
 
       const current = loadAioHistoryEvidence(db, eventId);
-      if (current?.state) continue;
-
       const state = stateForDelivery(aio, sink, delivery);
+      if (
+        current?.state
+        && (
+          !state
+          || Number(current.state.updatedAt || 0)
+            >= Number(state.updatedAt || 0)
+        )
+      ) {
+        continue;
+      }
       const evidence = {
         eventId,
         event: String(delivery.event),
