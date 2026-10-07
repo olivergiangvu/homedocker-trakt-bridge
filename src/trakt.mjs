@@ -27,6 +27,11 @@ import {
   includeChangedStateForSince,
   stateVersionFromActivities,
 } from './pull-state.mjs';
+import {
+  rememberCanonicalWatchedSnapshot,
+  mutateCanonicalHistoryState,
+  mutateCanonicalBulkHistoryState,
+} from './canonical-history.mjs';
 
 const AUTH_BASE = 'https://auth.trakt.tv';
 const API_BASE = 'https://api.trakt.tv';
@@ -372,6 +377,12 @@ export class TraktClient {
         movieWatched,
         rowsForPullIdentity(showWatched, aliases, pullIdentityMode),
       );
+      rememberCanonicalWatchedSnapshot(
+        this.db,
+        profileId,
+        payload.watched,
+        { version },
+      );
       payload.watchlist = buildWatchlistState(
         movieWatchlist,
         rowsForPullIdentity(showWatchlist, aliases, pullIdentityMode),
@@ -530,6 +541,12 @@ export class TraktClient {
     const { body } = directBulkHistoryPayload(event, add);
     const path = add ? '/sync/history' : '/sync/history/remove';
     await this.request(profileId, path, { method: 'POST', body });
+    mutateCanonicalBulkHistoryState(
+      this.db,
+      profileId,
+      event,
+      add,
+    );
     return {
       action: add ? 'history:bulk-add' : 'history:bulk-remove',
       scope: event.scope,
@@ -589,6 +606,12 @@ export class TraktClient {
             ttlSeconds: this.config.historyDedupeSeconds,
           });
         }
+        mutateCanonicalHistoryState(
+          this.db,
+          profileId,
+          event,
+          true,
+        );
       }
 
       let identityAlias = null;
@@ -684,6 +707,12 @@ export class TraktClient {
         source: 'history',
         ttlSeconds: this.config.historyDedupeSeconds,
       });
+      mutateCanonicalHistoryState(
+        this.db,
+        profileId,
+        event,
+        true,
+      );
       return {
         action: 'history:add',
         transport: 'direct-provider-ids',
@@ -699,6 +728,12 @@ export class TraktClient {
       source: 'history-remove',
       ttlSeconds: this.config.historyDedupeSeconds,
     });
+    mutateCanonicalHistoryState(
+      this.db,
+      profileId,
+      event,
+      false,
+    );
     return {
       action: 'history:remove',
       transport: 'direct-provider-ids',
