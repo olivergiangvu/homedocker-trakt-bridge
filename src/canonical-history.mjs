@@ -162,8 +162,8 @@ export function mutateCanonicalHistoryState(
 
   const next = {
     ...existing,
-    capturedAt: Number(nowMs),
     items,
+    lastLocalMutationAt: Number(nowMs),
   };
 
   db.cacheSet(
@@ -175,7 +175,7 @@ export function mutateCanonicalHistoryState(
   return {
     itemKey,
     watched: Boolean(watched),
-    capturedAt: next.capturedAt,
+    capturedAt: Number(next.capturedAt || 0),
   };
 }
 
@@ -227,8 +227,8 @@ export function mutateCanonicalBulkHistoryState(
     snapshotKey(profileId),
     {
       ...existing,
-      capturedAt: Number(nowMs),
       items,
+      lastLocalMutationAt: Number(nowMs),
     },
     CACHE_TTL_SECONDS,
   );
