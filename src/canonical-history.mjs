@@ -58,6 +58,7 @@ export function rememberCanonicalWatchedSnapshot(
     nowMs = Date.now(),
   } = {},
 ) {
+  if (!db?.cacheSet) return null;
   if (!watched || typeof watched !== 'object') return null;
 
   const snapshot = {
@@ -90,6 +91,15 @@ export function canonicalHistoryState(
       watched: null,
       reason: 'item_key_unavailable',
       itemKey: null,
+    };
+  }
+
+  if (!db?.cacheGet) {
+    return {
+      known: false,
+      watched: null,
+      reason: 'cache_unavailable',
+      itemKey,
     };
   }
 
@@ -147,6 +157,7 @@ export function mutateCanonicalHistoryState(
 ) {
   const itemKey = eventItemKey(event);
   if (!itemKey) return null;
+  if (!db?.cacheGet || !db?.cacheSet) return null;
 
   const existing = db.cacheGet(snapshotKey(profileId));
   if (!existing || typeof existing !== 'object') return null;
@@ -189,6 +200,7 @@ export function mutateCanonicalBulkHistoryState(
   } = {},
 ) {
   if (!Array.isArray(event?.videos) || !event.videos.length) return 0;
+  if (!db?.cacheGet || !db?.cacheSet) return 0;
 
   const existing = db.cacheGet(snapshotKey(profileId));
   if (!existing || typeof existing !== 'object') return 0;
