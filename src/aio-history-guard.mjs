@@ -158,7 +158,7 @@ function cohortForEvent(config, event) {
     if (!sink) return null;
 
     const windowMs = Number(
-      config.aioHistoryCohortWindowMs || 5000,
+      config.aioHistoryCohortWindowMs || 10000,
     );
 
     const rows = aio.prepare(`
@@ -199,6 +199,7 @@ function cohortForEvent(config, event) {
     }
 
     return {
+      action: 'history:guarded',
       ignored: 'aio_history_sync_fanout',
       guardVariant: 'single_mark_cohort',
       event: String(event.event),
@@ -256,6 +257,7 @@ export function detectAioHistoryEcho(
     )
   ) {
     return {
+      action: 'history:guarded',
       ignored: 'canonical_history_same_state',
       guardVariant:
         event.event === 'played'
