@@ -161,6 +161,13 @@ export function captureAioHistoryEvidenceOnce({
       if (!eventId) continue;
 
       const current = loadAioHistoryEvidence(db, eventId);
+      if (
+        current?.state
+        && Number(nowMs) > Number(delivery.created_at) + STATE_SKEW_MS
+      ) {
+        continue;
+      }
+
       const state = stateForDelivery(aio, sink, delivery);
       if (
         current?.state
