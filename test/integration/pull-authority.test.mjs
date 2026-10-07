@@ -172,6 +172,10 @@ test('Bridge pull: trakt mode preserves Trakt IMDb across playback, watched, nex
     3600,
   );
 
+  // Bypass the Bridge pull cache so this request performs a fresh authoritative
+  // /sync/last_activities verification with the same version.
+  runtime.config.pullCacheTtlSeconds = 0;
+
   const unchanged = await fetch(`${runtime.pullUrl}?since=${encodeURIComponent(payload.version)}`);
   assert.equal(unchanged.status, 200);
   const unchangedPayload = await unchanged.json();
