@@ -179,3 +179,45 @@ test('bulk canonical mutation updates only the listed episodes', () => {
     true,
   );
 });
+
+
+test('canonical lookup matches a watched IMDb snapshot from an alternate AIO video id', () => {
+  const db = new MemoryDb();
+
+  rememberCanonicalWatchedSnapshot(
+    db,
+    'p1',
+    {
+      movies: [],
+      episodes: ['tt1000000:1:2'],
+    },
+    {
+      version: 'v1',
+      nowMs: 1_000_000,
+    },
+  );
+
+  const state = canonicalHistoryState(
+    db,
+    'p1',
+    {
+      scope: 'episode',
+      metaId: 'tmdb:12345',
+      videoId: 'tmdb:12345:1:2',
+      season: 1,
+      episode: 2,
+      ids: {
+        imdb: 'tt1000000',
+        tmdb: '12345',
+      },
+    },
+    {
+      nowMs: 1_100_000,
+      maxAgeSeconds: 900,
+    },
+  );
+
+  assert.equal(state.known, true);
+  assert.equal(state.watched, true);
+  assert.equal(state.itemKey, 'e|tt1000000:1:2');
+});
