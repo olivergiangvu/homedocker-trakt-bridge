@@ -84,7 +84,7 @@ export function loadConfig() {
     aioHistoryEvidenceIntervalMs: intEnv('AIO_HISTORY_EVIDENCE_INTERVAL_MS', 1000, 250, 5000),
     aioHistoryEvidenceLookbackSeconds: intEnv('AIO_HISTORY_EVIDENCE_LOOKBACK_SECONDS', 120, 10, 3600),
     aioHistoryEvidenceMaxRows: intEnv('AIO_HISTORY_EVIDENCE_MAX_ROWS', 500, 10, 5000),
-    aioHistoryCohortWindowMs: intEnv('AIO_HISTORY_COHORT_WINDOW_MS', 5000, 500, 30000),
+    aioHistoryCohortWindowMs: intEnv('AIO_HISTORY_COHORT_WINDOW_MS', 10000, 500, 30000),
     aioHistoryCohortMinItems: intEnv('AIO_HISTORY_COHORT_MIN_ITEMS', 3, 2, 100),
     canonicalHistoryMaxAgeSeconds: intEnv('CANONICAL_HISTORY_MAX_AGE_SECONDS', 900, 60, 86400),
     aioReconcileIntervalSeconds: intEnv('AIO_RECONCILE_INTERVAL_SECONDS', 15, 5, 3600),
