@@ -171,6 +171,44 @@ If any proof is missing, ambiguous, or stale, or the AIO database cannot be read
 
 The guard is disabled by default for public installs and does not write AIOStreams.
 
+### AIO history-lineage guard (v1.3 RC4)
+
+RC4 adds a broader opt-in guard that covers both false history removal and false history addition:
+
+```env
+AIO_HISTORY_ECHO_GUARD=true
+```
+
+This guard keeps isolated manual history marks available and does not disable `played/unplayed` support. It combines three pieces of evidence:
+
+- a fresh authoritative Trakt watched snapshot captured when Bridge serves watched state to AIO;
+- a fast event-time journal of the exact AIO `watch_deliveries` row plus the contemporaneous read-only `watch_state` row;
+- cohort detection for rapid single-mark fanout.
+
+Default tuning:
+
+```env
+AIO_HISTORY_EVIDENCE_INTERVAL_MS=1000
+AIO_HISTORY_EVIDENCE_LOOKBACK_SECONDS=120
+AIO_HISTORY_EVIDENCE_MAX_ROWS=500
+AIO_HISTORY_COHORT_WINDOW_MS=10000
+AIO_HISTORY_COHORT_MIN_ITEMS=3
+CANONICAL_HISTORY_MAX_AGE_SECONDS=900
+```
+
+The decision rules are intentionally asymmetric:
+
+- a single `played` is suppressed when a fresh canonical Trakt snapshot already says the item is watched, because sending it to `/sync/history` would create a fresh `watched_at` and can reorder old history;
+- a single `played` on an item the fresh snapshot says is unwatched is allowed as a genuine Mark Watched;
+- a single `unplayed` on a canonically watched item remains allowed unless deterministic event-time evidence proves one of the reproduced composite echoes or it belongs to a sync-fanout cohort;
+- a single `unplayed` on an already-unwatched item is suppressed as redundant;
+- at least 3 distinct single items carrying the same mark kind inside the 10-second cohort window are treated as state-sync fanout;
+- AIO native bulk season/show marks are excluded from the cohort guard and retain their existing behavior.
+
+The 10-second default is based on the HomeDocker 48-hour soak, where one confirmed three-item `played` fanout spanned about 5.7 seconds. The larger observed cohorts contained 14 and 9 items, including non-sequential episodes.
+
+RC4 keeps `AIO_UNPLAYED_ECHO_GUARD=true` as the RC3 fallback when the event-time journal did not capture sufficient immutable evidence. Both guards keep the AIO database read-only and require no Bridge schema migration.
+
 ## Duplicate-history guard
 
 The default semantic history guard is:

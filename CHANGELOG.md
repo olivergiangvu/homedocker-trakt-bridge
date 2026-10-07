@@ -2,6 +2,29 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+## [1.3.0-rc.4] - 2026-10-07
+
+### Fixed
+- Adds an opt-in history-lineage guard for AIOStreams single-item `played/unplayed` echoes without disabling manual Mark Watched/Unwatched or native season/show bulk marks.
+- Persists the latest authoritative Trakt watched snapshot returned to AIO and suppresses a later same-state `played` echo instead of creating a new `/sync/history` play stamped with the echo time. This prevents old history from being "rejuvenated" and jumping above genuinely recent viewing.
+- Adds a fast read-only AIO event-time evidence journal. It snapshots the exact delivery's contemporaneous local state before later client writes can overwrite it, allowing RC4 to suppress positive-resume and zero-position composite false-`unplayed` cases without requiring the RC2 delivered-playback proof.
+- Adds symmetric single-mark fanout protection: at least 3 distinct single `played` or `unplayed` items created inside a 10-second cohort are treated as sync/state fanout and ignored. AIO native bulk events remain outside this rule.
+- Keeps the RC3 current-state guard as a conservative fallback when immutable evidence was not captured.
+
+### HomeDocker evidence
+- Corrected 48-hour soak produced 38 successful `history:add` writes.
+- Four `played` cohorts of 3, 3, 14 and 9 items account for 29/38 successful adds (76%). One observed three-item cohort spans about 5.7 seconds, which is why RC4 uses a 10-second cohort window.
+- The 14-item cohort mixes shows and non-sequential episodes; the 9-item cohort replays non-sequential episodes of an older show. This is incompatible with ordinary one-by-one user marking and matches state-sync fanout.
+- AIOStreams 2.35.9 stamps single mark handoff events with the current event time, while Bridge maps that value directly to Trakt `watched_at`; a stale `played` echo can therefore create a fresh Trakt history play even when the boolean watched state was already correct.
+
+### Compatibility and safety
+- New behavior is disabled by default behind `AIO_HISTORY_ECHO_GUARD=false`.
+- `AIO_UNPLAYED_ECHO_GUARD` remains available as the RC3 fallback.
+- Isolated Mark Watched on a canonically unwatched item remains allowed.
+- Isolated Mark Unwatched on a canonically watched item remains allowed unless deterministic event-time evidence proves the reproduced composite echo.
+- Genuine rewatches remain valid through `start/pause/stop` scrobble completion; the later redundant `played` mark is suppressed.
+- AIO SQLite stays read-only, DB schema remains 1, and no recovery writeback is introduced.
+
 ## [1.3.0-rc.3] - 2026-10-05
 
 ### Fixed
