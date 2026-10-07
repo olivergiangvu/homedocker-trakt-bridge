@@ -1,0 +1,239 @@
+const SNAPSHOT_PREFIX = 'canonical-history:v1:';
+const CACHE_TTL_SECONDS = 30 * 24 * 3600;
+
+function snapshotKey(profileId) {
+  return `${SNAPSHOT_PREFIX}${profileId}`;
+}
+
+function eventItemKey(event = {}) {
+  const scope = String(event?.scope || '').toLowerCase();
+
+  if (scope === 'episode') {
+    const videoId = String(event?.videoId || '').trim();
+    if (videoId) return `e|${videoId}`;
+
+    const metaId = String(event?.metaId || '').trim();
+    const season = Number(event?.season);
+    const episode = Number(event?.episode);
+    if (
+      metaId
+      && Number.isInteger(season)
+      && Number.isInteger(episode)
+    ) {
+      return `e|${metaId}:${season}:${episode}`;
+    }
+    return null;
+  }
+
+  if (scope === 'movie') {
+    const metaId = String(event?.metaId || event?.videoId || '').trim();
+    return metaId ? `m|${metaId}` : null;
+  }
+
+  return null;
+}
+
+function watchedItems(watched = {}) {
+  const out = {};
+
+  for (const movie of watched?.movies || []) {
+    const id = String(movie || '').trim();
+    if (id) out[`m|${id}`] = 1;
+  }
+
+  for (const episode of watched?.episodes || []) {
+    const id = String(episode || '').trim();
+    if (id) out[`e|${id}`] = 1;
+  }
+
+  return out;
+}
+
+export function rememberCanonicalWatchedSnapshot(
+  db,
+  profileId,
+  watched,
+  {
+    version = null,
+    nowMs = Date.now(),
+  } = {},
+) {
+  if (!watched || typeof watched !== 'object') return null;
+
+  const snapshot = {
+    capturedAt: Number(nowMs),
+    version: version || null,
+    items: watchedItems(watched),
+  };
+
+  db.cacheSet(
+    snapshotKey(profileId),
+    snapshot,
+    CACHE_TTL_SECONDS,
+  );
+  return snapshot;
+}
+
+export function canonicalHistoryState(
+  db,
+  profileId,
+  event,
+  {
+    maxAgeSeconds = 900,
+    nowMs = Date.now(),
+  } = {},
+) {
+  const itemKey = eventItemKey(event);
+  if (!itemKey) {
+    return {
+      known: false,
+      watched: null,
+      reason: 'item_key_unavailable',
+      itemKey: null,
+    };
+  }
+
+  const snapshot = db.cacheGet(snapshotKey(profileId));
+  if (!snapshot || typeof snapshot !== 'object') {
+    return {
+      known: false,
+      watched: null,
+      reason: 'snapshot_missing',
+      itemKey,
+    };
+  }
+
+  const capturedAt = Number(snapshot.capturedAt || 0);
+  const ageSeconds = Math.max(
+    0,
+    (Number(nowMs) - capturedAt) / 1000,
+  );
+
+  if (
+    !Number.isFinite(capturedAt)
+    || capturedAt <= 0
+    || ageSeconds > Number(maxAgeSeconds)
+  ) {
+    return {
+      known: false,
+      watched: null,
+      reason: 'snapshot_stale',
+      itemKey,
+      capturedAt,
+      ageSeconds,
+      version: snapshot.version || null,
+    };
+  }
+
+  return {
+    known: true,
+    watched: Boolean(snapshot?.items?.[itemKey]),
+    reason: 'authoritative_snapshot',
+    itemKey,
+    capturedAt,
+    ageSeconds,
+    version: snapshot.version || null,
+  };
+}
+
+export function mutateCanonicalHistoryState(
+  db,
+  profileId,
+  event,
+  watched,
+  {
+    nowMs = Date.now(),
+  } = {},
+) {
+  const itemKey = eventItemKey(event);
+  if (!itemKey) return null;
+
+  const existing = db.cacheGet(snapshotKey(profileId));
+  if (!existing || typeof existing !== 'object') return null;
+
+  const items = {
+    ...(existing.items && typeof existing.items === 'object'
+      ? existing.items
+      : {}),
+  };
+
+  if (watched) items[itemKey] = 1;
+  else delete items[itemKey];
+
+  const next = {
+    ...existing,
+    capturedAt: Number(nowMs),
+    items,
+  };
+
+  db.cacheSet(
+    snapshotKey(profileId),
+    next,
+    CACHE_TTL_SECONDS,
+  );
+
+  return {
+    itemKey,
+    watched: Boolean(watched),
+    capturedAt: next.capturedAt,
+  };
+}
+
+export function mutateCanonicalBulkHistoryState(
+  db,
+  profileId,
+  event,
+  watched,
+  {
+    nowMs = Date.now(),
+  } = {},
+) {
+  if (!Array.isArray(event?.videos) || !event.videos.length) return 0;
+
+  const existing = db.cacheGet(snapshotKey(profileId));
+  if (!existing || typeof existing !== 'object') return 0;
+
+  const items = {
+    ...(existing.items && typeof existing.items === 'object'
+      ? existing.items
+      : {}),
+  };
+  const metaId = String(event?.metaId || '').trim();
+  let changed = 0;
+
+  for (const video of event.videos) {
+    const videoId = String(video?.videoId || '').trim();
+    const season = Number(video?.season);
+    const episode = Number(video?.episode);
+    const id = videoId
+      || (
+        metaId
+        && Number.isInteger(season)
+        && Number.isInteger(episode)
+          ? `${metaId}:${season}:${episode}`
+          : ''
+      );
+    if (!id) continue;
+
+    const itemKey = `e|${id}`;
+    if (watched) items[itemKey] = 1;
+    else delete items[itemKey];
+    changed += 1;
+  }
+
+  if (!changed) return 0;
+
+  db.cacheSet(
+    snapshotKey(profileId),
+    {
+      ...existing,
+      capturedAt: Number(nowMs),
+      items,
+    },
+    CACHE_TTL_SECONDS,
+  );
+
+  return changed;
+}
+
+export const canonicalHistoryItemKey = eventItemKey;
