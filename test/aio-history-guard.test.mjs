@@ -99,7 +99,7 @@ function config(path) {
     aioReconcileSinkInstanceId: 'e3fe3b0',
     aioHistoryEvidenceLookbackSeconds: 120,
     aioHistoryEvidenceMaxRows: 500,
-    aioHistoryCohortWindowMs: 5000,
+    aioHistoryCohortWindowMs: 10000,
     aioHistoryCohortMinItems: 3,
     canonicalHistoryMaxAgeSeconds: 900,
     aioUnplayedEchoGuard: false,
@@ -343,6 +343,46 @@ test('RC4 preserves a genuine single Mark Watched transition', () => {
     );
 
     assert.equal(result, null);
+  } finally {
+    try { aio.close(); } catch {}
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
+test('RC4 cohort window covers the observed 5.7-second three-item fanout', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rc4-cohort-observed-'));
+  const path = join(dir, 'aio.sqlite');
+  const aio = makeAio(path);
+  const bridge = new MemoryDb();
+
+  try {
+    const offsets = [0, 2000, 5700];
+    const events = offsets.map((offset, index) => event({
+      kind: 'played',
+      videoId: `tt1000000:1:${index + 1}`,
+      atMs: 6_000_000 + offset,
+      played: true,
+    }));
+
+    events.forEach((e, index) => addDelivery(
+      aio,
+      e,
+      6_000_010 + offsets[index],
+    ));
+    aio.close();
+
+    const result = detectAioHistoryEcho(
+      config(path),
+      bridge,
+      'p1',
+      events[0],
+    );
+
+    assert.ok(result);
+    assert.equal(result.ignored, 'aio_history_sync_fanout');
+    assert.equal(result.cohortItems, 3);
+    assert.equal(result.cohortWindowMs, 10000);
   } finally {
     try { aio.close(); } catch {}
     rmSync(dir, { recursive: true, force: true });
