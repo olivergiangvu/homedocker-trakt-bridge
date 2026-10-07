@@ -5,32 +5,56 @@ function snapshotKey(profileId) {
   return `${SNAPSHOT_PREFIX}${profileId}`;
 }
 
-function eventItemKey(event = {}) {
+function eventMetaCandidates(event = {}) {
+  const values = [];
+  const add = (value) => {
+    const v = String(value || '').trim();
+    if (v && !values.includes(v)) values.push(v);
+  };
+
+  add(event?.metaId);
+  if (event?.scope === 'movie') add(event?.videoId);
+
+  const ids = event?.ids || {};
+  if (ids.imdb) add(String(ids.imdb).toLowerCase());
+  if (ids.tmdb != null && String(ids.tmdb).trim()) add(`tmdb:${String(ids.tmdb).trim()}`);
+  if (ids.tvdb != null && String(ids.tvdb).trim()) add(`tvdb:${String(ids.tvdb).trim()}`);
+
+  return values;
+}
+
+function eventItemKeys(event = {}) {
   const scope = String(event?.scope || '').toLowerCase();
 
   if (scope === 'episode') {
-    const videoId = String(event?.videoId || '').trim();
-    if (videoId) return `e|${videoId}`;
+    const out = [];
+    const add = (value) => {
+      const v = String(value || '').trim();
+      if (v && !out.includes(v)) out.push(v);
+    };
 
-    const metaId = String(event?.metaId || '').trim();
+    const videoId = String(event?.videoId || '').trim();
+    if (videoId) add(`e|${videoId}`);
+
     const season = Number(event?.season);
     const episode = Number(event?.episode);
-    if (
-      metaId
-      && Number.isInteger(season)
-      && Number.isInteger(episode)
-    ) {
-      return `e|${metaId}:${season}:${episode}`;
+    if (Number.isInteger(season) && Number.isInteger(episode)) {
+      for (const metaId of eventMetaCandidates(event)) {
+        add(`e|${metaId}:${season}:${episode}`);
+      }
     }
-    return null;
+    return out;
   }
 
   if (scope === 'movie') {
-    const metaId = String(event?.metaId || event?.videoId || '').trim();
-    return metaId ? `m|${metaId}` : null;
+    return eventMetaCandidates(event).map((id) => `m|${id}`);
   }
 
-  return null;
+  return [];
+}
+
+function eventItemKey(event = {}) {
+  return eventItemKeys(event)[0] || null;
 }
 
 function watchedItems(watched = {}) {
@@ -135,11 +159,15 @@ export function canonicalHistoryState(
     };
   }
 
+  const candidates = eventItemKeys(event);
+  const matchedItemKey = candidates.find((key) => snapshot?.items?.[key]);
+
   return {
     known: true,
-    watched: Boolean(snapshot?.items?.[itemKey]),
+    watched: Boolean(matchedItemKey),
     reason: 'authoritative_snapshot',
-    itemKey,
+    itemKey: matchedItemKey || itemKey,
+    candidates,
     capturedAt,
     ageSeconds,
     version: snapshot.version || null,
@@ -155,7 +183,8 @@ export function mutateCanonicalHistoryState(
     nowMs = Date.now(),
   } = {},
 ) {
-  const itemKey = eventItemKey(event);
+  const itemKeys = eventItemKeys(event);
+  const itemKey = itemKeys[0] || null;
   if (!itemKey) return null;
   if (!db?.cacheGet || !db?.cacheSet) return null;
 
@@ -168,8 +197,10 @@ export function mutateCanonicalHistoryState(
       : {}),
   };
 
-  if (watched) items[itemKey] = 1;
-  else delete items[itemKey];
+  for (const key of itemKeys) {
+    if (watched) items[key] = 1;
+    else delete items[key];
+  }
 
   const next = {
     ...existing,
@@ -249,3 +280,4 @@ export function mutateCanonicalBulkHistoryState(
 }
 
 export const canonicalHistoryItemKey = eventItemKey;
+export const canonicalHistoryItemKeys = eventItemKeys;
