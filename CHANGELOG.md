@@ -2,6 +2,19 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+## [1.3.0-rc.5] - 2026-10-07
+
+### Fixed
+- Refreshes the RC4 canonical watched snapshot freshness after a successful unchanged-version Trakt pull.
+- When AIO polls with `since=<current version>`, Bridge already verifies authoritative `/sync/last_activities`. RC5 now refreshes only the persisted snapshot verification timestamp when that exact version matches.
+- Snapshot membership is unchanged; a version mismatch never refreshes the snapshot and still requires the normal changed-state path.
+
+### Safety
+- No additional Trakt watched/history read is introduced beyond the existing version verification.
+- No Trakt write is added.
+- AIO SQLite remains read-only.
+- RC4 history-lineage guard semantics, manual Mark Watched/Unwatched preservation, fanout suppression, schema 1, and compare-only reconciler behavior remain unchanged.
+
 ## [1.3.0-rc.4] - 2026-10-07
 
 ### Fixed
