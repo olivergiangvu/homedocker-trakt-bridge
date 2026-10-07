@@ -163,12 +163,27 @@ test('Bridge pull: trakt mode preserves Trakt IMDb across playback, watched, nex
   assert.equal(payload.watchlist[0].metaId, 'tt44051354');
   assert.equal(serialized.includes('tt44094505'), false, 'learned AIOStreams alias must not leak into trakt-mode pull output');
 
+  const canonicalKey = `canonical-history:v1:${profileId}`;
+  const seeded = runtime.db.cacheGet(canonicalKey);
+  assert.ok(seeded);
+  runtime.db.cacheSet(
+    canonicalKey,
+    { ...seeded, capturedAt: 1, lastVerifiedAt: 1 },
+    3600,
+  );
+
   const unchanged = await fetch(`${runtime.pullUrl}?since=${encodeURIComponent(payload.version)}`);
   assert.equal(unchanged.status, 200);
   const unchangedPayload = await unchanged.json();
   assert.equal(Array.isArray(unchangedPayload.items), true);
   assert.equal('watched' in unchangedPayload, false);
   assert.equal('watchlist' in unchangedPayload, false);
+
+  const verified = runtime.db.cacheGet(canonicalKey);
+  assert.equal(verified.version, payload.version);
+  assert.ok(verified.capturedAt > 1, 'unchanged authoritative pull must refresh snapshot freshness');
+  assert.ok(verified.lastVerifiedAt > 1);
+  assert.deepEqual(verified.items, seeded.items, 'freshness verification must not mutate watched membership');
 });
 
 test('Bridge pull: incomplete authoritative watched state fails closed and is not cached', async (t) => {
