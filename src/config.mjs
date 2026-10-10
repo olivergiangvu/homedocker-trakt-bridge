@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 export const APP_NAME = 'HomeDocker Trakt Bridge';
-export const APP_VERSION = '1.3.0-rc.5';
+export const APP_VERSION = '1.3.0-rc.6';
 
 function requireEnv(name) {
   const value = process.env[name]?.trim();
@@ -74,6 +74,7 @@ export function loadConfig() {
     pullTtlSeconds: pullCacheTtlSeconds,
     pullStaleIfErrorSeconds: intEnv('PULL_STALE_IF_ERROR_SECONDS', 3600, 60, 86400),
     pullMaxPages: intEnv('PULL_MAX_PAGES', 500, 1, 1000),
+    traktAuthCooldownSeconds: intEnv('TRAKT_AUTH_COOLDOWN_SECONDS', 30, 5, 600),
     bulkSingleDedupeSeconds: intEnv('BULK_SINGLE_DEDUPE_SECONDS', 300, 30, 1800),
     historyDedupeSeconds: intEnv('HISTORY_DEDUPE_SECONDS', 300, 0, 1800),
     pullIdentityMode: enumEnv('PULL_IDENTITY_MODE', 'trakt', ['trakt', 'aiostreams']),
