@@ -88,6 +88,8 @@ export function loadConfig() {
     aioHistoryCohortWindowMs: intEnv('AIO_HISTORY_COHORT_WINDOW_MS', 10000, 500, 30000),
     aioHistoryCohortMinItems: intEnv('AIO_HISTORY_COHORT_MIN_ITEMS', 3, 2, 100),
     canonicalHistoryMaxAgeSeconds: intEnv('CANONICAL_HISTORY_MAX_AGE_SECONDS', 900, 60, 86400),
+    canonicalOnDemandVerify: boolEnv('CANONICAL_ON_DEMAND_VERIFY', false),
+    canonicalVerifyMinIntervalSeconds: intEnv('CANONICAL_VERIFY_MIN_INTERVAL_SECONDS', 120, 30, 3600),
     aioReconcileIntervalSeconds: intEnv('AIO_RECONCILE_INTERVAL_SECONDS', 15, 5, 3600),
     aioReconcileGraceSeconds: intEnv('AIO_RECONCILE_GRACE_SECONDS', 30, 5, 3600),
     aioReconcileQuietSeconds: intEnv('AIO_RECONCILE_QUIET_SECONDS', 300, 60, 7200),
