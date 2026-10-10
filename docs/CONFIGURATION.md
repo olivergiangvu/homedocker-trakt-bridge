@@ -196,7 +196,6 @@ AIO_HISTORY_COHORT_MIN_ITEMS=3
 CANONICAL_HISTORY_MAX_AGE_SECONDS=900
 CANONICAL_ON_DEMAND_VERIFY=false
 CANONICAL_VERIFY_MIN_INTERVAL_SECONDS=120
-TRAKT_AUTH_COOLDOWN_SECONDS=30
 ```
 
 The decision rules are intentionally asymmetric:
@@ -258,7 +257,7 @@ See [INTEGRATIONS.md](INTEGRATIONS.md) for the topology and coexistence rules.
 ## RC6 staged controls: scrobble terminal pauses, Trakt 429 and canonical freshness
 
 - RC6 never transforms a near-terminal `pause` into a Trakt `stop` or writes history without AIO-confirmed `played`. Pause and unfinished stop at or above 99% are ignored with explicit reasons to avoid Trakt HTTP 422. AIO's own watched threshold is untouched.
-- `TRAKT_AUTH_COOLDOWN_SECONDS` defaults to 30 seconds if upstream 429 has no Retry-After; otherwise Trakt's Retry-After is respected (bounded to one hour). The cooldown is keyed by Trakt profile and stored in the Bridge DB cache, reducing upstream requests while rate-limited. It cannot coordinate native Trakt clients on other devices.
+- Authenticated Trakt 429 handling stays in the existing `ManagedTraktClient` (independent GET/scrobble/history lanes, per-profile POST pacing and Retry-After). Do not add a second global cooldown underneath that layer: the existing integration tests prove it breaks recovery paths.
 - `CANONICAL_ON_DEMAND_VERIFY` is **off by default**. With it enabled, an unguarded single played/unplayed push encountering an old canonical snapshot can trigger a rate-limited Trakt verification before the history echo guard is retried. The guard still fails open when authoritative verification fails. Attempts are single-flight per profile and throttled by `CANONICAL_VERIFY_MIN_INTERVAL_SECONDS`.
 - Do **not** increase `CANONICAL_HISTORY_MAX_AGE_SECONDS` simply to mask the 48h soak's 44.3% stale exposure; a longer unverified snapshot could suppress genuine marks. Likewise, do not reduce AIO's `WATCH_STATE_PULL_INTERVAL` without measuring authenticated API calls, Retry-After and the same-state echo rate.
 - For production cutover, keep the old image digest/Compose, take a Backrest/restic snapshot, and validate the new image digest and CI before activating any optional feature. Do not replay already failed pause/stop events.
