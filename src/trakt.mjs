@@ -37,6 +37,10 @@ import {
 const AUTH_BASE = 'https://auth.trakt.tv';
 const API_BASE = 'https://api.trakt.tv';
 const PUBLIC_RATE_LIMIT_CACHE_KEY = 'public-rate-limit:v1';
+// Trakt's authenticated limit applies to a user, not only an API key.
+// A profile-specific persisted cooldown avoids repeating upstream 429 storms.
+// It does NOT regulate native Android TV clients outside this Bridge.
+const AUTH_RATE_LIMIT_CACHE_PREFIX = 'auth-rate-limit:v1:';
 const DEFAULT_PUBLIC_RATE_COOLDOWN_MS = 60_000;
 
 function toInt(value) {
@@ -132,6 +136,37 @@ export class TraktClient {
     this.config = config;
     this.db = db;
     this.refreshing = new Map();
+  }
+
+  #authenticatedCooldownUntil(profileId) {
+    const stored = this.db.cacheGet?.(`${AUTH_RATE_LIMIT_CACHE_PREFIX}${profileId}`);
+    const until = Number(stored?.until || 0);
+    return until > Date.now() ? until : 0;
+  }
+
+  #armAuthenticatedCooldown(profileId, retryAfter) {
+    const fallbackMs = (this.config.traktAuthCooldownSeconds ?? 30) * 1000;
+    const wait = retryAfterMs(retryAfter) ?? fallbackMs;
+    const until = Date.now() + Math.min(3_600_000, Math.max(1_000, wait));
+    const ttlSeconds = Math.ceil((until - Date.now()) / 1000) + 5;
+    this.db.cacheSet?.(
+      `${AUTH_RATE_LIMIT_CACHE_PREFIX}${profileId}`,
+      { until },
+      ttlSeconds,
+    );
+    return until;
+  }
+
+  #throwIfAuthenticatedCooling(profileId, path) {
+    const until = this.#authenticatedCooldownUntil(profileId);
+    if (!until) return;
+    throw new BridgeError('Trakt authenticated API cooldown is active', {
+      status: 429,
+      retryAfter: retryAfterSeconds(until),
+      code: 'trakt_rate_cooldown',
+      upstreamPath: path,
+      rateLimit: { name: 'AUTHENTICATED_COOLDOWN' },
+    });
   }
 
   #publicCooldownUntil() {
@@ -242,14 +277,22 @@ export class TraktClient {
   }
 
   async requestDetailed(profileId, path, { method = 'GET', body = null, accept409 = false } = {}) {
+    this.#throwIfAuthenticatedCooling(profileId, path);
     let token = await this.refresh(profileId, false);
     let response = await this.#fetchApi(path, method, body, token);
     if (response.status === 401) {
       token = await this.refresh(profileId, true);
       response = await this.#fetchApi(path, method, body, token);
     }
-    const data = await this.#handleResponse(response, { accept409, upstreamPath: path });
-    return { data, headers: response.headers, status: response.status };
+    try {
+      const data = await this.#handleResponse(response, { accept409, upstreamPath: path });
+      return { data, headers: response.headers, status: response.status };
+    } catch (err) {
+      if (err?.status === 429) {
+        this.#armAuthenticatedCooldown(profileId, err.retryAfter);
+      }
+      throw err;
+    }
   }
 
   async requestAllPages(profileId, path, { limit = 100, maxPages = this.config.pullMaxPages } = {}) {
