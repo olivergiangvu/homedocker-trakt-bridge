@@ -122,3 +122,41 @@ test('missing played flag is fail-safe and cannot trigger Trakt 80% watched thre
   const plan = planEvent({ event: 'stop', positionMs: 850, durationMs: 1000 });
   assert.equal(plan.action, 'pause');
 });
+
+test('Trakt 422: near-terminal AIO pause never creates a watched write', () => {
+  for (const progress of [99, 99.13, 99.982, 100]) {
+    assert.deepEqual(
+      planEvent({ event: 'pause', positionMs: progress * 1000, durationMs: 100000 }),
+      { kind: 'ignore', reason: 'terminal_pause_requires_completion' },
+    );
+  }
+});
+
+test('near-terminal stop with played=false never becomes a false Trakt completion', () => {
+  for (const progress of [99, 99.982, 100]) {
+    assert.deepEqual(
+      planEvent({ event: 'stop', played: false, positionMs: progress * 1000, durationMs: 100000 }),
+      { kind: 'ignore', reason: 'terminal_stop_not_confirmed_played' },
+    );
+  }
+});
+
+test('Trakt completion boundaries preserve RC5 semantics and true AIO completion', () => {
+  assert.deepEqual(
+    planEvent({ event: 'pause', positionMs: 98900, durationMs: 100000 }),
+    { kind: 'scrobble', action: 'pause', progress: 98.9 },
+  );
+  for (const progress of [80, 85, 89.9, 90, 98.9]) {
+    assert.deepEqual(
+      planEvent({ event: 'stop', played: false, positionMs: progress * 1000, durationMs: 100000 }),
+      { kind: 'scrobble', action: 'pause', progress },
+    );
+  }
+  for (const progress of [90, 99.982, 100]) {
+    assert.deepEqual(
+      planEvent({ event: 'stop', played: true, positionMs: progress * 1000, durationMs: 100000 }),
+      { kind: 'scrobble', action: 'stop', progress },
+    );
+  }
+  assert.deepEqual(planEvent({ event: 'played' }), { kind: 'history-add' });
+});

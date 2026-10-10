@@ -132,6 +132,8 @@ export class TraktClient {
     this.config = config;
     this.db = db;
     this.refreshing = new Map();
+    this.canonicalVerificationInflight = new Map();
+    this.canonicalVerificationAttemptAt = new Map();
   }
 
   #publicCooldownUntil() {
@@ -158,6 +160,50 @@ export class TraktClient {
       upstreamPath: path,
       rateLimit: { name: 'PUBLIC_METADATA_COOLDOWN' },
     });
+  }
+
+  /**
+   * Revalidate a stale canonical snapshot only on a meaningful incoming mark,
+   * not with another periodic poll. If verification fails, callers fail open
+   * to the existing RC5 guard; never equate stale data with authoritative state.
+   * This method is opt-in via CANONICAL_ON_DEMAND_VERIFY.
+   */
+  async ensureCanonicalHistoryFresh(profileId, maxAgeSeconds = 900, minIntervalSeconds = 120) {
+    const key = `canonical-history:v1:${profileId}`;
+    const snapshot = this.db.cacheGet?.(key);
+    if (!snapshot?.version || !Number(snapshot.capturedAt)) {
+      return { attempted: false, refreshed: false, reason: 'snapshot_unavailable' };
+    }
+    const now = Date.now();
+    if (now - Number(snapshot.capturedAt) <= maxAgeSeconds * 1000) {
+      return { attempted: false, refreshed: true, reason: 'snapshot_fresh' };
+    }
+    const inflight = this.canonicalVerificationInflight.get(profileId);
+    if (inflight) return inflight;
+
+    const lastAttempt = this.canonicalVerificationAttemptAt.get(profileId) || 0;
+    if (now - lastAttempt < minIntervalSeconds * 1000) {
+      return { attempted: false, refreshed: false, reason: 'verification_throttled' };
+    }
+
+    this.canonicalVerificationAttemptAt.set(profileId, now);
+    const promise = (async () => {
+      await this.pullState(profileId, String(snapshot.version));
+      const updated = this.db.cacheGet?.(key);
+      const refreshed = Boolean(updated?.version)
+        && Date.now() - Number(updated?.capturedAt || 0) <= maxAgeSeconds * 1000;
+      return {
+        attempted: true,
+        refreshed,
+        reason: refreshed ? 'authoritative_pull_verified' : 'snapshot_still_stale',
+      };
+    })();
+    this.canonicalVerificationInflight.set(profileId, promise);
+    try {
+      return await promise;
+    } finally {
+      this.canonicalVerificationInflight.delete(profileId);
+    }
   }
 
   apiHeaders(accessToken = null) {

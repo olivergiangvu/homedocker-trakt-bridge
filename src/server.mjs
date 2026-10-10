@@ -296,12 +296,49 @@ function pullDetail(payload, extra = {}) {
 async function processPush(res, { profileId, body, db, trakt, config }) {
   if (db.isProcessed(profileId, body.id)) return noContent(res);
 
-  const historyEcho = detectAioHistoryEcho(
+  let historyEcho = detectAioHistoryEcho(
     config,
     db,
     profileId,
     body,
   );
+
+  // Optional RC6 correctness probe: only when a single played/unplayed event
+  // remains unguarded. Refresh from Trakt before trusting a stale canonical
+  // snapshot. Never fail a legitimate user mark merely because a pull failed.
+  if (
+    !historyEcho
+    && config.canonicalOnDemandVerify
+    && ['played', 'unplayed'].includes(body.event)
+    && ['movie', 'episode'].includes(body.scope)
+    && !Array.isArray(body.videos)
+  ) {
+    try {
+      const verified = await trakt.ensureCanonicalHistoryFresh(
+        profileId,
+        config.canonicalHistoryMaxAgeSeconds,
+        config.canonicalVerifyMinIntervalSeconds,
+      );
+      if (verified?.attempted) {
+        db.logEvent({
+          profileId, eventId: body.id,
+          event: 'canonical:verification',
+          status: verified.refreshed ? 'ok' : 'stale',
+          detail: JSON.stringify(verified),
+        });
+      }
+      if (verified?.refreshed) {
+        historyEcho = detectAioHistoryEcho(config, db, profileId, body);
+      }
+    } catch (err) {
+      db.logEvent({
+        profileId, eventId: body.id,
+        event: 'canonical:verification',
+        status: 'error',
+        detail: JSON.stringify(errorDetail(err)),
+      });
+    }
+  }
   const unplayedEcho = historyEcho
     || detectAioFalseUnplayedEcho(config, body);
   if (unplayedEcho) {
