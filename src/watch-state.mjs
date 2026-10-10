@@ -3,6 +3,9 @@ import { BridgeError } from './errors.mjs';
 
 export const PUSH_EVENTS = ['start', 'pause', 'stop', 'played', 'unplayed', 'watchlisted', 'unwatchlisted'];
 const TRAKT_MIN_SCROBBLE_PROGRESS = 1;
+// Empirical Trakt response for pause at 99.13% and 99.982%: HTTP 422,
+// "Use stop to scrobble". Never turn a pause into watched without AIO proof.
+const TRAKT_TERMINAL_PAUSE_MIN_PROGRESS = 99;
 
 export function buildManifest(profileId, pullTtlSeconds = 300) {
   return {
@@ -87,6 +90,12 @@ export function planEvent(event) {
       const progress = progressPercent(event);
       if (progress == null) return { kind: 'ignore', reason: 'duration_unknown' };
       if (belowTraktScrobbleMinimum(progress)) return { kind: 'ignore', reason: 'progress_below_trakt_minimum' };
+      // Trakt rejects a near-complete pause with 422 and asks for stop.
+      // Wait for an independently confirmed AIO played=true stop/mark; do not
+      // manufacture a watched event merely from a pause's progress.
+      if (progress >= TRAKT_TERMINAL_PAUSE_MIN_PROGRESS) {
+        return { kind: 'ignore', reason: 'terminal_pause_requires_completion' };
+      }
       return { kind: 'scrobble', action: 'pause', progress };
     }
     case 'stop': {
@@ -100,6 +109,11 @@ export function planEvent(event) {
       // played=false decision and send pause so we never mark an unfinished item
       // watched merely because Trakt uses a lower completion threshold.
       if (event.played !== true && progress >= 80) {
+        // Same near-terminal 422 risk, but AIO explicitly did NOT confirm
+        // watched. Suppress rather than crossing Trakt's 80% watched boundary.
+        if (progress >= TRAKT_TERMINAL_PAUSE_MIN_PROGRESS) {
+          return { kind: 'ignore', reason: 'terminal_stop_not_confirmed_played' };
+        }
         return { kind: 'scrobble', action: 'pause', progress };
       }
       return { kind: 'scrobble', action: 'stop', progress };
