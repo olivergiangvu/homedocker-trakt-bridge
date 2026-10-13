@@ -75,6 +75,15 @@ test('safely ignores missing item-to-source mapping and played rows', () => {
   );
 });
 
+test('malformed Jellyfin UserData never causes an accidental winner', () => {
+  const corrupted = { Id: trakt.Id, UserData: 'not-an-object' };
+  const badNumber = { Id: trakt.Id, UserData: { Played: false, PlaybackPositionTicks: Number.NaN } };
+  for (const candidate of [corrupted, badNumber]) {
+    assert.deepEqual(reconcileNextUpCandidates([candidate, aio], spellings, alias),
+      [candidate, aio]);
+  }
+});
+
 test('multiple independent verified alias groups stay isolated', () => {
   const otherResume = { Id: 'other-a', UserData: { Played: false, PlaybackPositionTicks: 90 } };
   const otherStale = { Id: 'other-b', UserData: { Played: false, PlaybackPositionTicks: 0 } };
