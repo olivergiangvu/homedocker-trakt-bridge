@@ -408,7 +408,7 @@ def main(argv=None):
             token
         )
     report(resume, nextup)
-    if args.trace_known_show:
+    if args.trace_known_show and not args.compare_nextup_modes:
         trace_known_show(resume, nextup)
     if args.compare_nextup_modes:
         nextup_without = get_json(
