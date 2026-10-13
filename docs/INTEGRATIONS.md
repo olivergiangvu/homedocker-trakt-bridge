@@ -59,6 +59,21 @@ Use the highlighted **Manifest URL** on the profile dashboard to connect the bri
 
 Treat the URL as a credential.
 
+### Version policy: rolling upstream, stable Bridge
+
+**AIOStreams intentionally follows `ghcr.io/viren070/aiostreams:latest`.** It is an independently maintained upstream, **not** a build-time/runtime version lock for HomeDocker Trakt Bridge. Pinning AIOStreams to a historical digest as a precondition for Bridge Stable is explicitly **out of scope**.
+
+Bridge stable acceptance instead relies on stable integration behavior under regular AIO upstream releases:
+
+- Watch-state v2 manifest push/pull and exact connected-sink behavior remain correct.
+- Trakt canonical watched/resume values project correctly to the Jellyfin-compatible surface.
+- Resume and NextUp remain consistent; the documented mixed IMDb/TMDB show does not regress into two Continue Watching cards.
+- Trakt event handling, rate limiting, history identity, and compare-only reconciler remain safe when AIO is upgraded.
+
+Capture the prior running AIO image ID/digest only as a **temporary rollback asset**, not as a production version constraint. The Bridge keeps its independently qualified immutable release digest; AIO stays on `latest`. After an upstream update, run non-destructive contract checks and restore the previous AIO image only if a concrete compatibility regression is confirmed. Never edit AIOStreams source/image for Bridge-specific fixes.
+
+See [Stable qualification](design/v1.3-stable-qualification.md) for the rolling-upstream acceptance matrix and [Operations](OPERATIONS.md) for rollback practices.
+
 ## Native Trakt clients
 
 Some clients can use both:
