@@ -75,9 +75,34 @@ The follow-up `audit-dangling-image-ownership.py` attributed **all 11 dangling i
 | `e0e244bbd4b3` | Trellis/bun prior image | Unreferenced | KEEP for rollback for now |
 | `f734cda1e75f` | AIOStreams prior image | Unreferenced | KEEP rollback, while AIO production stays `latest` |
 
-Candidate Netdata image reported *logical image sizes* ~916–917 MiB each. **Actual freed disk is not simply the sum** because Docker layer/content storage may be shared. No image deletion is claimed yet. For future cleanup, revalidate the **full SHA** of each exact candidate, check OCI title and all *running + stopped* container references and verify that current Netdata and a prior rollback image remain available before using targeted `docker image rm <full-SHA>`. Abort if IDs, running state, tags or ownership changed since this audit. Never call broad `docker image prune`.
+Candidate Netdata image reported *logical image sizes* ~916–917 MiB each. **Actual freed disk is not simply the sum** because Docker layer/content storage may be shared. At the time of this inventory, no image deletion had yet occurred. The later verified cleanup is recorded below. For any future cleanup, revalidate the **full SHA** of each exact candidate, check OCI title and all *running + stopped* container references and verify that current Netdata and a prior rollback image remain available before using targeted `docker image rm <full-SHA>`. Abort if IDs, running state, tags or ownership changed since this audit. Never call broad `docker image prune`.
 
 Neither branch cleanup nor Docker build-cache pruning reduces RAM usage of active CrossWatch, Homebridge, AIOMetadata, Remux, etc. Zombie process count and host restart requirements are separate Linux host-maintenance concerns, not a justification for restarting the media stack during this cleanup.
+
+## Final verified Netdata image cleanup (operator command output)
+
+The owner subsequently ran the **exactly scoped** three-image Netdata cleanup. The guard verified the OCI title (`Netdata Agent`), expected image SHA prefix and build creation timestamp, the currently running Netdata container, and absence of both running/stopped container references before deleting each image with `docker image rm`, **without force**:
+
+- `2dda65388cd7` — removed
+- `71557c7ceea0` — removed
+- `61990eba2b34` — removed
+
+The retained Netdata rollback candidate `14bff67c4793` was verified, not removed; the active Netdata image ID began `1ed7ec6dbfc3`. The pinned production Bridge RC6 `74ef797c7d85` was also not touched, as were AIOStreams `latest` and persistent volumes.
+
+| Docker system df | Before targeted removal | After targeted removal |
+| --- | ---: | ---: |
+| Images TOTAL / ACTIVE | 45 / 18 | 42 / 18 |
+| Images SIZE | 10.94 GB | 8.416 GB |
+| Images RECLAIMABLE | 4.754 GB | 2.231 GB |
+| Containers TOTAL / ACTIVE | 19 / 19 | 19 / 19 |
+| Local volumes TOTAL / ACTIVE | 13 / 13 | 13 / 13 |
+| Build cache | 179.5 MB | 179.5 MB |
+
+**Actual image-storage reduction: ~2.524 GB.** Remaining `2.231 GB` labelled reclaimable by Docker is **not an approval for further pruning**: current Bridge RC6 is itself listed dangling, and some previous AIOStreams/CrossWatch/Bridge/Trellis/WUD images are deliberately retained for rollback. Sum of per-image logical sizes is not a reliable estimate of reclaimable physical bytes.
+
+Two **additional running healthy** containers (`xtream-vod-canary-admin` and `xtream-vod-canary-playback`) explain the increase from 17 to 19 containers between inventories. They are a distinct active Xtream VOD canary deployment and are not RC7 cleanup leftovers. All 19 containers were reported running; 18 have a Docker health-check status marked healthy, while Homebridge reports `Up` without a health-check result. Their lifecycle must be managed separately from Bridge RC7 cleanup.
+
+**Housekeeping disposition:** GitHub historical branch cleanup, RC7 script archive, age-limited build-cache pruning, and explicitly targeted old Netdata image removal are complete. No further automatic prune or container restart is authorized by this document. AIO upstream remains `latest` and Bridge stays `1.3.0-rc.6`; the separate v1.3 Stable gates remain open.
 
 ## Completion
 
@@ -87,5 +112,5 @@ Neither branch cleanup nor Docker build-cache pruning reduces RAM usage of activ
 - [x] AIO latest and independent Bridge release policy preserved.
 - [x] Local authenticated GitHub branch sweep — 72 refs deleted, 5 intentionally retained and verified via live GitHub.
 - [x] HomeDocker inventory and RC7 scratch archival; old build cache pruned conservatively.
-- [ ] Targeted Netdata image cleanup (3 identified obsolete candidates), still not executed.
+- [x] Three obsolete Netdata image IDs deleted under guard; 2.524 GB actual image-storage reduction, all 19 running containers preserved.
 - [ ] Separate Bridge v1.3 Stable soak, backup/rollback and native-Trakt writer gates.
