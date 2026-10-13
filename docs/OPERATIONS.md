@@ -86,6 +86,20 @@ The result should be the immutable `ghcr.io/...@sha256:...` reference you intend
 
 Do not purge Bridge or AIOStreams state unless the release notes explicitly require it.
 
+## AIOStreams upstream updates — independent rolling policy
+
+AIOStreams is a separate upstream maintained as `ghcr.io/viren070/aiostreams:latest` in HomeDocker. **Do not pin its Compose reference to a digest for the sake of Bridge Stable.** The pinned image policy above applies to the **Trakt Bridge itself**, not to AIOStreams.
+
+For an intentional AIO `latest` update:
+
+1. Record currently running AIO image ID and locally available RepoDigests, Compose/config backup, and any safe rollback material. `scripts/audit-runtime-image-provenance.sh` is read-only and records provenance, **not a requirement to pin**.
+2. Preserve existing AIO watch-state data; use the existing backup/disaster recovery procedure. Avoid copying live WAL SQLite files as an inconsistent backup.
+3. Update AIO independently according to its own release procedure, without implicitly upgrading or rebuilding Bridge.
+4. Re-check AIO health, exact connected Bridge sink, pending delivery state, Jellyfin Resume/NextUp behavior, canonical watched state, and known identity-drift fixture on real clients.
+5. If a compatibility regression is proven, recover the prior known-good AIO image/config as a temporary rollback; then return to upstream `latest` when compatibility is restored.
+
+Stable Bridge certification is **contract-based**. No exact AIO digest is a prerequisite, and a new AIO release does not in itself require a new Bridge release. Do not automatically mark history, drop aliases, or replay Trakt data when an AIO update happens.
+
 ## Rollback
 
 Set `TRAKT_BRIDGE_IMAGE` back to the previous known-good tag or digest, then:
