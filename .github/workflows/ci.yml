@@ -21,6 +21,7 @@ jobs:
         run: |
           python3 -m py_compile scripts/audit-dual-imdb.py
           python3 -m py_compile scripts/audit-jellyfin-shelves.py
+          python3 -m py_compile scripts/audit-known-show-nextup-origin.py
           python3 -m unittest discover -s test -p 'test_*.py'
 
       - name: Validate shell scripts
