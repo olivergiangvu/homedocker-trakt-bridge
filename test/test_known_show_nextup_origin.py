@@ -39,13 +39,13 @@ class KnownShowNextUpSourceTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def add(self, base, episode, played, position=0, uuid="primary-private-uuid",
-            item_base=None, match=None):
+            item_base=None, match=None, origin=None):
         item_base = item_base or base
         self.db.execute(
             "INSERT INTO watch_state VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (uuid, "", f"e|{item_base}:1:{episode}", match, base, f"s|{base}",
              f"{item_base}:1:{episode}", 1, episode, played,
-             position, 1000 + episode, "import" if played else "local"),
+             position, 1000 + episode, origin or ("import" if played else "local")),
         )
         self.db.commit()
 
@@ -79,7 +79,7 @@ class KnownShowNextUpSourceTests(unittest.TestCase):
             self.add("tt44051354", ep, 1)
         self.add("tt44051354", 10, 0, 346626)
         for ep in range(1, 9):
-            self.add("tt44094505", ep, 1, item_base="tmdb:276470")
+            self.add("tt44094505", ep, 1, item_base="tmdb:276470", origin="local")
         output = self.run_audit()
         self.assertIn("CANDIDATE_ROWS=18", output)
         self.assertIn("SERIES_KEY_GROUP_COUNT=2", output)
