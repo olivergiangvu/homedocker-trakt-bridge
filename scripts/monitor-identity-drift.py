@@ -77,7 +77,7 @@ def verified_alias_pairs(bridge, profile_id, include_fixture=True):
             pairs[str(show)] = (str(show), a, b, "learned-bridge")
     if include_fixture:
         old = pairs.get(FIXTURE[0])
-        if old and set(old[1:3]) != set(FIXTURE[1:3]):
+        if old and old[1:3] != FIXTURE[1:3]:
             fail("known fixture conflicts with learned pair; review identity")
         pairs.setdefault(FIXTURE[0], FIXTURE)
     if len(pairs) > MAX_ALIAS_PAIRS:
