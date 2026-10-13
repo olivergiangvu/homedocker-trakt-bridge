@@ -2,7 +2,7 @@
 
 This is the versioned user manual for HomeDocker Trakt Bridge.
 
-The repository and GHCR package are public. `v1.2.0` is the stable release line, promoted from the fully qualified v1.2.0-rc.7 HomeDocker canary.
+The repository and GHCR package are public. `v1.3.0` promotes the established RC6 runtime without behavior/schema changes. Publication and on-host cutover require separate release and deployment acceptance; AIOStreams remains independently rolling on `latest`.
 
 ## User guides
 

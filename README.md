@@ -116,13 +116,13 @@ For sensitive vulnerabilities, follow **[SECURITY.md](SECURITY.md)** instead of 
 
 ## Project status
 
-`v1.2.0` is the stable release line promoted from the fully qualified `v1.2.0-rc.7` HomeDocker canary.
+`v1.3.0` is the stable release line promoted from the production-qualified `v1.3.0-rc.6` runtime, with no code-path or schema changes after RC6.
 
 **HomeDocker production:** Bridge `v1.3.0-rc.6`, with `AIO_RECONCILER_MODE=compare` (non-writing), `PULL_IDENTITY_MODE=trakt`, `CANONICAL_ON_DEMAND_VERIFY=false`. **AIOStreams follows upstream `latest` independently**; no AIOStreams digest pin is required for Bridge releases.
 
 **RC7 Monitoring & Rolling Compatibility Phase:** Complete (2026-10-13). The actual HomeDocker Jellyfin compatibility contract returned `PASS_CAPTURED_CHECKS`; the dual-IMDb Continue Watching issue was mitigated through one official AIO series preference and is monitored by the read-only drift tool. Experimental RC7 draft PRs were archived unmerged. See [RC7 closure and cleanup](docs/RC7-CLOSURE-AND-CLEANUP.md).
 
-**v1.3 Stable:** Not yet tagged/promoted. Native-Trakt writer attribution, playback boundary, independent backup/rollback rehearsal and Bridge candidate soak remain separate release gates. See [Stable qualification](docs/design/v1.3-stable-qualification.md).
+**v1.3 Stable publication/deployment:** Release source is prepared with version metadata only. The `v1.3.0` tag/GHCR digest and host cutover must be verified separately; until on-host confirmation the existing production Bridge stays RC6. Optional guarded recovery writeback remains excluded (Issue #70). See [v1.3 release notes](docs/releases/v1.3.0.md) and [Stable qualification](docs/design/v1.3-stable-qualification.md).
 
 
 
