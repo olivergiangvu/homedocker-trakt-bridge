@@ -111,6 +111,29 @@ class Rc7OwnerSideTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.preflight()
 
+    def test_rollback_preflight_requires_drop_only_series_row(self):
+        self.db.execute(
+            "INSERT INTO watch_state VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("hidden-private-uuid", "", "s|" + mod.AIO, mod.AIO,
+             None, None, None, None, 0, 0, "local", None, 1, None, None),
+        )
+        self.db.commit()
+        with contextlib.closing(mod.open_readonly(self.path)) as ro:
+            mod.inspect_local(ro, expect_dropped=True)
+        self.db.execute(
+            "UPDATE watch_state SET rating=8 WHERE item_key=?", ("s|" + mod.AIO,)
+        )
+        self.db.commit()
+        with contextlib.closing(mod.open_readonly(self.path)) as ro:
+            with self.assertRaisesRegex(SystemExit, "drop-only"):
+                mod.inspect_local(ro, expect_dropped=True)
+
+    def test_generated_rollback_series_id_is_exact_aio_packed_series(self):
+        expected = packed("series", mod.AIO)
+        self.assertEqual(mod.packed_series_id(mod.AIO), expected)
+        with self.assertRaises(SystemExit):
+            mod.packed_series_id(mod.TRAKT)
+
     def test_fail_closed_if_canonical_resume_disappears(self):
         self.db.execute(
             "UPDATE watch_state SET position_ms=0 WHERE item_key='e|tt44051354:1:10'"
