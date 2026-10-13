@@ -20,7 +20,7 @@ AIO_ID = "tt44094505"
 KNOWN_IDS = (TRAKT_ID, AIO_ID, "tmdb:276470", "tvdb:480791")
 COLUMNS = ("item_key", "match_key", "base_id", "series_key", "video_id",
            "season", "episode", "played", "position_ms", "sort_at", "origin")
-SAFE_KEY = re.compile(r"^(?:e|s|se|m)\|(?:tt\d{7,12}|tmdb:\d+|tvdb:\d+)(?::\d+){0,2}$")
+SAFE_KEY = re.compile(r"^(?:(?:e|s|se|m)\|)?(?:tt\d{7,12}|tmdb:\d+|tvdb:\d+)(?::\d+){0,2}$")
 
 
 def stop(reason):
