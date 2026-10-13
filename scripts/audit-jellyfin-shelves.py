@@ -174,6 +174,117 @@ def report(resume, nextup, max_details=10):
             "same_shelf": len(rr) + len(nn), "cross": len(cross)}
 
 
+# Historical *one-show* regression fixture from docs/DEVELOPMENT.md.
+# IDs are not globally interchangeable with unrelated titles.
+KNOWN_SHOW = {
+    ("imdb", "tt44051354"): "TRAKT_IMDB",
+    ("imdb", "tt44094505"): "AIO_IMDB",
+    ("tmdb", "276470"): "TMDB",
+    ("tvdb", "480791"): "TVDB",
+}
+
+
+def decode_packed_content_id(value):
+    """Decode only AIOStreams' public a1 packed Jellyfin ID format.
+
+    Based on packages/core/src/jellyfin/ids.ts. b2 hashed IDs cannot be
+    decoded without AIO's private durable mapping table; fail open as unknown.
+    """
+    if not isinstance(value, str):
+        return None
+    compact = value.replace("-", "").lower()
+    if not re.fullmatch(r"[0-9a-f]{32}", compact):
+        return None
+    buf = bytes.fromhex(compact)
+    if buf[0] != 0xA1:
+        return None
+    kind = {1: "movie", 2: "series", 3: "season", 4: "episode", 5: "boxset"}.get(
+        buf[1] >> 4
+    )
+    provider = {1: "imdb", 2: "tmdb", 3: "tvdb"}.get(buf[1] & 0xF)
+    if not kind or not provider:
+        return None
+    numeric = int.from_bytes(buf[3:9], "big")
+    value = (
+        "tt" + str(numeric).zfill(7)
+        if provider == "imdb"
+        else str(numeric)
+    )
+    season = int.from_bytes(buf[9:11], "big")
+    episode = int.from_bytes(buf[11:13], "big")
+    return {
+        "kind": kind, "provider": provider, "value": value,
+        "season": None if season == 65535 else season,
+        "episode": None if episode == 65535 else episode,
+    }
+
+
+def known_show_refs(item):
+    """Only exact known-provider matches; never a display-name match."""
+    found = set()
+    for provider, value in providers(item).items():
+        label = KNOWN_SHOW.get((provider, value))
+        if label:
+            found.add(label)
+    for field in ("Id", "SeriesId"):
+        d = decode_packed_content_id(item.get(field))
+        if d:
+            label = KNOWN_SHOW.get((d["provider"], d["value"]))
+            if label:
+                found.add(label)
+    return found
+
+
+def trace_known_show(resume_json, nextup_json, disabled_json=None):
+    """Print targeted redacted evidence for known one-show IMDb split."""
+    captures = [
+        ("RESUME", parse_items(resume_json, "RESUME")),
+        ("NEXTUP_TRUE", parse_items(nextup_json, "NEXTUP_TRUE")),
+    ]
+    if disabled_json is not None:
+        captures.append((
+            "NEXTUP_FALSE", parse_items(disabled_json, "NEXTUP_FALSE")
+        ))
+    print("KNOWN_SHOW_IDENTITY_TRACE=Ok_Lets_Get_Divorced")
+    print("TRAKT_SHOW_ID=263102 TMDB=276470 TVDB=480791")
+    seen = set()
+    identified = 0
+    for shelf, items in captures:
+        matched = 0
+        packed = 0
+        opaque = 0
+        for item in items:
+            fields = (item.get("Id"), item.get("SeriesId"))
+            if any(decode_packed_content_id(value) for value in fields):
+                packed += 1
+            else:
+                opaque += 1
+            refs = known_show_refs(item)
+            if not refs:
+                continue
+            matched += 1
+            seen.update(refs)
+            ep = episode_numbers(item)
+            label = ("S%02dE%02d" % ep) if ep else "-"
+            item_id = item.get("Id")
+            print("SHOW_ROW SHELF=%s KIND=%s EP=%s ITEM_HASH=%s REF=%s" % (
+                shelf, str(item.get("Type", "unknown")).lower(), label,
+                sha(item_id) if isinstance(item_id, str) and item_id else "-",
+                ",".join(sorted(refs)),
+            ))
+        print("SHOW_SHELF=%s KNOWN_MATCH_ROWS=%d PACKED_ROW_CANDIDATES=%d OPAQUE_ROW_CANDIDATES=%d" %
+              (shelf, matched, packed, opaque))
+        identified += matched
+    print("SHOW_TRACE_MATCHED_ROWS=%d" % identified)
+    print("SHOW_TRACE_REFS=%s" % (",".join(sorted(seen)) or "-"))
+    if "TRAKT_IMDB" in seen and "AIO_IMDB" in seen:
+        print("SHOW_TRACE_CLASS=DUAL_IMDB_IN_CAPTURE")
+    elif seen:
+        print("SHOW_TRACE_CLASS=PARTIAL_IDENTITY_IN_CAPTURE")
+    else:
+        print("SHOW_TRACE_CLASS=NO_IDENTIFIABLE_SHOW_IN_CAPTURE")
+    print("NOTE=Opaque b2 IDs, native Trakt, other endpoints and rows outside the captured page are not resolved.")
+
 def compare_nextup_modes(resume_json, enabled_json, disabled_json):
     """Compare the same Resume shelf against NextUp with/without resumable.
 
@@ -255,6 +366,8 @@ def main(argv=None):
                         help="permit bounded loopback GETs; AIO may refresh state on GET")
     parser.add_argument("--base-url", help="e.g. http://127.0.0.1:3000/jellyfin")
     parser.add_argument("--token-file", type=Path, help="chmod 600 Jellyfin token file")
+    parser.add_argument("--trace-known-show", action="store_true",
+                        help="trace historical double-IMDb show by exact packed/provider IDs")
     parser.add_argument("--compare-nextup-modes", action="store_true",
                         help="live only: third GET NextUp EnableResumable=false and summarize difference")
     parser.add_argument("--limit", type=int, default=12)
@@ -282,12 +395,16 @@ def main(argv=None):
             token
         )
     report(resume, nextup)
+    if args.trace_known_show:
+        trace_known_show(resume, nextup)
     if args.compare_nextup_modes:
         nextup_without = get_json(
             opener, base + "/Shows/NextUp?Limit=%d&EnableResumable=false" % args.limit,
             token
         )
         compare_nextup_modes(resume, nextup, nextup_without)
+        if args.trace_known_show:
+            trace_known_show(resume, nextup, nextup_without)
 
 
 if __name__ == "__main__":
