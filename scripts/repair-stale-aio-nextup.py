@@ -43,7 +43,7 @@ def open_readonly(path):
     return db
 
 
-def inspect_local(db):
+def inspect_local(db, *, expect_dropped=False):
     sinks = db.execute(
         """SELECT uuid, persona FROM watch_sinks
            WHERE addon_name=? AND addon_instance_id=? AND retired_at IS NULL""",
@@ -102,7 +102,12 @@ def inspect_local(db):
            WHERE uuid=? AND persona=? AND item_key=?""",
         (uuid, persona, "s|" + AIO),
     ).fetchall()
-    if existing:
+    if expect_dropped:
+        if (len(existing) != 1 or int(existing[0]["dropped"] or 0) != 1
+                or existing[0]["rating"] is not None
+                or existing[0]["likes"] is not None):
+            stop("rollback requires exactly one drop-only series row with no rating or likes")
+    elif existing:
         stop("stale series already has a persisted row; inspect before changing rating/drop")
 
     print("AIO_CONNECTED_SCOPE_VERIFIED=true")
@@ -111,6 +116,19 @@ def inspect_local(db):
     print("STALE_AIO_WATCHED=8")
     print("STALE_AIO_LATEST=S01E08")
     print("HISTORY_ROWS_UNCHANGED=18")
+
+
+def packed_series_id(imdb):
+    if imdb != AIO:
+        stop("series ID packing only permits the documented AIO alias")
+    buf = bytearray(16)
+    buf[0] = 0xA1
+    buf[1] = (2 << 4) | 1
+    buf[2] = 2
+    buf[3:9] = int(imdb[2:]).to_bytes(6, "big")
+    buf[9:11] = (65535).to_bytes(2, "big")
+    buf[11:13] = (65535).to_bytes(2, "big")
+    return buf.hex()
 
 
 def packed_id(raw):
@@ -251,11 +269,29 @@ def verify_nextup_after(opener, base, token, original_id):
 
 
 def run(args):
+    if args.undo and args.apply:
+        stop("--undo and --apply are mutually exclusive")
     with closing(open_readonly(args.aio_db)) as db:
-        inspect_local(db)
+        inspect_local(db, expect_dropped=args.undo)
     base = loopback_url(args.base_url)
     token = read_token(args.token_file)
     opener = build_opener(ProxyHandler({}), NoRedirect())
+    if args.undo:
+        if args.confirm_stale_imdb != AIO:
+            stop("--undo requires --confirm-stale-imdb " + AIO)
+        series_id = packed_series_id(AIO)
+        print("MODE=EXPLICIT_UNDO")
+        request(opener, "DELETE", base + "/UserItems/" + series_id + "/Rating", token)
+        with closing(open_readonly(args.aio_db)) as db:
+            check = db.execute(
+                "SELECT dropped FROM watch_state WHERE item_key=? AND "
+                "series_key=? AND base_id=?",
+                ("s|" + AIO, "s|" + AIO, AIO),
+            ).fetchall()
+        if len(check) != 1 or int(check[0]["dropped"] or 0) != 0:
+            stop("rollback API call accepted but stored drop was not cleared; inspect scope")
+        print("ROLLBACK_VERIFIED=STALE_SERIES_DROP_CLEARED")
+        return
     resume = list_items(request(opener, "GET",
                                 base + "/UserItems/Resume?Limit=50", token),
                         "Resume")
@@ -289,6 +325,8 @@ def main():
     parser.add_argument("--token-file", type=Path, required=True)
     parser.add_argument("--apply", action="store_true",
                         help="allow exactly one official AIO Jellyfin series drop")
+    parser.add_argument("--undo", action="store_true",
+                        help="explicitly undo the one stale series drop via official API")
     parser.add_argument("--confirm-stale-imdb", default="")
     args = parser.parse_args()
     run(args)
