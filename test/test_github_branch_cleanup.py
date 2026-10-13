@@ -25,6 +25,43 @@ def branch(name, sha):
 
 
 class GithubCleanupSelectorTests(unittest.TestCase):
+    def test_manual_pagination_works_on_legacy_gh_without_slurp(self):
+        from unittest.mock import patch
+        import json
+        calls = []
+
+        def fake_api(path, *extra):
+            calls.append((path, extra))
+            if "page=1" in path:
+                return json.dumps([{"v": 1}, {"v": 2}])
+            if "page=2" in path:
+                return json.dumps([{"v": 3}])
+            raise AssertionError("Unexpected page: " + path)
+
+        with patch.object(gc, "api", fake_api):
+            rows = gc.pages("repos/" + gc.REPO + "/branches?per_page=2",
+                            per_page=2)
+        self.assertEqual([x["v"] for x in rows], [1, 2, 3])
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(all(extra == () for _, extra in calls))
+        self.assertTrue(all("--slurp" not in url for url, _ in calls))
+
+    def test_api_pagination_failure_refuses_partial_cleanup(self):
+        from unittest.mock import patch
+        import json
+
+        def fake_api(path, *extra):
+            if "page=1" in path:
+                return json.dumps([{"v": 1}, {"v": 2}])
+            return json.dumps([{"v": 3}, {"v": 4}])
+
+        with patch.object(gc, "api", fake_api):
+            with self.assertRaisesRegex(RuntimeError, "exceeded safe page budget"):
+                gc.pages("repos/" + gc.REPO + "/pulls?per_page=2",
+                         per_page=2, max_pages=2)
+            with self.assertRaisesRegex(RuntimeError, "expected repository route"):
+                gc.pages("repos/someone-else/other/branches")
+
     def test_only_exact_merged_heads_and_archived_closed_prs(self):
         archived_name = "diagnostics/rc7-jellyfin-shelves"
         archived_sha = gc.ARCHIVED[archived_name][1]
