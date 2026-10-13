@@ -1,4 +1,4 @@
-import contextlib
+from contextlib import closing
 import importlib.util
 import json
 from pathlib import Path
