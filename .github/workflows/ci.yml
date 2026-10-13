@@ -20,6 +20,7 @@ jobs:
       - name: Read-only identity audit regression tests
         run: |
           python3 -m py_compile scripts/audit-dual-imdb.py
+          python3 -m py_compile scripts/repair-stale-aio-nextup.py
           python3 -m unittest discover -s test -p 'test_*.py'
 
       - name: Validate shell scripts
