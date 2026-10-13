@@ -8,10 +8,8 @@
  */
 export type NextUpCandidate = {
   Id: string;
-  UserData?: {
-    Played?: boolean;
-    PlaybackPositionTicks?: number;
-  };
+  // AIOStreams JellyfinItem declares arbitrary extra fields as 'unknown'.
+  UserData?: unknown;
 };
 
 const IMDB = /^tt\d{7,12}$/;
@@ -37,11 +35,14 @@ export function parseVerifiedAliasGroups(
 }
 
 function activeResume(item: NextUpCandidate): boolean {
+  const user = item.UserData;
+  if (!user || typeof user !== 'object') return false;
+  const data = user as Record<string, unknown>;
   return (
-    item.UserData?.Played !== true &&
-    typeof item.UserData?.PlaybackPositionTicks === 'number' &&
-    Number.isFinite(item.UserData.PlaybackPositionTicks) &&
-    item.UserData.PlaybackPositionTicks > 0
+    data.Played !== true &&
+    typeof data.PlaybackPositionTicks === 'number' &&
+    Number.isFinite(data.PlaybackPositionTicks) &&
+    data.PlaybackPositionTicks > 0
   );
 }
 
