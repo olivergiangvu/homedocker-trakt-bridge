@@ -154,6 +154,44 @@ Expected diagnostic fields: `SERIES_KEY_GROUP_COUNT`, `SERIES_GROUP KEY=... ROWS
 
 No repair is attempted. Do not change `EnableResumable` globally, remove S01E09 watched history, or switch Bridge pull to AIO IMDb. A fix must be scoped to verified Trakt/TMDB/TVDB show anchors, dedup the **show-level NextUp candidates**, preserve the furthest watched/resume point, and retain unrelated shows / rewatches.
 
+## Phase B8 confirmed RCA — distinct historical timelines in one AIO scope
+
+**Observed on HomeDocker, 2026-10-13, read-only SQLite, scope hash `b140f061a0b9`:**
+
+| Row attribute | Trakt-sourced series | AIO-local series |
+| --- | --- | --- |
+| `series_key` | `s|tt44051354` | `s|tt44094505` |
+| `base_id` | `tt44051354` | `tt44094505` |
+| `item_key` / `video_id` | `e|tt44051354:1:n` / `tt44051354:1:n` | `e|tmdb:276470:1:n` / `tmdb:276470:1:n` |
+| `match_key` | NULL on all 10 | NULL on all 8 |
+| Watched | S01E01–S01E09, 9 rows, `origin=import` | S01E01–S01E08, 8 rows, `origin=local` |
+| Active resume | S01E10, 346626ms, `origin=local` | none |
+| Suggested NextUp (confirmed HTTP) | S01E10 | S01E09 |
+
+**Proven cause of observed double NextUp API response:** two distinct `series_key` groups belong to one documented stable show (Trakt show 263102; TMDB 276470; TVDB 480791), have **no match-key equivalence**, and advance separately. The branch ending at S01E08 offers S01E09 while the canonical Trakt branch holds S01E09 watched and S01E10 in progress.
+
+**Important correction to earlier audit:** `item_key LIKE 'e|tt44094505:%'` returned zero rows because the local-AIO branch encodes episodes as `e|tmdb:276470:1:n`, despite its `base_id=tt44094505` and `series_key=s|tt44094505`. Zero active dual-IMDb resume candidates is true **but not dispositive** for show-level progression collisions. The B8 discovery is not a duplicate S01E10 resume record.
+
+AIOStreams source facts:
+- `packages/core/src/db/repositories/watch-state.ts`: `recentSeries()` selects by `series_key` and collapses only when `match_key` supplies equivalent show identity.
+- `packages/server/src/routes/jellyfin/library.ts`: unscoped `/Shows/NextUp` de-duplicates rendered candidates by `SeriesId`, which differs across the two IMDb spellings.
+- `packages/server/src/routes/jellyfin/items.ts`: `watchingPosition()` evaluates watched/resume slots against the candidate series's own metadata identity; `tt44094505` does not see Trakt's S01E09 watched record without a proven alias mapping.
+
+### Proposed production repair boundary (design, not implemented)
+
+The **true producing layer is AIOStreams' NextUp read model / watch-state identity projection**, not the RC6 Bridge pull and not a generic client UI bug. Only the producing layer should suppress duplicate *show-level* candidates, with a verified provider-identity crosswalk.
+
+A targeted *read-only* normalization should, when it proves two series share a stable show identity (for this fixture Trakt show 263102/TMDB 276470/TVDB 480791), choose one coherent NextUp candidate based on the canonical watched/resume timeline. Here S01E10 paused at 346626ms must win and the stale AIO-path S01E09 card must not render. Do not simply compare titles, collapse all overlapping episode numbers, or pick the highest episode with no rewatch protections.
+
+Required engineering gates before merging any behavioral fix:
+
+1. Trace how AIO resolves `tt44094505`, `tt44051354`, and `tmdb:276470` to the *same proven show* on the relevant metadata provider, using documented provider IDs, without hardcoding arbitrary title matching.
+2. Fix NextUp candidate grouping / watch-state read projection only; do not change persisted `item_key` or `series_key`, rewrite history, or backfill played flags.
+3. Regression: documented mixed-identity case must yield **one** NextUp S01E10 and unchanged Resume S01E10, with S01E01–09 still watched.
+4. Regression: different shows with same display title or conflicting IDs remain separate. Preserve intentional rewatches and metadata lookup-failure fail-open behavior.
+5. Playback/scrobble watched/unwatched, AIO Jellyfin IDs, Trakt 90%-completion logic and native-Trakt coexistence must not regress. No added Trakt 429 calls.
+6. Exercise a canary first. Pin the current digest, preserve rollback, and only then consider a production deploy. **No canary or production change has been made by this PR.**
+
 ## Non-goals and production protection
 
 - Keep RC6 `PULL_IDENTITY_MODE=trakt`, `CANONICAL_ON_DEMAND_VERIFY=false`, 90% completion and current immutable digest.
