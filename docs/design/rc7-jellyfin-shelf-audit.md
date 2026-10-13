@@ -35,7 +35,7 @@ Only use trusted locally stored Jellyfin `Items` responses from the same authent
 
 ### Mode 2: explicit local HTTP GET (operational probe, not a frozen snapshot)
 
-**Important:** AIOStreams' Jellyfin GET handlers call `refreshWatchState`. The audit program performs only two GETs, but **AIOStreams can schedule its normal pull/refresh and mutate its own state indirectly**. Live mode is not a guarantee of zero application writes. It is opt-in and must not be repeated rapidly. It never touches Trakt directly.
+**Important:** AIOStreams' Jellyfin GET handlers call `refreshWatchState`. The audit program performs only two GETs, but **AIOStreams can schedule its normal pull/refresh and mutate its own state indirectly**. Live mode is not a guarantee of zero application writes. It is opt-in and must not be repeated rapidly. Optional Phase B6 adds one GET with the opposite NextUp filter. It never touches Trakt directly.
 
 First use `docker port aiostreams` on the host and identify an existing loopback-reachable published HTTP port. Do not modify Compose, nginx, port forwarding or run new containers. Plain Jellyfin server mount is `http://127.0.0.1:<PORT>/jellyfin`. If no loopback endpoint exists, use offline mode; do not expose AIOStreams to the Internet for this audit.
 
@@ -60,6 +60,25 @@ rm -f "$HOME/.aio-rc7-audit-token"
 ```
 
 Replace `<PORT>` with the actual local published port. The script fails closed on non-loopback URLs, HTTPS/public hosts, embedded credentials, redirects, world-readable token files, invalid JSON and oversize responses. No proxy is used. Do not paste API response bodies or auth headers into issues.
+
+## Phase B6: Test the read-filter hypothesis in one controlled probe
+
+AIOStreams upstream implements `GET /Shows/NextUp?EnableResumable=false`: it filters out resumable episodes in the NextUp response (not necessarily replacing them with the subsequent episode). Default is `true`. The first HomeDocker operator capture returned 20 Resume and 20 NextUp items, zero same-shelf identity matches, but **three cross-shelf exact Jellyfin ID overlaps**: S03E05, S01E10, S02E01. This is consistent with AIO's API design; it is **not yet proof of duplicate rendered client cards**.
+
+To test whether this overlap is created by the default resumable behavior, run **once** with the same authorized Jellyfin scope and temporary key:
+
+```bash
+python3 scripts/audit-jellyfin-shelves.py \
+  --live \
+  --base-url http://127.0.0.1:<PORT>/jellyfin \
+  --token-file "$HOME/.aio-rc7-audit-token" \
+  --limit 20 \
+  --compare-nextup-modes
+```
+
+This issues exactly **three** loopback GETs: Resume, NextUp(`EnableResumable=true`), NextUp(`EnableResumable=false`). It prints the original two-shelf report plus a `NEXTUP_MODE_COMPARISON` block. AIO normal GET-triggered refresh may still run, and sequential API responses are not atomic snapshots. Delete the key file locally and revoke temporary API key afterwards.
+
+Interpret `FLAG_REMOVED_OBSERVED_CROSS_SHELF_OVERLAPS=true` as **the overlap disappeared from the observed API response when the flag was false**. It does not show which API the client actually calls, nor prove the root cause of visible double cards. Neither a Bridge patch nor a blanket nginx query rewrite is warranted on that evidence alone. A specific client request/response trace is the gate before any behavioral change.
 
 ## Interpretation
 
