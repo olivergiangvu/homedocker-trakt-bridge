@@ -83,7 +83,7 @@ class KnownShowNextUpSourceTests(unittest.TestCase):
         text = self.run_audit()
         self.assertIn("CANDIDATE_ROWS=1", text)
         self.assertIn("MATCH=e|tt44051354:1:10", text)
-        self.assertIn("BASE=opaque:", text)
+        self.assertIn("BASE=tt55555555", text)
 
     def test_rejects_ambiguous_scope(self):
         self.db.execute("INSERT INTO watch_sinks VALUES (?,?,?,?,NULL)", (
@@ -99,7 +99,7 @@ class KnownShowNextUpSourceTests(unittest.TestCase):
                 ro.execute("DELETE FROM watch_state")
 
     def test_masks_unknown_key(self):
-        self.assertTrue(audit.safe_key("private-random") .startswith("opaque:"))
+        self.assertTrue(audit.safe_key("private-random").startswith("opaque:"))
         self.assertEqual(audit.safe_key("s|tt44051354"), "s|tt44051354")
         self.assertEqual(audit.safe_key("tt44094505"), "tt44094505")
 
