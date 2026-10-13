@@ -23,7 +23,7 @@ Root cause: one show had two AIO watch-state series keys, Trakt IMDb tt44051354 
 
 ## GitHub branch cleanup
 
-Scripts/cleanup-github-branches.sh is **dry-run by default** and requires an authenticated GitHub CLI. It only deletes local branches still at the exact head commit of a **merged** PR, with no open PR. A documented allowlist of now-closed RC7 experimental branches may be included after exact HEAD checks. The connected GitHub app does not expose branch ref deletion; no branch deletion is claimed before the owner runs the script.
+scripts/cleanup-github-branches.py is **dry-run by default** and requires an authenticated GitHub CLI. It only deletes local branches still at the exact head commit of a **merged** PR, with no open PR. A documented allowlist of now-closed RC7 experimental branches may be included after exact HEAD checks. The connected GitHub app does not expose branch ref deletion; no branch deletion is claimed before the owner runs the script.
 
 Branch refs do **not** consume HomeDocker CPU/RAM.
 
