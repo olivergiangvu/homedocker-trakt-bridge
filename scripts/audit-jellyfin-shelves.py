@@ -174,6 +174,34 @@ def report(resume, nextup, max_details=10):
             "same_shelf": len(rr) + len(nn), "cross": len(cross)}
 
 
+def compare_nextup_modes(resume_json, enabled_json, disabled_json):
+    """Compare the same Resume shelf against NextUp with/without resumable.
+
+    This compares API results, not client card rendering or a transactionally
+    consistent snapshot. Distinct sequential GETs may observe state changes.
+    """
+    resume = parse_items(resume_json, "RESUME")
+    enabled = parse_items(enabled_json, "NEXTUP_TRUE")
+    disabled = parse_items(disabled_json, "NEXTUP_FALSE")
+    a = matching_pairs(resume, enabled)
+    b = matching_pairs(resume, disabled)
+    print("NEXTUP_MODE_COMPARISON")
+    print("NEXTUP_TRUE_ROWS=%d" % len(enabled))
+    print("NEXTUP_FALSE_ROWS=%d" % len(disabled))
+    print("CROSS_NEXTUP_TRUE=%d" % len(a))
+    print("CROSS_NEXTUP_FALSE=%d" % len(b))
+    print("FALSE_NEXTUP_SAME_SHELF_MATCHES=%d" %
+          len(matching_pairs(disabled, disabled, same=True)))
+    if a and not b:
+        print("FLAG_REMOVED_OBSERVED_CROSS_SHELF_OVERLAPS=true")
+    elif a and b:
+        print("FLAG_REMOVED_OBSERVED_CROSS_SHELF_OVERLAPS=false")
+    else:
+        print("FLAG_REMOVED_OBSERVED_CROSS_SHELF_OVERLAPS=not_applicable")
+    print("NOTE=Sequential GETs are not atomic; this does not prove the client combined two shelves.")
+    print("NOTE=EnableResumable=false is a per-request read filter, not a production configuration change.")
+
+
 def checked_local_url(base_url):
     parsed = urlsplit(base_url)
     if (parsed.scheme != "http" or parsed.hostname not in ("127.0.0.1", "localhost", "::1")
@@ -224,16 +252,18 @@ def main(argv=None):
     parser.add_argument("--resume-json", type=Path)
     parser.add_argument("--nextup-json", type=Path)
     parser.add_argument("--live", action="store_true",
-                        help="explicitly permit two loopback GETs; AIO may refresh state on GET")
+                        help="permit bounded loopback GETs; AIO may refresh state on GET")
     parser.add_argument("--base-url", help="e.g. http://127.0.0.1:3000/jellyfin")
     parser.add_argument("--token-file", type=Path, help="chmod 600 Jellyfin token file")
+    parser.add_argument("--compare-nextup-modes", action="store_true",
+                        help="live only: third GET NextUp EnableResumable=false and summarize difference")
     parser.add_argument("--limit", type=int, default=12)
     args = parser.parse_args(argv)
     if not 1 <= args.limit <= 50:
         stop("limit must be 1..50")
     offline = bool(args.resume_json or args.nextup_json)
     if offline:
-        if args.live or args.base_url or args.token_file or not (args.resume_json and args.nextup_json):
+        if args.live or args.base_url or args.token_file or args.compare_nextup_modes or not (args.resume_json and args.nextup_json):
             stop("offline mode requires both JSON files and no live flags")
         resume = json.loads(args.resume_json.read_text(encoding="utf-8"))
         nextup = json.loads(args.nextup_json.read_text(encoding="utf-8"))
@@ -252,6 +282,12 @@ def main(argv=None):
             token
         )
     report(resume, nextup)
+    if args.compare_nextup_modes:
+        nextup_without = get_json(
+            opener, base + "/Shows/NextUp?Limit=%d&EnableResumable=false" % args.limit,
+            token
+        )
+        compare_nextup_modes(resume, nextup, nextup_without)
 
 
 if __name__ == "__main__":
