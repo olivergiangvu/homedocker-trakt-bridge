@@ -250,6 +250,7 @@ def trace_known_show(resume_json, nextup_json, disabled_json=None):
     seen = set()
     identified = 0
     per_episode = defaultdict(list)
+    nextup_identified = []
     for shelf, items in captures:
         matched = 0
         packed = 0
@@ -270,6 +271,8 @@ def trace_known_show(resume_json, nextup_json, disabled_json=None):
             item_id = item.get("Id")
             if ep and isinstance(item_id, str):
                 per_episode[ep].append((shelf, sha(item_id), frozenset(refs)))
+                if shelf == "NEXTUP_TRUE":
+                    nextup_identified.append((sha(item_id), ep, frozenset(refs)))
             print("SHOW_ROW SHELF=%s KIND=%s EP=%s ITEM_HASH=%s REF=%s" % (
                 shelf, str(item.get("Type", "unknown")).lower(), label,
                 sha(item_id) if isinstance(item_id, str) and item_id else "-",
@@ -288,6 +291,17 @@ def trace_known_show(resume_json, nextup_json, disabled_json=None):
     print("SHOW_TRACE_MATCHED_ROWS=%d" % identified)
     print("SHOW_TRACE_REFS=%s" % (",".join(sorted(seen)) or "-"))
     print("SHOW_DUAL_IMDB_SAME_EP_CANDIDATES=%d" % len(collisions))
+    trakt_next = {item_hash for item_hash, _, refs in nextup_identified
+                  if "TRAKT_IMDB" in refs}
+    aio_next = {item_hash for item_hash, _, refs in nextup_identified
+                if "AIO_IMDB" in refs}
+    both_nextup = bool(trakt_next and aio_next and
+                       any(a != b for a in trakt_next for b in aio_next))
+    print("SHOW_NEXTUP_DUAL_IMDB_DISTINCT_ITEMS=%s" % str(both_nextup).lower())
+    if both_nextup:
+        for item_hash, ep, refs in nextup_identified[:10]:
+            print("SHOW_NEXTUP_CANDIDATE EP=S%02dE%02d ITEM_HASH=%s REF=%s" %
+                  (ep[0], ep[1], item_hash, ",".join(sorted(refs))))
     for season, episode in collisions[:10]:
         print("SHOW_DUAL_IMDB_EP=S%02dE%02d" % (season, episode))
     if "TRAKT_IMDB" in seen and "AIO_IMDB" in seen:
