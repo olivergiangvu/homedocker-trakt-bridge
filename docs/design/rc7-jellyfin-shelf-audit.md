@@ -121,6 +121,39 @@ The script decodes **only** the public `a1` packed Jellyfin IDs directly accordi
 
 `SHOW_DUAL_IMDB_SAME_EP_CANDIDATES` counts instances where two *different* packed/provider-backed Jellyfin IDs for the **same SxxExx** show both documented IMDb aliases across captured shelves. It does not prove either card is displayed; when zero, native Trakt IDs, opaque AIO IDs or uncaptured catalog entries remain possibilities. This is a **bounded evidence collector**, not a deduplication feature. In particular, do not change `PULL_IDENTITY_MODE=trakt`.
 
+## Phase B7 result: production NextUp emits two episode cards for one show
+
+Operator's scoped 50-row Jellyfin API capture:
+
+```text
+RESUME_ROWS=50
+NEXTUP_ROWS=50
+RESUME_SAME_SHELF_MATCHES=0
+NEXTUP_SAME_SHELF_MATCHES=0
+CROSS_SHELF_MATCHES=8
+SHOW_ROW SHELF=RESUME KIND=episode EP=S01E10 REF=TRAKT_IMDB
+SHOW_ROW SHELF=NEXTUP_TRUE KIND=episode EP=S01E10 REF=TRAKT_IMDB
+SHOW_ROW SHELF=NEXTUP_TRUE KIND=episode EP=S01E09 REF=AIO_IMDB
+SHOW_DUAL_IMDB_SAME_EP_CANDIDATES=0
+SHOW_TRACE_CLASS=DUAL_IMDB_IN_CAPTURE
+```
+
+The **specific double-card problem** is the NextUp list containing **S01E10 keyed to Trakt IMDb and S01E09 keyed to AIO IMDb**, not generic Resume/NextUp shelf overlap. Two distinct episodes of the same series under two identity spellings are not detected by an *exact episode* collision test. Updated auditor now prints `SHOW_NEXTUP_DUAL_IMDB_DISTINCT_ITEMS=true` on this pattern.
+
+**Source-grounded probable producing layer:** AIOStreams `packages/core/src/db/repositories/watch-state.ts` `recentSeries()` aggregates rows by `series_key` and has a limited canonical `match_key`-based dedupe. In `packages/server/src/routes/jellyfin/library.ts` `/Shows/NextUp`, a final `shown` set dedupes by built `SeriesId`, which can differ for two packed Jellyfin IDs with distinct IMDb bases. In `packages/server/src/routes/jellyfin/items.ts` `watchingPosition()`, absent/incorrect mappings to watched state can make S01E09 look unplayed even when a Trakt-spelled S01E09 is watched. Exact source rows / series keys are not established until Phase B8; do **not** assert the cause as proven.
+
+## Phase B8: Query provenance under the exact Bridge-connected AIO scope
+
+`scripts/audit-known-show-nextup-origin.py` uses **only** a local SQLite `mode=ro` connection and `PRAGMA query_only=ON`. It requires exactly one active Bridge sink `homedocker-trakt-bridge` / `e3fe3b0`, reads only that sink's `uuid/persona` (prints a hash) and searches `item_key/match_key/base_id/series_key/video_id` for the documented immutable fixture IDs only. It does not read tokens or make HTTP requests.
+
+```bash
+sudo python3 scripts/audit-known-show-nextup-origin.py
+```
+
+Expected diagnostic fields: `SERIES_KEY_GROUP_COUNT`, `SERIES_GROUP KEY=... ROWS=... ANCHOR_ITEM=... ANCHOR_EP=...`, scoped `ROW KEY=... MATCH=... BASE=... SERIES=... VIDEO=... EP=... PLAYED=...`. It will distinguish two separate source series-key groups, alternate TMDB/TVDB source mapping, or a case where the second rendered NextUp identity arises from metadata projection rather than an additional local `item_key`.
+
+No repair is attempted. Do not change `EnableResumable` globally, remove S01E09 watched history, or switch Bridge pull to AIO IMDb. A fix must be scoped to verified Trakt/TMDB/TVDB show anchors, dedup the **show-level NextUp candidates**, preserve the furthest watched/resume point, and retain unrelated shows / rewatches.
+
 ## Non-goals and production protection
 
 - Keep RC6 `PULL_IDENTITY_MODE=trakt`, `CANONICAL_ON_DEMAND_VERIFY=false`, 90% completion and current immutable digest.
