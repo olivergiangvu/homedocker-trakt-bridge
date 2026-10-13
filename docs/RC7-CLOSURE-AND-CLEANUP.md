@@ -49,12 +49,43 @@ The first GitHub branch cleanup dry-run failed **before any deletion**, because 
 
 Run the separate `scripts/audit-dangling-image-ownership.py` to classify *exact active container image IDs* versus images unreferenced by a container, plus weak shared-layer family hints. All unreferenced images remain **review-only candidates** until rollback ownership is determined. This tool does not remove images or expose Docker env vars.
 
+## Verified cleanup execution and Netdata image plan — 2026-10-13
+
+HomeDocker owner subsequently ran the corrected GitHub CLI tool with `--apply` and provided complete terminal confirmation:
+
+- `ELIGIBLE_BRANCHES=72`, `DELETED_COUNT=72`, including exactly 3 archived unmerged RC7 experiments. The tool re-checked SHA before each deletion.
+- Live GitHub follow-up confirmed only **5 branches** remain: `main`, two active Dependabot PR heads (`#41` and `#52`), and two historical unmerged branches (`feature/v0.3.1-bulk`, `investigate/v1.2-rc3b-activity-probe`). The remaining unmerged branches are deliberately preserved.
+- `docker builder prune --force --filter 'until=168h'` ran, reclaiming **511.8kB**; cache total changed from 146.7 MB to 146.2 MB. This was a conservative age filter, not an error.
+- Four single-use RC7 diagnostic scripts were moved to `~/.local/share/homedocker/rc7-archive/`; three read-only operational monitors remain available in `$HOME`.
+- `docker system df` afterwards: 44 images / 17 active / 10.91GB size / 4.754GB reported reclaimable; 17/17 containers running; 13/13 volumes active, 2.841GB; build cache 102 entries / 146.2MB.
+
+The follow-up `audit-dangling-image-ownership.py` attributed **all 11 dangling images**:
+
+| ID prefix | OCI title / family | Status | Policy |
+| --- | --- | --- | --- |
+| `74ef797c7d85` | HomeDocker Trakt Bridge RC6 | **In use by trakt-bridge** | NEVER DELETE |
+| `14bff67c4793` | Netdata Agent, 2026-10-11 | No containers reference; newest old Netdata | **KEEP** as one previous-version rollback |
+| `2dda65388cd7` | Netdata Agent, 2026-10-09 | Unreferenced | **Candidate** for targeted deletion after repeat runtime guards |
+| `71557c7ceea0` | Netdata Agent, 2026-10-08 | Unreferenced | **Candidate** for targeted deletion after repeat runtime guards |
+| `61990eba2b34` | Netdata Agent, 2026-10-07 | Unreferenced | **Candidate** for targeted deletion after repeat runtime guards |
+| `93880aa8bc0c` | Bridge prior RC image | Unreferenced | KEEP as downgrade reference |
+| `85e4ca3ada3d` | CrossWatch prior image, 2026-10-08 | Unreferenced | KEEP for rollback for now |
+| `6625e40fa9f3` | CrossWatch older image, 2026-10-04 | Unreferenced | Consider later after backup review |
+| `432783323139` | WUD prior image | Unreferenced | KEEP for rollback for now |
+| `e0e244bbd4b3` | Trellis/bun prior image | Unreferenced | KEEP for rollback for now |
+| `f734cda1e75f` | AIOStreams prior image | Unreferenced | KEEP rollback, while AIO production stays `latest` |
+
+Candidate Netdata image reported *logical image sizes* ~916–917 MiB each. **Actual freed disk is not simply the sum** because Docker layer/content storage may be shared. No image deletion is claimed yet. For future cleanup, revalidate the **full SHA** of each exact candidate, check OCI title and all *running + stopped* container references and verify that current Netdata and a prior rollback image remain available before using targeted `docker image rm <full-SHA>`. Abort if IDs, running state, tags or ownership changed since this audit. Never call broad `docker image prune`.
+
+Neither branch cleanup nor Docker build-cache pruning reduces RAM usage of active CrossWatch, Homebridge, AIOMetadata, Remux, etc. Zombie process count and host restart requirements are separate Linux host-maintenance concerns, not a justification for restarting the media stack during this cleanup.
+
 ## Completion
 
 - [x] Live HomeDocker contract and real clients verified.
 - [x] PR #86 merged; monitor/compatibility CI green.
 - [x] RC7 test-only PRs closed unmerged.
 - [x] AIO latest and independent Bridge release policy preserved.
-- [ ] Local authenticated GitHub branch sweep.
-- [ ] HomeDocker inventory and deletion of verified orphaned test resources.
+- [x] Local authenticated GitHub branch sweep — 72 refs deleted, 5 intentionally retained and verified via live GitHub.
+- [x] HomeDocker inventory and RC7 scratch archival; old build cache pruned conservatively.
+- [ ] Targeted Netdata image cleanup (3 identified obsolete candidates), still not executed.
 - [ ] Separate Bridge v1.3 Stable soak, backup/rollback and native-Trakt writer gates.
