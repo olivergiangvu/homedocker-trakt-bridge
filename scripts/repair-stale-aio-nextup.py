@@ -116,6 +116,7 @@ def inspect_local(db, *, expect_dropped=False):
     print("STALE_AIO_WATCHED=8")
     print("STALE_AIO_LATEST=S01E08")
     print("HISTORY_ROWS_UNCHANGED=18")
+    return (uuid, persona)
 
 
 def packed_series_id(imdb):
@@ -272,7 +273,7 @@ def run(args):
     if args.undo and args.apply:
         stop("--undo and --apply are mutually exclusive")
     with closing(open_readonly(args.aio_db)) as db:
-        inspect_local(db, expect_dropped=args.undo)
+        scope = inspect_local(db, expect_dropped=args.undo)
     base = loopback_url(args.base_url)
     token = read_token(args.token_file)
     opener = build_opener(ProxyHandler({}), NoRedirect())
@@ -284,9 +285,9 @@ def run(args):
         request(opener, "DELETE", base + "/UserItems/" + series_id + "/Rating", token)
         with closing(open_readonly(args.aio_db)) as db:
             check = db.execute(
-                "SELECT dropped FROM watch_state WHERE item_key=? AND "
-                "series_key=? AND base_id=?",
-                ("s|" + AIO, "s|" + AIO, AIO),
+                "SELECT dropped FROM watch_state WHERE uuid=? AND persona=? "
+                "AND item_key=? AND series_key=? AND base_id=?",
+                (scope[0], scope[1], "s|" + AIO, "s|" + AIO, AIO),
             ).fetchall()
         if len(check) != 1 or int(check[0]["dropped"] or 0) != 0:
             stop("rollback API call accepted but stored drop was not cleared; inspect scope")
