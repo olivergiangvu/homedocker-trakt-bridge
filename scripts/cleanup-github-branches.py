@@ -29,16 +29,24 @@ def api(path, *extra):
     return cp.stdout
 
 
-def pages(path):
-    data = json.loads(api(path, "--paginate", "--slurp"))
-    if not isinstance(data, list):
-        raise RuntimeError("unexpected GitHub response")
-    result = []
-    for page in data:
-        if not isinstance(page, list):
-            raise RuntimeError("unexpected GitHub paginated response")
-        result.extend(page)
-    return result
+def pages(path, *, per_page=100, max_pages=30):
+    """Manual pagination for older gh CLI: --slurp is NOT universally supported.
+
+    Fetch complete REST pages explicitly and fail closed on excessively large
+    result sets. Never use partial branch/PR evidence for --apply deletion.
+    """
+    if "page=" in path or not path.startswith("repos/" + REPO + "/"):
+        raise RuntimeError("pagination path is not the expected repository route")
+    all_rows = []
+    for page in range(1, max_pages + 1):
+        sep = "&" if "?" in path else "?"
+        payload = json.loads(api(path + sep + "page=" + str(page)))
+        if not isinstance(payload, list):
+            raise RuntimeError("unexpected GitHub page response; abort cleanup")
+        all_rows.extend(payload)
+        if len(payload) < per_page:
+            return all_rows
+    raise RuntimeError("pagination exceeded safe page budget; abort cleanup")
 
 
 def select_candidates(branches, pulls):
