@@ -113,6 +113,17 @@ If a future release changes the database schema, restore the matching pre-upgrad
 
 For schema-compatible releases, still verify `/readiness`, profile connection state and client watched/resume state after rollback instead of assuming image replacement alone is sufficient.
 
+## RC7 phase housekeeping (safe, non-destructive)
+
+The RC7 rolling compatibility phase passed its HomeDocker API contract checks on 2026-10-13 and experimental PRs #83 and #85 were closed **without merge**. The canonical read-only monitors are in main via PR #86; Bridge production stays RC6 and AIOStreams continues upstream `latest`. This is **not** a v1.3 Stable promotion.
+
+- Run `scripts/audit-homedocker-docker-cleanup.sh` to enumerate Docker CPU/RAM/disk, stopped containers, build cache, dangling volumes/images and RC7 local scratch filenames **without deleting anything**.
+- Run `scripts/cleanup-github-branches.py` under an authenticated `gh` CLI for a dry-run list of historical merged branches and documented closed RC7 experiments. Use `--apply` only after inspecting the candidates; it never removes tags, active PR branches, Dependabot branches or main.
+- Do not assume stopped containers, dangling images or unused volumes are safe to prune. They may contain rollback images, state or disaster recovery backups. Never run broad `docker system prune -a --volumes`, `docker volume prune`, `docker compose down -v` or delete `/var/lib/docker`.
+- Preserve the one-off repair rollback reference in [RC7 closure and cleanup](RC7-CLOSURE-AND-CLEANUP.md), but never schedule automatic series-drop/Trakt history repairs.
+
+Inspect exact Docker cleanup candidates before removal; removing a Github branch **does not free Docker RAM**.
+
 ## Logs
 
 Recent container logs:
