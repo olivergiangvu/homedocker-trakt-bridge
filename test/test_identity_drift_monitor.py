@@ -91,8 +91,7 @@ class IdentityDriftMonitorTests(unittest.TestCase):
         self.assertEqual((show["alias_episode_rows"], show["canonical_episode_rows"]), (8, 10))
         self.assertEqual((show["alias_watched"], show["canonical_watched"]), (8, 9))
         self.assertEqual(show["canonical_resumes"], 1)
-        self.assertEqual(result["scope_hash"], "0e0b" if False else
-                         __import__("hashlib").sha256(b"private-sink-uuid\x1f").hexdigest()[:12])
+        self.assertEqual(result["scope_hash"],\n                         __import__("hashlib").sha256(b"private-sink-uuid\x1f").hexdigest()[:12])
 
     def test_after_successful_owner_side_drop_no_alert(self):
         self.put_fixture()
