@@ -192,9 +192,6 @@ def list_items(payload, name):
 
 
 def api_preflight(resume, nextup):
-    if len(resume) != 50 or len(nextup) != 50:
-        # No page length requirement: exact fixture may be in a short list.
-        pass
     canonical = []
     stale = []
     for item in nextup:
@@ -202,7 +199,7 @@ def api_preflight(resume, nextup):
         series = packed_id(item.get("SeriesId"))
         if not ep or ep[0] != "episode" or not series or series[0] != "series":
             continue
-        if series[1] == TRAKT and ep[1] == TRAKT and ep[2:] == (1, 10):
+        if series[1] == TRAKT and ep[2:] == (1, 10):
             canonical.append(item)
         if series[1] == AIO and ep[2:] == (1, 9):
             stale.append(item)
@@ -218,7 +215,9 @@ def api_preflight(resume, nextup):
     active = []
     for item in resume:
         ep = packed_id(item.get("Id"))
-        if ep and ep[:3] == ("episode", TRAKT, 1) and ep[3] == 10:
+        series = packed_id(item.get("SeriesId"))
+        if (ep and series and ep[0] == "episode" and ep[2:] == (1, 10)
+                and series[0] == "series" and series[1] == TRAKT):
             ticks = (item.get("UserData") or {}).get("PlaybackPositionTicks")
             if isinstance(ticks, (int, float)) and ticks > 0:
                 active.append(item)
@@ -238,8 +237,13 @@ def verify_nextup_after(opener, base, token, original_id):
     if any(x.get("SeriesId") == original_id for x in rows):
         print("POST_VERIFY=FAILED_STALE_SERIES_STILL_PRESENT")
         return False
-    if not any((lambda d: d and d[:3] == ("episode", TRAKT, 1) and d[3] == 10)(
-               packed_id(x.get("Id"))) for x in rows):
+    if not any(
+        (lambda ep, series: ep and series
+         and ep[0] == "episode" and ep[2:] == (1, 10)
+         and series[0] == "series" and series[1] == TRAKT)(
+            packed_id(x.get("Id")), packed_id(x.get("SeriesId"))
+        ) for x in rows
+    ):
         print("POST_VERIFY=FAILED_CANONICAL_S01E10_NOT_VISIBLE")
         return False
     print("POST_VERIFY=PASS_STALE_SERIES_ABSENT_CANONICAL_RETAINED")
