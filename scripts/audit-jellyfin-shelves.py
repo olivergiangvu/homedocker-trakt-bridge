@@ -249,6 +249,7 @@ def trace_known_show(resume_json, nextup_json, disabled_json=None):
     print("TRAKT_SHOW_ID=263102 TMDB=276470 TVDB=480791")
     seen = set()
     identified = 0
+    per_episode = defaultdict(list)
     for shelf, items in captures:
         matched = 0
         packed = 0
@@ -267,6 +268,8 @@ def trace_known_show(resume_json, nextup_json, disabled_json=None):
             ep = episode_numbers(item)
             label = ("S%02dE%02d" % ep) if ep else "-"
             item_id = item.get("Id")
+            if ep and isinstance(item_id, str):
+                per_episode[ep].append((shelf, sha(item_id), frozenset(refs)))
             print("SHOW_ROW SHELF=%s KIND=%s EP=%s ITEM_HASH=%s REF=%s" % (
                 shelf, str(item.get("Type", "unknown")).lower(), label,
                 sha(item_id) if isinstance(item_id, str) and item_id else "-",
@@ -275,8 +278,18 @@ def trace_known_show(resume_json, nextup_json, disabled_json=None):
         print("SHOW_SHELF=%s KNOWN_MATCH_ROWS=%d PACKED_ROW_CANDIDATES=%d OPAQUE_ROW_CANDIDATES=%d" %
               (shelf, matched, packed, opaque))
         identified += matched
+    collisions = []
+    for episode, rows in sorted(per_episode.items()):
+        spellings = set().union(*(r[2] for r in rows))
+        item_hashes = {r[1] for r in rows}
+        if ("TRAKT_IMDB" in spellings and "AIO_IMDB" in spellings
+                and len(item_hashes) > 1):
+            collisions.append(episode)
     print("SHOW_TRACE_MATCHED_ROWS=%d" % identified)
     print("SHOW_TRACE_REFS=%s" % (",".join(sorted(seen)) or "-"))
+    print("SHOW_DUAL_IMDB_SAME_EP_CANDIDATES=%d" % len(collisions))
+    for season, episode in collisions[:10]:
+        print("SHOW_DUAL_IMDB_EP=S%02dE%02d" % (season, episode))
     if "TRAKT_IMDB" in seen and "AIO_IMDB" in seen:
         print("SHOW_TRACE_CLASS=DUAL_IMDB_IN_CAPTURE")
     elif seen:
