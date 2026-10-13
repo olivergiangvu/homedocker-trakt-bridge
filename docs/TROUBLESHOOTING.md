@@ -25,7 +25,11 @@ First determine whether the duplicate exists in AIOStreams state or only in the 
 
 ### 1. Check AIOStreams watch state
 
-If two different provider identities exist for the same title, identify which sink created each row.
+If two different provider identities exist for the same title, identify which sink created each row. **Compare `series_key` and `base_id`, not only `item_key`**: an episode can be keyed under `e|tmdb:...:S:E` while its parent is `s|tt...`. A query matching only `e|ttOLD:%` can miss an entire local AIO history timeline.
+
+HomeDocker's 2026-10-13 *Ok! Let's Get Divorced* regression was precisely this pattern: two different parent `series_key` groups, with the Trakt branch watched through S01E09 / S01E10 resumed and the local AIO branch watched only through S01E08. Both histories were in the same watch-state scope; AIO `NextUp` returned S01E10 and stale S01E09.
+
+The existing AIOStreams Jellyfin series-level `dropped` preference successfully hid the obsolete AIO branch **without modifying AIOStreams code or deleting 18 episode records**, and the operator confirmed all clients showed one card afterward. This is reversible but not permanent alias normalization: playback under the obsolete series may undrop it. Use the read-only `scripts/monitor-identity-drift.py` and the guarded owner-side repair documented in [Stable qualification](design/v1.3-stable-qualification.md) rather than clearing history. No automatic repeat repair is authorized.
 
 HomeDocker production should have one external watched/resume read authority:
 
