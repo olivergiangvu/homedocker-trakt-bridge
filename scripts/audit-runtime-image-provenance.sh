@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Read-only image provenance gate for the existing HomeDocker deployment.
+# Read-only provenance inventory for independent rollback evidence; not a pinning gate.
 # No pulls, restarts, updates, environment or credential output.
 set -euo pipefail
 
@@ -25,4 +25,7 @@ for name in trakt-bridge aiostreams; do
   printf ' LOCAL_REPO_DIGEST_CANDIDATES=%s\n' "$repo_digests"
 done
 echo "CHECK=READ_ONLY_NO_PULL_NO_RESTART"
-echo "NOTE=RepoDigests are local Docker metadata; validate candidate repo/digest points to the running image ID before pinning Compose."
+echo "POLICY_BRIDGE=PIN_QUALIFIED_DIGEST"
+echo "POLICY_AIOSTREAMS=FOLLOW_UPSTREAM_LATEST"
+echo "NOTE=RepoDigests are local rollback provenance, NOT a requirement to pin AIOStreams Compose."
+echo "NOTE=Compatibility is judged by integration checks after an AIOStreams update, not by a fixed AIO image digest."
