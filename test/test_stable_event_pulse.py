@@ -89,6 +89,37 @@ class StablePulseTests(unittest.TestCase):
         self.assertEqual(report["counts"]["explicit_terminal_422_errors"], 1)
         self.assertEqual(report["counts"].get("explicit_rate_limit_signals", 0), 0)
 
+    def test_full_global_log_with_oldest_event_before_window_has_covered_boundary(self):
+        # The event log is capped globally, not per-profile. 1,000 rows do not
+        # necessarily mean the LAST 24h was truncated.
+        self.add("pull", "ok", {}, at=100)
+        for i in range(999):
+            self.add("pull", "ok", {}, at=10001 + i)
+        report = self.run_report(now=12000, hours=1)
+        self.assertEqual(report["retained_events_global_total"], 1000)
+        self.assertTrue(report["retention_cap_reached"])
+        self.assertEqual(report["oldest_retained_global_at"], 100)
+        self.assertTrue(report["window_boundary_covered_by_retained_events"])
+        self.assertFalse(report["event_log_may_be_truncated"])
+        self.assertEqual(report["window_coverage"], "supported_by_older_retained_event")
+
+    def test_full_global_log_starting_inside_window_cannot_prove_coverage(self):
+        for i in range(1000):
+            self.add("pull", "ok", {}, at=10000 + i)
+        report = self.run_report(now=12000, hours=1)
+        self.assertTrue(report["event_log_may_be_truncated"])
+        self.assertFalse(report["window_boundary_covered_by_retained_events"])
+        self.assertEqual(report["window_coverage"], "possibly_truncated_in_window")
+
+    def test_global_cap_matters_when_other_profile_holds_older_evidence(self):
+        self.add("pull", "ok", {}, at=100, profile="other-user")
+        for i in range(999):
+            self.add("pull", "ok", {}, at=10000 + i)
+        report = self.run_report(now=12000, hours=1)
+        self.assertEqual(report["retained_events_global_total"], 1000)
+        self.assertEqual(report["retained_events_total"], 999)
+        self.assertFalse(report["event_log_may_be_truncated"])
+
     def test_readonly_and_single_profile_guards(self):
         with contextlib.closing(pulse.database(self.path)) as db:
             with self.assertRaises(sqlite3.OperationalError):
