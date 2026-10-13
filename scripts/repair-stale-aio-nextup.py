@@ -315,6 +315,9 @@ def run(args):
     request(opener, "POST", base + "/UserItems/" + series_id +
             "/Rating?Likes=false", token, data=b"")
     print("OFFICIAL_AIO_SERIES_DROP_POST_ACCEPTED=true")
+    with closing(open_readonly(args.aio_db)) as db:
+        inspect_local(db, expect_dropped=True)
+    print("POST_DB_VERIFY=DROP_ROW_SET_EPISODE_HISTORY_UNCHANGED")
     if not verify_nextup_after(opener, base, token, series_id):
         stop("post-write NextUp verification failed; no automatic rollback")
 
