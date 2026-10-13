@@ -41,6 +41,8 @@ These pages are intentionally kept out of the main README because most users do 
 - [Architecture](ARCHITECTURE.md) — protocol boundaries and authority model
 - [Development](DEVELOPMENT.md) — contributor notes, identity edge cases, tests and release engineering
 - [Release acceptance records](releases/) — canary, published-artifact and HomeDocker acceptance history
+- [RC7 closure and cleanup](RC7-CLOSURE-AND-CLEANUP.md) — operational acceptance, archived PRs, branch housekeeping and Docker safe inventory
+- [v1.3 Stable qualification](design/v1.3-stable-qualification.md) — remaining release gates, separate from completed RC7 tooling
 - [Security policy](../SECURITY.md)
 - [Changelog](../CHANGELOG.md)
 
