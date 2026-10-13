@@ -91,6 +91,36 @@ Interpret `FLAG_REMOVED_OBSERVED_CROSS_SHELF_OVERLAPS=true` as **the overlap dis
 
 A single capture is limited to `Limit<=50`; a result outside this page is inconclusive. The fixture `tt44051354` / `tt44094505` is a known crosswalk **only for the documented show**. Do not infer equivalence from text, or globally remap IMDb IDs.
 
+## Phase B7: Isolate the single recurring show
+
+**Scope correction from operator:** the visible *double Continue Watching cards* affect only **Ok! Let's Get Divorced** across clients. The 3 cross-shelf exact-ID overlaps found in Phase B5 and their removal under `EnableResumable=false` in Phase B6 are **normal generic API behavior**, not evidence that all 3 shows have duplicated client cards. Do not disable resumables globally, and do not rewrite NextUp requests in nginx.
+
+The permanent single-title fixture from `docs/DEVELOPMENT.md` is:
+
+| Role | ID |
+| --- | --- |
+| Trakt IMDb | `tt44051354` |
+| AIOStreams IMDb | `tt44094505` |
+| Trakt show | `263102` |
+| TMDB | `276470` |
+| TVDB | `480791` |
+
+To trace the two spellings **within only the already-fetched API shelf responses**, add `--trace-known-show` to the Phase B6 command:
+
+```bash
+python3 scripts/audit-jellyfin-shelves.py \
+  --live \
+  --base-url http://127.0.0.1:3240/jellyfin \
+  --token-file "$HOME/.aio-rc7-audit-token" \
+  --limit 50 \
+  --compare-nextup-modes \
+  --trace-known-show
+```
+
+The script decodes **only** the public `a1` packed Jellyfin IDs directly according to AIOStreams `packages/core/src/jellyfin/ids.ts` and checks already-present `ProviderIds` for these exact providers. A `b2` hashed ID is opaque and must never be interpreted as an IMDb alias. Each matching row prints a hashed item ID and episode number; no raw item IDs, private names, or credentials. If matching rows were excluded by a 20-row page, the larger 50-row sample might locate them, but not all history is guaranteed to be represented.
+
+`SHOW_DUAL_IMDB_SAME_EP_CANDIDATES` counts instances where two *different* packed/provider-backed Jellyfin IDs for the **same SxxExx** show both documented IMDb aliases across captured shelves. It does not prove either card is displayed; when zero, native Trakt IDs, opaque AIO IDs or uncaptured catalog entries remain possibilities. This is a **bounded evidence collector**, not a deduplication feature. In particular, do not change `PULL_IDENTITY_MODE=trakt`.
+
 ## Non-goals and production protection
 
 - Keep RC6 `PULL_IDENTITY_MODE=trakt`, `CANONICAL_ON_DEMAND_VERIFY=false`, 90% completion and current immutable digest.
