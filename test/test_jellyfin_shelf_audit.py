@@ -67,6 +67,19 @@ class ShelfAuditTests(unittest.TestCase):
         self.assertIn("SHOW_DUAL_IMDB_EP=S01E10", output)
         self.assertIn("SHOW_TRACE_CLASS=DUAL_IMDB_IN_CAPTURE", output)
 
+    def test_same_series_two_different_episodes_in_nextup_reports_dual_identity(self):
+        trakt = episode(self.packed("episode", "tt44051354", 1, 10), number=10)
+        trakt["SeriesId"] = self.packed("series", "tt44051354")
+        trakt["ProviderIds"] = {}
+        aio = episode(self.packed("episode", "tt44094505", 1, 9), number=9)
+        aio["SeriesId"] = self.packed("series", "tt44094505")
+        aio["ProviderIds"] = {}
+        output = self.trace([trakt], [trakt, aio])
+        self.assertIn("SHOW_DUAL_IMDB_SAME_EP_CANDIDATES=0", output)
+        self.assertIn("SHOW_NEXTUP_DUAL_IMDB_DISTINCT_ITEMS=true", output)
+        self.assertIn("SHOW_NEXTUP_CANDIDATE EP=S01E09", output)
+        self.assertIn("SHOW_NEXTUP_CANDIDATE EP=S01E10", output)
+
     def test_same_episode_same_item_across_shelves_is_not_dual_imdb(self):
         trakt = episode(self.packed("episode", "tt44051354", 1, 10))
         trakt["SeriesId"] = self.packed("series", "tt44051354")
@@ -74,6 +87,7 @@ class ShelfAuditTests(unittest.TestCase):
         output = self.trace([trakt], [trakt])
         self.assertIn("SHOW_DUAL_IMDB_SAME_EP_CANDIDATES=0", output)
         self.assertIn("SHOW_TRACE_CLASS=PARTIAL_IDENTITY_IN_CAPTURE", output)
+        self.assertIn("SHOW_NEXTUP_DUAL_IMDB_DISTINCT_ITEMS=false", output)
 
     def test_unrelated_title_does_not_trigger_show_fuzzy_match(self):
         unrelated = episode(self.packed("episode", "tt99999999", 1, 10))
