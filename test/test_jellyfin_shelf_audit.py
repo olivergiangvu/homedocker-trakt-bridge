@@ -121,6 +121,32 @@ class ShelfAuditTests(unittest.TestCase):
                 module.main(["--resume-json", str(a), "--nextup-json", str(b)])
             self.assertIn("MODE=OFFLINE_JSON_NO_HTTP", buf.getvalue())
 
+    def test_compare_nextup_modes_eliminates_exact_overlap(self):
+        value = episode("same")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            module.compare_nextup_modes(
+                {"Items": [value]},
+                {"Items": [value]},
+                {"Items": []},
+            )
+        self.assertIn("CROSS_NEXTUP_TRUE=1", out.getvalue())
+        self.assertIn("CROSS_NEXTUP_FALSE=0", out.getvalue())
+        self.assertIn("FLAG_REMOVED_OBSERVED_CROSS_SHELF_OVERLAPS=true", out.getvalue())
+
+    def test_compare_nextup_modes_retained_overlap(self):
+        value = episode("same")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            module.compare_nextup_modes(
+                {"Items": [value]}, {"Items": [value]}, {"Items": [value]}
+            )
+        self.assertIn("FLAG_REMOVED_OBSERVED_CROSS_SHELF_OVERLAPS=false", out.getvalue())
+
+    def test_compare_requires_live_mode(self):
+        with self.assertRaises(SystemExit):
+            module.main(["--compare-nextup-modes"])
+
     def test_live_api_only_uses_two_gets(self):
         class FakeResponse:
             def __enter__(self):
