@@ -47,7 +47,8 @@ def safe_detail(raw):
     return obj if isinstance(obj, dict) else {}
 
 
-def classify_events(rows, *, min_at, max_at, retained_count):
+def classify_events(rows, *, min_at, max_at, retained_count,
+                    global_count=0, oldest_global_at=None):
     stats = Counter()
     decisions = Counter()
     for row in rows:
@@ -90,8 +91,19 @@ def classify_events(rows, *, min_at, max_at, retained_count):
             if detail.get("writesTrakt") is not False:
                 stats["compare_write_safety_warning"] += 1
 
+    # Event pruning is GLOBAL (last 1,000 IDs), not per profile.
+    # A full log alone does not mean this particular window is incomplete:
+    # if the globally oldest retained event predates the window's start,
+    # later rows have not crossed the retention boundary (normal time order).
+    # Timestamps can be affected by clock corrections, so this is evidence,
+    # not a cryptographic proof of uninterrupted event recording.
+    cap_hit = global_count >= MAX_EVENTS
+    boundary_covered = (
+        oldest_global_at is not None and oldest_global_at <= min_at
+    )
+    possible_loss = cap_hit and not boundary_covered
     return {
-        "monitor": "homedocker-stable-event-pulse-v1",
+        "monitor": "homedocker-stable-event-pulse-v2",
         "mode": "SQLITE_READ_ONLY",
         "window_hours": int((max_at - min_at) / 3600),
         "window_start_unix": min_at,
@@ -99,7 +111,16 @@ def classify_events(rows, *, min_at, max_at, retained_count):
         "retained_events_total": retained_count,
         "window_events": len(rows),
         "retention_cap": MAX_EVENTS,
-        "event_log_may_be_truncated": retained_count >= MAX_EVENTS,
+        "retained_events_global_total": global_count,
+        "retention_cap_reached": cap_hit,
+        "oldest_retained_global_at": oldest_global_at,
+        "window_boundary_covered_by_retained_events": boundary_covered,
+        "window_coverage": (
+            "supported_by_older_retained_event" if boundary_covered
+            else "possibly_truncated_in_window" if possible_loss
+            else "not_proven_from_short_log"
+        ),
+        "event_log_may_be_truncated": possible_loss,
         "counts": dict(sorted(stats.items())),
         "compare_decisions": dict(sorted(decisions.items())),
         "data_limitations": [
@@ -107,6 +128,7 @@ def classify_events(rows, *, min_at, max_at, retained_count):
             "cannot measure native-Trakt client writes",
             "explicit 429/422 counts may undercount undocumented error shapes",
             "absence of observed errors does not prove soak or stable eligibility",
+            "window coverage assumes normally ordered created_at timestamps and no manual log deletion",
         ],
         "trakt_http_calls": 0,
         "database_writes": 0,
@@ -132,8 +154,22 @@ def audit(db, *, now, hours):
         "SELECT COUNT(*) n FROM event_log WHERE profile_id=?",
         (profiles[0]["id"],),
     ).fetchone()
-    return classify_events(rows, min_at=start, max_at=int(now),
-                           retained_count=int(retained["n"] or 0))
+    global_row = db.execute(
+        """SELECT COUNT(*) AS n, MIN(id) AS oldest_id FROM event_log"""
+    ).fetchone()
+    oldest = db.execute(
+        "SELECT created_at FROM event_log WHERE id=?",
+        (int(global_row["oldest_id"]),)
+    ).fetchone() if global_row["oldest_id"] is not None else None
+    return classify_events(
+        rows, min_at=start, max_at=int(now),
+        retained_count=int(retained["n"] or 0),
+        global_count=int(global_row["n"] or 0),
+        oldest_global_at=(
+            int(oldest["created_at"]) if oldest and
+            oldest["created_at"] is not None else None
+        )
+    )
 
 
 def main():
