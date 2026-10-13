@@ -51,6 +51,8 @@ def classify_events(rows, *, min_at, max_at, retained_count,
                     global_count=0, oldest_global_at=None):
     stats = Counter()
     decisions = Counter()
+    compare_reasons = Counter()
+    stale_gap_buckets = Counter()
     for row in rows:
         event = str(row["event"] or "")
         status = str(row["status"] or "")
@@ -90,6 +92,32 @@ def classify_events(rows, *, min_at, max_at, retained_count,
                 stats["compare_unknown_decision"] += 1
             if detail.get("writesTrakt") is not False:
                 stats["compare_write_safety_warning"] += 1
+            reason = str(detail.get("reason") or "")
+            if reason in (
+                "trakt_timestamp_same_or_newer", "trakt_position_same_or_newer",
+                "trakt_older_and_behind", "no_matching_trakt_playback",
+                "candidate_identity_unusable", "multiple_matching_trakt_playback_rows",
+                "trakt_progress_invalid", "candidate_position_invalid",
+                "candidate_kind_unsupported"
+            ):
+                compare_reasons[reason] += 1
+            else:
+                compare_reasons["other_or_missing_reason"] += 1
+            if decision == "trakt_stale_candidate":
+                trakt = detail.get("trakt")
+                delta = (trakt or {}).get("positionDeltaMs") if isinstance(trakt, dict) else None
+                if isinstance(delta, (int, float)) and not isinstance(delta, bool):
+                    seconds = abs(delta) / 1000
+                    if delta >= 0:
+                        stale_gap_buckets["inconsistent_nonnegative_delta"] += 1
+                    elif seconds <= 120:
+                        stale_gap_buckets["behind_up_to_2min"] += 1
+                    elif seconds <= 600:
+                        stale_gap_buckets["behind_2_to_10min"] += 1
+                    else:
+                        stale_gap_buckets["behind_over_10min"] += 1
+                else:
+                    stale_gap_buckets["unknown_delta"] += 1
 
     # Event pruning is GLOBAL (last 1,000 IDs), not per profile.
     # A full log alone does not mean this particular window is incomplete:
@@ -123,6 +151,8 @@ def classify_events(rows, *, min_at, max_at, retained_count,
         "event_log_may_be_truncated": possible_loss,
         "counts": dict(sorted(stats.items())),
         "compare_decisions": dict(sorted(decisions.items())),
+        "compare_reasons": dict(sorted(compare_reasons.items())),
+        "stale_position_gap_buckets": dict(sorted(stale_gap_buckets.items())),
         "data_limitations": [
             "counts only locally retained Bridge events",
             "cannot measure native-Trakt client writes",
