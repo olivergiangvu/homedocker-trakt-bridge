@@ -2,6 +2,22 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+## [1.3.0] - 2026-10-13
+
+### Stable promotion
+- Promotes the RC6 HomeDocker production runtime to `v1.3.0` with **no application behavior or database-schema changes after RC6**; only version metadata is updated.
+- Ships the fully qualified compare-only AIO/Trakt reconciler, RC2–RC5 watched/history echo protections and RC6 near-terminal playback, rate-limit and optional canonical-freshness guards.
+- Includes read-only RC7 identity-drift, 24h event-pulse and rolling AIO compatibility diagnostics, without tying AIOStreams `latest` to a fixed digest.
+- Native Trakt remains canonical and the public `AIO_RECONCILER_MODE=off` default remains non-writing; HomeDocker's existing `compare` mode remains valid and non-writing.
+
+### Qualification / known boundaries
+- HomeDocker RC6 production: Bridge ready, schema 1/1; 24h observed Bridge event window covered; exact learned dual-IMDb split mitigated and verified on affected clients; API contract `PASS_CAPTURED_CHECKS` for one 50-item NextUp/Resume capture.
+- Eight compare-only decisions included five AIO-ahead Trakt stale candidates with small (≤2min) gaps; no automatic recovery writeback. Issue #70 Phase B writeback remains **out of scope**.
+- Native-client writes outside Bridge cannot be fully observed by the Bridge event log. A separate post-release live canary/rollback qualification is required; CI alone is not proof of production deployment.
+- AIOStreams upstream remains independently rolling on `latest`. No fork, SQLite data rewrite, automated `dropped` preference or forced watch-history deduplication.
+
+See [release notes](docs/releases/v1.3.0.md) and [Stable qualification](docs/design/v1.3-stable-qualification.md).
+
 ## [1.3.0-rc.5] - 2026-10-07
 
 ### Fixed
