@@ -33,6 +33,22 @@ Scripts/audit-homedocker-docker-cleanup.sh inventories containers, images, stopp
 
 **Prohibited broad deletion:** docker system prune -a --volumes, docker volume prune, docker compose down -v, indiscriminate image prune, deleting /var/lib/docker contents. Stopped/dangling Docker artifacts may be rollback images, volumes, backup repositories or Portainer state. Identify exact candidates, verify not attached to running/stopped containers and check backup/rollback relevance before removal.
 
+## Post-audit HomeDocker results and safe targets — 2026-10-13
+
+Operator inventory of this exact machine:
+
+- **17 containers all running**; no exited/created/dead containers.
+- **13/13 named Docker volumes active**; no dangling volumes. Never run volume prune.
+- **44 images; 17 active; 10.91GB occupied and 4.754GB reclaimable estimate**. Docker reports 11 dangling image IDs, but **`74ef797c7d85` is the *currently running* pinned Bridge RC6 image ID**, even though it appears dangling. This is a strong warning not to infer deletability from `dangling=true`.
+- Other large untagged images: `14bff67c4793` (~963MB), `2dda65388cd7`, `71557c7ceea0`, and `61990eba2b34` (~961MB each). Family/rollback role is **not established** by names and ages; do not remove them by prefix or with global prune.
+- Docker build cache: 146.7MB total, 120.7MB private. A strictly age-filtered `docker builder prune --filter until=168h --force` is optional, but cannot reclaim unused Docker images or reduce running service RAM.
+- Memory-heavy **active services**, not abandoned trial containers: CrossWatch ~765MiB, Homebridge ~663MiB, AIOMetadata ~480MiB and Remux ~479MiB. Do not delete/restart services to reclaim historical draft resources.
+- One-shot RC7 scripts in the SSH home directory are only kilobytes; keep operational `monitor-identity-drift.py`, `audit-stable-event-pulse.py` and `audit-rolling-aio-contract.py`. Archive or remove exact old diagnostic scripts only if no longer needed; removing them will not materially improve disk.
+
+The first GitHub branch cleanup dry-run failed **before any deletion**, because `gh api --slurp` is not supported on the HomeDocker GitHub CLI. Fix: `scripts/cleanup-github-branches.py` manually paginates REST pages (`page=1,2,...`) without CLI `--slurp` and fails closed if the result cannot be fully retrieved. Never interpret the earlier failure as branch deletion.
+
+Run the separate `scripts/audit-dangling-image-ownership.py` to classify *exact active container image IDs* versus images unreferenced by a container, plus weak shared-layer family hints. All unreferenced images remain **review-only candidates** until rollback ownership is determined. This tool does not remove images or expose Docker env vars.
+
 ## Completion
 
 - [x] Live HomeDocker contract and real clients verified.
