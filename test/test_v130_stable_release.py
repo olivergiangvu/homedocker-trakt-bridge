@@ -81,7 +81,7 @@ class StablePromotionRegressionTests(unittest.TestCase):
     def test_release_notes_does_not_falsely_claim_live_stable_deployed(self):
         text = (ROOT / "docs/releases/v1.3.0.md").read_text()
         self.assertIn("do not", text.lower())
-        self.assertIn("actual HomeDocker RC6 production evidence", text)
+        self.assertIn("Actual HomeDocker RC6 production evidence", text)
 
 
 if __name__ == "__main__":
