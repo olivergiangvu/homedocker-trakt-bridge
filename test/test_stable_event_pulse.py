@@ -69,6 +69,23 @@ class StablePulseTests(unittest.TestCase):
                      "private show title", "secret episode id", "secret event"):
             self.assertNotIn(leak, text)
 
+    def test_stale_compare_decision_summarizes_gap_without_private_ids(self):
+        self.add("reconcile", "ignored", {
+            "action": "aio-reconcile:compare-settled",
+            "decision": "trakt_stale_candidate",
+            "reason": "trakt_older_and_behind", "writesTrakt": False,
+            "itemKey": "e|private-episode-id",
+            "positionMs": 1500000,
+            "trakt": {"positionDeltaMs": -350000,
+                      "ids": {"imdb": "tt-private"}},
+        })
+        report = self.run_report()
+        self.assertEqual(report["compare_reasons"]["trakt_older_and_behind"], 1)
+        self.assertEqual(report["stale_position_gap_buckets"]["behind_2_to_10min"], 1)
+        self.assertEqual(report["counts"].get("compare_write_safety_warning", 0), 0)
+        self.assertNotIn("private-episode-id", json.dumps(report))
+        self.assertNotIn("tt-private", json.dumps(report))
+
     def test_compare_unknown_and_write_flag_raise_observable_warning(self):
         self.add("reconcile", "ignored", {
             "action": "aio-reconcile:compare-settled",
