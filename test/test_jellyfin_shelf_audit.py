@@ -31,6 +31,64 @@ class ShelfAuditTests(unittest.TestCase):
             result = module.report({"Items": a}, {"Items": b})
         return result, buf.getvalue()
 
+    def packed(self, kind, imdb, season=65535, episode=65535):
+        kind_code = {"series": 2, "episode": 4}[kind]
+        bits = bytearray(16)
+        bits[0] = 0xa1
+        bits[1] = kind_code << 4 | 1
+        bits[2] = 2  # media series
+        bits[3:9] = int(imdb.removeprefix("tt")).to_bytes(6, "big")
+        bits[9:11] = season.to_bytes(2, "big")
+        bits[11:13] = episode.to_bytes(2, "big")
+        return bits.hex()
+
+    def trace(self, a, b):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            module.trace_known_show({"Items": a}, {"Items": b})
+        return out.getvalue()
+
+    def test_decodes_real_aio_packed_layout(self):
+        value = self.packed("episode", "tt44051354", season=1, episode=10)
+        obj = module.decode_packed_content_id(value)
+        self.assertEqual(obj["provider"], "imdb")
+        self.assertEqual(obj["value"], "tt44051354")
+        self.assertEqual((obj["season"], obj["episode"]), (1, 10))
+
+    def test_known_show_both_spellings_same_episode(self):
+        trakt = episode(self.packed("episode", "tt44051354", 1, 10))
+        trakt["SeriesId"] = self.packed("series", "tt44051354")
+        aio = episode(self.packed("episode", "tt44094505", 1, 10))
+        aio["SeriesId"] = self.packed("series", "tt44094505")
+        for item in (trakt, aio):
+            item["ProviderIds"] = {}
+        output = self.trace([trakt], [aio])
+        self.assertIn("SHOW_DUAL_IMDB_SAME_EP_CANDIDATES=1", output)
+        self.assertIn("SHOW_DUAL_IMDB_EP=S01E10", output)
+        self.assertIn("SHOW_TRACE_CLASS=DUAL_IMDB_IN_CAPTURE", output)
+
+    def test_same_episode_same_item_across_shelves_is_not_dual_imdb(self):
+        trakt = episode(self.packed("episode", "tt44051354", 1, 10))
+        trakt["SeriesId"] = self.packed("series", "tt44051354")
+        trakt["ProviderIds"] = {}
+        output = self.trace([trakt], [trakt])
+        self.assertIn("SHOW_DUAL_IMDB_SAME_EP_CANDIDATES=0", output)
+        self.assertIn("SHOW_TRACE_CLASS=PARTIAL_IDENTITY_IN_CAPTURE", output)
+
+    def test_unrelated_title_does_not_trigger_show_fuzzy_match(self):
+        unrelated = episode(self.packed("episode", "tt99999999", 1, 10))
+        unrelated["SeriesId"] = self.packed("series", "tt99999999")
+        unrelated["Name"] = "Ok! Let's Get Divorced"
+        unrelated["SeriesName"] = "Ok! Let's Get Divorced"
+        unrelated["ProviderIds"] = {}
+        output = self.trace([unrelated], [])
+        self.assertIn("SHOW_TRACE_MATCHED_ROWS=0", output)
+        self.assertIn("SHOW_TRACE_CLASS=NO_IDENTIFIABLE_SHOW_IN_CAPTURE", output)
+
+    def test_hashed_ids_are_not_guessed(self):
+        self.assertIsNone(module.decode_packed_content_id("b2" + "12" * 15))
+        self.assertIsNone(module.decode_packed_content_id("not-a-valid-id"))
+
     def test_cross_shelf_exact_item_is_overlap_not_duplicate(self):
         value = episode("same")
         result, output = self.emit([value], [value])
