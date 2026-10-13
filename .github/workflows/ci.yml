@@ -24,6 +24,7 @@ jobs:
           python3 -m py_compile scripts/audit-stable-event-pulse.py
           python3 -m py_compile scripts/audit-rolling-aio-contract.py
           python3 -m py_compile scripts/cleanup-github-branches.py
+          python3 -m py_compile scripts/audit-dangling-image-ownership.py
           python3 -m unittest discover -s test -p 'test_*.py'
 
       - name: Validate shell scripts
