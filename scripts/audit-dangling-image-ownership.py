@@ -75,8 +75,8 @@ def report(dangling, containers, active_images):
     print("DANGLING_COUNT=" + str(len(dangling)))
     for image in sorted(dangling, key=lambda x: x.get("Created", ""), reverse=True):
         state, users, similarity = classify(image, containers, active_images)
-        title = str((image.get("Config") or {}).get("Labels", {}).get(
-            "org.opencontainers.image.title") or "unknown")
+        labels = (image.get("Config") or {}).get("Labels") or {}
+        title = str(labels.get("org.opencontainers.image.title") or "unknown")
         title = "".join(ch for ch in title if ch.isprintable())[:80]
         print("IMAGE_ID=%s SIZE_MIB=%.1f CREATED=%s STATUS=%s" %
               (image["Id"][:19], image["Size"] / 1048576,
