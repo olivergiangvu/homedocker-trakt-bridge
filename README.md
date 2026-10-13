@@ -99,6 +99,7 @@ If AIOMetadata is also part of the stack, use **Trackers = This server only** fo
 - **[Integrations](docs/INTEGRATIONS.md)** — AIOMetadata and native-Trakt coexistence
 - **[Troubleshooting](docs/TROUBLESHOOTING.md)** — common sync and identity problems
 - **[Documentation index](docs/README.md)** — advanced and maintainer documentation
+- **[RC7 phase closure / cleanup](docs/RC7-CLOSURE-AND-CLEANUP.md)** — archived experimental PRs, GitHub branch cleanup and Docker inventory policy
 
 ## Contributing
 
@@ -116,6 +117,14 @@ For sensitive vulnerabilities, follow **[SECURITY.md](SECURITY.md)** instead of 
 ## Project status
 
 `v1.2.0` is the stable release line promoted from the fully qualified `v1.2.0-rc.7` HomeDocker canary.
+
+**HomeDocker production:** Bridge `v1.3.0-rc.6`, with `AIO_RECONCILER_MODE=compare` (non-writing), `PULL_IDENTITY_MODE=trakt`, `CANONICAL_ON_DEMAND_VERIFY=false`. **AIOStreams follows upstream `latest` independently**; no AIOStreams digest pin is required for Bridge releases.
+
+**RC7 Monitoring & Rolling Compatibility Phase:** Complete (2026-10-13). The actual HomeDocker Jellyfin compatibility contract returned `PASS_CAPTURED_CHECKS`; the dual-IMDb Continue Watching issue was mitigated through one official AIO series preference and is monitored by the read-only drift tool. Experimental RC7 draft PRs were archived unmerged. See [RC7 closure and cleanup](docs/RC7-CLOSURE-AND-CLEANUP.md).
+
+**v1.3 Stable:** Not yet tagged/promoted. Native-Trakt writer attribution, playback boundary, independent backup/rollback rehearsal and Bridge candidate soak remain separate release gates. See [Stable qualification](docs/design/v1.3-stable-qualification.md).
+
+
 
 The v1.2 line keeps native-Trakt coexistence safeguards, direct provider-ID playback transport, family-scoped rate-limit recovery, semantic history dedupe, and the optional read-only AIO local-state reconciler. The reconciler remains **disabled by default**; when enabled in `detect` mode it never writes Trakt or AIOStreams, persists pending candidates across restart, coalesces newer same-item local rows, waits for the configured quiet window, and correlates final state only with an equivalent delivered HomeDocker playback position.
 
