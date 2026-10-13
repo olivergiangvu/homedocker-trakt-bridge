@@ -71,6 +71,37 @@ class KnownShowNextUpSourceTests(unittest.TestCase):
         self.assertNotIn("primary-private-uuid", text)
         self.assertNotIn("someone-else", text)
 
+    def test_real_home_server_18_row_dual_progression_regression(self):
+        # Read-only synthetic reproduction of 2026-10-13 B8 output:
+        # Trakt IMDb watched S01E01..E09 + E10 resume, AIO IMDb had
+        # local TMDB video IDs watched only through E08. No match keys.
+        for ep in range(1, 10):
+            self.add("tt44051354", ep, 1)
+        self.add("tt44051354", 10, 0, 346626)
+        for ep in range(1, 9):
+            self.add("tt44094505", ep, 1, item_base="tmdb:276470")
+        output = self.run_audit()
+        self.assertIn("CANDIDATE_ROWS=18", output)
+        self.assertIn("SERIES_KEY_GROUP_COUNT=2", output)
+        self.assertIn(
+            "SERIES_GROUP KEY=s|tt44051354 ROWS=10 WATCHED=9 UNFINISHED=1",
+            output
+        )
+        self.assertIn(
+            "SERIES_GROUP KEY=s|tt44094505 ROWS=8 WATCHED=8 UNFINISHED=0",
+            output
+        )
+        self.assertIn("ANCHOR_EP=S01E10", output)
+        self.assertIn("ANCHOR_EP=S01E08", output)
+        self.assertIn(
+            "ROW KEY=e|tmdb:276470:1:8 MATCH=- BASE=tt44094505",
+            output
+        )
+        self.assertIn(
+            "ROW KEY=e|tt44051354:1:10 MATCH=- BASE=tt44051354",
+            output
+        )
+
     def test_other_source_provider_key_is_considered(self):
         self.add("tmdb:276470", 10, 0, 12000)
         text = self.run_audit()
