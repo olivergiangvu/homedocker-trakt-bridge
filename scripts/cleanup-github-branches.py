@@ -35,7 +35,8 @@ def pages(path, *, per_page=100, max_pages=30):
     Fetch complete REST pages explicitly and fail closed on excessively large
     result sets. Never use partial branch/PR evidence for --apply deletion.
     """
-    if "page=" in path or not path.startswith("repos/" + REPO + "/"):
+    if ("?page=" in path or "&page=" in path or
+            not path.startswith("repos/" + REPO + "/")):
         raise RuntimeError("pagination path is not the expected repository route")
     all_rows = []
     for page in range(1, max_pages + 1):
