@@ -24,6 +24,7 @@ jobs:
           python3 -m py_compile scripts/audit-stable-event-pulse.py
           python3 -m py_compile scripts/audit-rolling-aio-contract.py
           python3 -m py_compile scripts/audit-aio-identity-readiness.py
+          python3 -m py_compile scripts/audit-gateway-readiness.py
           python3 -m py_compile scripts/cleanup-github-branches.py
           python3 -m py_compile scripts/audit-dangling-image-ownership.py
           python3 -m py_compile scripts/publish-v1.3.0-tag.py
