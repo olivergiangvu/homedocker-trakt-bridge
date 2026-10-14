@@ -128,11 +128,25 @@ class StablePromotionRegressionTests(unittest.TestCase):
                     "alias_imdb": "tt44094505",
                     "canonical_imdb": "tt44051354",
                     "status": "MITIGATED_BY_DROP",
-                    "alias_drop_effective": True, "canonical_resumes": 1
+                    "alias_drop_effective": True, "canonical_resumes": 1,
+                    "canonical_episode_rows": 10, "alias_episode_rows": 8
                 }]
             }
             with patch.object(deploy.Path, "home", return_value=Path(td)), \
                  patch.object(deploy, "run", return_value=json.dumps(good)):
+                deploy.rc7_identity_guard()
+            completed = json.loads(json.dumps(good))
+            completed["pairs"][0]["canonical_resumes"] = 0
+            completed["pairs"][0]["canonical_watched"] = 10
+            with patch.object(deploy.Path, "home", return_value=Path(td)), \
+                 patch.object(deploy, "run", return_value=json.dumps(completed)):
+                deploy.rc7_identity_guard()
+            alias_gone = json.loads(json.dumps(good))
+            alias_gone["pairs"][0]["status"] = "SINGLE_TIMELINE"
+            alias_gone["pairs"][0]["alias_episode_rows"] = 0
+            alias_gone["pairs"][0]["alias_drop_effective"] = False
+            with patch.object(deploy.Path, "home", return_value=Path(td)), \
+                 patch.object(deploy, "run", return_value=json.dumps(alias_gone)):
                 deploy.rc7_identity_guard()
             bad = json.loads(json.dumps(good))
             bad["pairs"][0]["alias_drop_effective"] = False
