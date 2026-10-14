@@ -109,6 +109,24 @@ test('profile scope isolation, invalid evidence does not write', () => {
   assert.equal(verifiedCanonicalForImdb(loadVerifiedIdentityGraph(db, 'q'), 'tt44094505'), null);
 });
 
+test('contradictory source IDs cannot teach false cross-IMDb equivalence', () => {
+  const db = fakeDb();
+  const contradictoryImdb = observeVerifiedShowIdentity(
+    db, 'p', fixed, 'tt44094505',
+    { imdb: 'tt99999999', tmdb: 276470 },
+  );
+  assert.equal(contradictoryImdb.status, 'CONTRADICTORY_SOURCE_PROVIDER_IDS');
+  const contradictoryTrakt = observeVerifiedShowIdentity(
+    db, 'p', fixed, 'tt44094505', { trakt: 42 },
+  );
+  assert.equal(contradictoryTrakt.status, 'CONTRADICTORY_SOURCE_PROVIDER_IDS');
+  const contradictoryTmdb = observeVerifiedShowIdentity(
+    db, 'p', fixed, 'tt44094505', { tmdb: 9999 },
+  );
+  assert.equal(contradictoryTmdb.status, 'CONTRADICTORY_SOURCE_PROVIDER_IDS');
+  assert.equal(db.entries(), 0);
+});
+
 test('canonical-only Trakt stop is not an invented raw alias', () => {
   const db = fakeDb();
   observeVerifiedShowIdentity(db, 'p', fixed, 'tt44051354');
