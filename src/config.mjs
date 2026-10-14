@@ -77,9 +77,6 @@ export function loadConfig() {
     bulkSingleDedupeSeconds: intEnv('BULK_SINGLE_DEDUPE_SECONDS', 300, 30, 1800),
     historyDedupeSeconds: intEnv('HISTORY_DEDUPE_SECONDS', 300, 0, 1800),
     pullIdentityMode: enumEnv('PULL_IDENTITY_MODE', 'trakt', ['trakt', 'aiostreams']),
-    // Experimental, capability-negotiated AIO ID equivalence response.
-    // Keep disabled until AIO upstream adopts the v1 contract.
-    identityEquivalencesEnabled: boolEnv('IDENTITY_EQUIVALENCES_ENABLED', false),
     aioReconcilerMode: enumEnv('AIO_RECONCILER_MODE', 'off', ['off', 'detect', 'compare']),
     aioDbPath: (process.env.AIO_DB_PATH || '/aio-data/db.sqlite').trim(),
     aioUnplayedEchoGuard: boolEnv('AIO_UNPLAYED_ECHO_GUARD', false),
