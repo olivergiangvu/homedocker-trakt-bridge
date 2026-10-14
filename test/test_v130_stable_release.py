@@ -91,9 +91,9 @@ class StablePromotionRegressionTests(unittest.TestCase):
             root = Path(td)
             envfile = root / ".env"
             compose = root / "compose.yml"
-            envfile.write_text("TRAKT_BRIDGE_IMAGE=secret-digest\\nTRAKT_CLIENT_SECRET=DO_NOT_PRINT\\n")
+            envfile.write_text("TRAKT_BRIDGE_IMAGE=secret-digest\nTRAKT_CLIENT_SECRET=DO_NOT_PRINT\n")
             envfile.chmod(0o600)
-            compose.write_text("services:\\n  trakt-bridge:\\n    image: ${TRAKT_BRIDGE_IMAGE:-fallback}\\n")
+            compose.write_text("services:\n  trakt-bridge:\n    image: ${TRAKT_BRIDGE_IMAGE:-fallback}\n")
             p = subprocess.run(
                 [sys.executable, "-c", code, str(envfile), str(compose)],
                 capture_output=True, text=True,
@@ -101,14 +101,14 @@ class StablePromotionRegressionTests(unittest.TestCase):
             self.assertEqual(p.returncode, 0, p.stderr)
             self.assertIn("ROOT_ONLY_COMPOSE_ENV=", p.stdout)
             self.assertNotIn("DO_NOT_PRINT", p.stdout)
-            compose.write_text("services:\\n  trakt-bridge:\\n    image: fixed:latest\\n")
+            compose.write_text("services:\n  trakt-bridge:\n    image: fixed:latest\n")
             p = subprocess.run(
                 [sys.executable, "-c", code, str(envfile), str(compose)],
                 capture_output=True, text=True,
             )
             self.assertNotEqual(p.returncode, 0)
-            compose.write_text("image: ${TRAKT_BRIDGE_IMAGE}\\n")
-            envfile.write_text("TRAKT_BRIDGE_IMAGE=one\\nTRAKT_BRIDGE_IMAGE=two\\n")
+            compose.write_text("image: ${TRAKT_BRIDGE_IMAGE}\n")
+            envfile.write_text("TRAKT_BRIDGE_IMAGE=one\nTRAKT_BRIDGE_IMAGE=two\n")
             p = subprocess.run(
                 [sys.executable, "-c", code, str(envfile), str(compose)],
                 capture_output=True, text=True,
@@ -131,12 +131,12 @@ class StablePromotionRegressionTests(unittest.TestCase):
                     "alias_drop_effective": True, "canonical_resumes": 1
                 }]
             }
-            with patch.object(deploy.Path, "home", return_value=Path(td)), \\
+            with patch.object(deploy.Path, "home", return_value=Path(td)), \
                  patch.object(deploy, "run", return_value=json.dumps(good)):
                 deploy.rc7_identity_guard()
             bad = json.loads(json.dumps(good))
             bad["pairs"][0]["alias_drop_effective"] = False
-            with patch.object(deploy.Path, "home", return_value=Path(td)), \\
+            with patch.object(deploy.Path, "home", return_value=Path(td)), \
                  patch.object(deploy, "run", return_value=json.dumps(bad)):
                 with self.assertRaises(deploy.Stop):
                     deploy.rc7_identity_guard()
