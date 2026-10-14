@@ -64,6 +64,36 @@ class AuthPreviewTests(unittest.TestCase):
             self.assertNotIn(forbidden, out)
         self.assertFalse(result["session_token_saved"])
 
+    def test_full_fifty_card_sample_detects_protected_ids_late_without_leaking_them(self):
+        episodes = {"Items": [
+            {"Id": "ep" + str(i), "Type": "Episode",
+             "SeriesId": "series" + str(i),
+             "UserData": {"PlaybackPositionTicks": 0}}
+            for i in range(50)
+        ]}
+        def request(method, url, **kwargs):
+            if url.endswith("/Users/Me"):
+                return 200, {"Id": USER_ID}
+            if "/Shows/NextUp" in url:
+                return 200, episodes
+            if "/Items/series" in url:
+                index = int(url.split("/Items/series", 1)[1])
+                imdb = "tt44094505" if index == 49 else (
+                    "tt44051354" if index == 48 else "tt12345678")
+                return 200, {
+                    "Id": "series" + str(index), "Type": "Series",
+                    "ProviderIds": {"Imdb": imdb},
+                }
+            raise AssertionError("unexpected URL")
+        with patch.object(audit, "json_http", side_effect=request):
+            result, _ = audit.read_preview(SESSION, 50)
+        self.assertEqual(result["series_lookup"]["metadata_attempted"], 50)
+        self.assertEqual(result["series_lookup"]["metadata_series_valid"], 50)
+        self.assertTrue(result["known_identity_both_present_in_sample"])
+        output = json.dumps(result)
+        for secret in (SESSION, USER_ID, "tt44094505", "tt44051354", "series49"):
+            self.assertNotIn(secret, output)
+
     def test_unauthenticated_or_api_key_users_me_aborts_without_nextup(self):
         with patch.object(audit, "json_http", return_value=(400, None)) as call:
             with self.assertRaisesRegex(audit.Stop, "session token"):
