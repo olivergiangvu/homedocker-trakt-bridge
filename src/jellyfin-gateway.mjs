@@ -18,6 +18,8 @@ const MAX_NEXTUP_BYTES = 2 * 1024 * 1024;
 const MAX_METADATA_SERIES = 50;
 const MAX_METADATA_CONCURRENCY = 6;
 const NETWORK_TIMEOUT_MS = 8000;
+const SERIES_METADATA_TTL_MS = 5 * 60 * 1000;
+const MAX_SERIES_CACHE = 128;
 const HOP_HEADERS = new Set([
   'host', 'connection', 'keep-alive', 'proxy-connection',
   'transfer-encoding', 'upgrade', 'te', 'trailer',
@@ -157,7 +159,7 @@ function hasVerifiedAliases(graph) {
     Array.isArray(row.aliases) && row.aliases.length > 0);
 }
 
-async function normalizeForUser(body, req, graph, options, fetchImpl) {
+async function normalizeForUser(body, req, graph, options, fetchImpl, seriesCache, now) {
   if (!hasToken(req) || !hasVerifiedAliases(graph)
       || !Array.isArray(body?.Items) || body.Items.length < 2
       || body.Items.length > MAX_METADATA_SERIES) return body;
@@ -173,8 +175,22 @@ async function normalizeForUser(body, req, graph, options, fetchImpl) {
   // All lookups use the SAME upstream token as /Users/Me and NextUp; metadata
   // lookups never use Bridge's Trakt OAuth token or another Jellyfin account.
   const found = new Map();
-  for (let index = 0; index < ids.length; index += MAX_METADATA_CONCURRENCY) {
-    await Promise.all(ids.slice(index, index + MAX_METADATA_CONCURRENCY)
+  const freshTime = now();
+  const needLookup = [];
+  for (const id of ids) {
+    const entry = seriesCache.get(id);
+    if (entry && entry.expiresAt > freshTime) {
+      // Cache is owned by this one exact verified Jellyfin account/gateway,
+      // never keyed across accounts, profiles, or token-sharing contexts.
+      found.set(id, entry.imdb);
+    } else {
+      seriesCache.delete(id);
+      needLookup.push(id);
+    }
+  }
+  const completed = new Map();
+  for (let index = 0; index < needLookup.length; index += MAX_METADATA_CONCURRENCY) {
+    await Promise.all(needLookup.slice(index, index + MAX_METADATA_CONCURRENCY)
       .map(async (id) => {
         const item = await upstreamJson(upstreamPath(options.base,
           '/Items/' + encodeURIComponent(id)), incoming, fetchImpl);
@@ -182,8 +198,22 @@ async function normalizeForUser(body, req, graph, options, fetchImpl) {
           throw new Error('Jellyfin returned mismatched series identity');
         }
         const imdb = item.ProviderIds?.Imdb;
-        found.set(id, typeof imdb === 'string' ? imdb : null);
+        const spelling = typeof imdb === 'string' ? imdb.toLowerCase() : null;
+        completed.set(id, spelling);
       }));
+  }
+  // Don't cache a partial metadata batch if another lookup fails. On success,
+  // bound cache size and remember only nonsecret seriesId -> show IMDb.
+  for (const [id, spelling] of completed) {
+    found.set(id, spelling);
+    seriesCache.delete(id);
+    seriesCache.set(id, {
+      imdb: spelling,
+      expiresAt: now() + SERIES_METADATA_TTL_MS,
+    });
+  }
+  while (seriesCache.size > MAX_SERIES_CACHE) {
+    seriesCache.delete(seriesCache.keys().next().value);
   }
   return filterNextUpForVerifiedAliases(body, {
     verifiedGraph: graph,
@@ -200,9 +230,13 @@ function sendJson(res, status, payload) {
   res.end(bytes);
 }
 
-export function createJellyfinGateway({ config, db, fetchImpl = fetch }) {
+export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Date.now }) {
   const options = validateGatewayConfig(config);
   if (!options) throw new Error('Gateway must be explicitly enabled');
+  // This gateway is configured for ONE exact AIO Jellyfin user ID. The cache
+  // only sees /Items/{SeriesId} after /Users/Me matches that user, and never
+  // contains tokens or source watch-state rows.
+  const seriesCache = new Map();
 
   return http.createServer(async (req, res) => {
     // Health is for local nginx/docker probes. Do not leak config/credentials.
@@ -252,7 +286,7 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch }) {
           && !requested.searchParams.has('StartIndex')) {
         try {
           const graph = loadVerifiedIdentityGraph(db, options.profileId);
-          filtered = await normalizeForUser(json, req, graph, options, fetchImpl);
+          filtered = await normalizeForUser(json, req, graph, options, fetchImpl, seriesCache, now);
         } catch {
           filtered = json; // Fail open; never hide an ambiguous episode.
         }
