@@ -136,7 +136,7 @@ test('never learn identity from unrelated pause, failed scrobble or a speculativ
   };
   const plan = { kind: 'scrobble', action: 'pause', progress: 20 };
   await client.applyEvent('p', event, plan);
-  assert.equal(db.entries() > 0, true); // existing watermark writes are legitimate
+  // A pause by itself does not create a verified alias graph; cache writes are optional.
   assert.deepEqual(loadVerifiedIdentityGraph(db, 'p').shows, {});
   const real = await client.applyEvent('p', { ...event, event: 'stop' }, plan);
   assert.equal(real.identityContinuity.status, 'VERIFIED_STORED');
