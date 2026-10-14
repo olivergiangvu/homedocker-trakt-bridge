@@ -48,6 +48,39 @@ jobs:
       - name: Build production container
         run: docker build -t homedocker-trakt-bridge:ci .
 
+      - name: Build and smoke-test isolated gateway-only canary
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build -f Dockerfile.gateway-canary -t homedocker-nextup-gateway:ci .
+          td=$(mktemp -d)
+          cleanup() {
+            docker rm -f nextup-gateway-ci >/dev/null 2>&1 || true
+            sudo rm -rf "$td"
+          }
+          trap cleanup EXIT
+          cat > "$td/identity-proof.json" <<'JSON'
+          {"contract":"homedocker-canary-identity-proof-v1","profileId":"aaaaaaaaaaaaaaaaaaaaaaaa","graph":{"revision":1,"conflicts":[],"shows":{"263102":{"canonicalImdb":"tt44051354","aliases":["tt44094505"],"tmdb":null,"tvdb":null}}}}
+          JSON
+          sudo chown 1000:1000 "$td/identity-proof.json"
+          chmod 600 "$td/identity-proof.json"
+          docker run -d --name nextup-gateway-ci \
+            --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --mount "type=bind,src=$td/identity-proof.json,dst=/run/identity-proof.json,readonly" \
+            -p 127.0.0.1:17139:7101 \
+            -e JELLYFIN_GATEWAY_AIO_USER_ID=12345678abcdef \
+            -e JELLYFIN_GATEWAY_UPSTREAM_URL=http://127.0.0.1:3240 \
+            homedocker-nextup-gateway:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:17139/health > "$td/health.json"; then
+              break
+            fi
+            sleep 1
+          done
+          grep -q '"adapter":"nextup-only"' "$td/health.json"
+          test "$(docker inspect nextup-gateway-ci --format '{{.State.Running}}')" = "true"
+          echo "ISOLATED_GATEWAY_HEALTH=PASS"
+
       - name: Enforce runtime image-size budget
         shell: bash
         run: |
