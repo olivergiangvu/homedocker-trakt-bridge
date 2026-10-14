@@ -68,6 +68,26 @@ sudo python3 "$HOME/audit-gateway-readiness.py"
 
 See the accompanying tests `test/test_gateway_readiness.py`. Don't attempt the network/Compose/nginx change until the exact read-only result is reviewed.
 
+### Third gate: verified RC6 legacy import (code implemented, **not run on host**)
+
+The operator's second audit has now PASSed (2026-10-14):
+
+- `media_core_net` is a non-internal Docker bridge network, AIO is attached with Docker DNS alias `aiostreams`; Bridge RC6 is **not attached** to it.
+- Host AIO `127.0.0.1:3240` → container 3000; hostname `aiostreams:3000` remains an **untested reachability candidate** for a future separate gateway canary.
+- Bridge media_cache identity records scanned = 1: legacy show `263102` contains both the known canonical `tt44051354` and AIO alias `tt44094505`; the new verified identity graph is absent.
+- Zero Docker, AIO or SQLite mutations.
+
+**This is enough to build a safe migration, but not enough to apply it yet.** Before any canary or database copy, check the legacy entry's `updatedAt`, its `expires_at`, and that the cache key belongs to the exact still-connected Trakt profile. The extended audit `scripts/audit-gateway-readiness.py` reports three new *boolean-only* values: `legacy_alias_timestamp_valid`, `legacy_cache_unexpired`, `legacy_owner_connected`. Never print the profile ID, Trakt credentials or raw cache JSON.
+
+Migration is implemented entirely inside OUR Bridge code:
+
+- `src/identity-legacy-import.mjs` copies the verified **exact-profile** RC6 `identity-alias:v1` record to a new `identity-graph:v1` record. It validates all legacy rows, safe IDs and timestamp, verifies the connected Trakt profile, rejects ambiguous cross-show ID claims atomically, and **never overwrites an existing graph**.
+- `src/db.mjs::cachePeek` does not delete expired/corrupt rows, making the default preview **actually read-only**. `cacheInsertIfAbsent` atomically inserts the entire new graph only if missing; `identity-alias:v1` remains intact.
+- Migration config is **OFF by default**. `JELLYFIN_GATEWAY_LEGACY_IMPORT=preview` logs only import status/counts with no database mutation. `apply` additionally requires `JELLYFIN_GATEWAY_ENABLED=true` and can be used **only against the approved canary's backed-up/copy-of-production Bridge SQLite**, not the live RC6 database. Tests exercise fake DB and real in-memory SQLite atomicity.
+- Migration never touches AIOStreams data or API and never triggers scrobbles, Trakt GET/POST or rewatch writes.
+
+A successful gateway canary requires one actual known verified alias in `identity-graph:v1` *after import*; a running HTTP listener without such a graph does **not** prove NextUp normalization.
+
 ### Future (NOT DEPLOYED) Compose overlay shape
 
 For an existing Compose project already owning `homedocker-trakt-bridge_default`, a potential **additional** overlay is:
