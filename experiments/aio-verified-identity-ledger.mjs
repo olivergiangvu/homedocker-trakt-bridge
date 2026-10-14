@@ -99,7 +99,9 @@ export class ProposedAioIdentityLedger {
       }
       if (ids.some((id) =>
         owners.has(id) && owners.get(id) !== relation.traktShowId)) {
-        blocked.add(relation.traktShowId);
+        // A rejected new Trakt show has no stored relation; quarantine only
+        // previously trusted owners, to keep snapshots restart-safe.
+        if (previous) blocked.add(relation.traktShowId);
         for (const id of ids) {
           const owner = owners.get(id);
           if (owner) blocked.add(owner);
