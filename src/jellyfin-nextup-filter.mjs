@@ -17,16 +17,18 @@ const resume = x => {
   return Number.isSafeInteger(n) && n > 0;
 };
 
-function choose(a, b, canonical) {
+function choose(a, b) {
   const ar = resume(a.item), br = resume(b.item);
+  // Two distinct active resumes are independent playback state. Never
+  // suppress either one, even if the last-played timestamps differ.
+  if (ar && br) return null;
   if (ar !== br) return ar ? a : b;
   const at = timestamp(a.item), bt = timestamp(b.item);
+  // With neither item actively resumed, require actual recency evidence;
+  // a canonical IMDb spelling alone does not prove which episode is current.
   if (at !== null && bt !== null && Math.abs(at - bt) > 2000) {
     return at > bt ? a : b;
   }
-  if (ar && br) return null;
-  if (a.imdb === canonical && b.imdb !== canonical) return a;
-  if (b.imdb === canonical && a.imdb !== canonical) return b;
   return null;
 }
 
@@ -60,43 +62,35 @@ export async function filterNextUpForVerifiedAliases(reply, {
     return reply;
   }
 
-  const items = [];
-  const seen = new Map();
-  let deduped = 0;
-  for (const item of reply.Items) {
-    const imdb = mapped.get(item.SeriesId);
-    const verified = IMDB.test(imdb ?? '')
-      ? verifiedCanonicalForImdb(verifiedGraph, imdb) : null;
-    if (!verified) {
-      items.push(item);
-      continue;
-    }
+  // Work on complete verified groups, not pairwise encounters. A group
+  // containing two cards with the SAME series IMDb, or >2 entries, is
+  // ambiguous and must remain visible exactly as AIO returned it.
+  const groups = new Map();
+  for (let index = 0; index < reply.Items.length; index++) {
+    const item = reply.Items[index];
+    const spelling = mapped.get(item.SeriesId);
+    const verified = IMDB.test(spelling ?? '')
+      ? verifiedCanonicalForImdb(verifiedGraph, spelling) : null;
+    if (!verified) continue;
     const key = String(verified.traktShowId);
-    const last = seen.get(key);
-    const candidate = { item, imdb };
-    if (!last) {
-      seen.set(key, { candidate, ambiguous: false });
-      items.push(item);
-      continue;
-    }
-    if (last.ambiguous) {
-      items.push(item);
-      continue;
-    }
-    const winner = choose(last.candidate, candidate, verified.canonicalImdb);
-    if (!winner) {
-      seen.set(key, { ...last, ambiguous: true });
-      items.push(item);
-      continue;
-    }
-    deduped++;
-    if (winner.item === last.candidate.item) continue;
-    const index = items.indexOf(last.candidate.item);
-    if (index < 0) return reply;
-    items[index] = item;
-    seen.set(key, { candidate, ambiguous: false });
+    const entries = groups.get(key) ?? [];
+    entries.push({ item, imdb: spelling, index });
+    groups.set(key, entries);
   }
-  if (!deduped) return reply;
+
+  const remove = new Set();
+  for (const entries of groups.values()) {
+    if (entries.length !== 2) continue;
+    const [a, b] = entries;
+    // Only two DISTINCT verified IMDb spellings for the same Trakt show
+    // qualify. Two ordinary episodes of one spelling are not alias twins.
+    if (a.imdb === b.imdb || a.item.SeriesId === b.item.SeriesId) continue;
+    const winner = choose(a, b);
+    if (!winner) continue; // Competing active resumes / uncertain recency.
+    remove.add(winner === a ? b.index : a.index);
+  }
+  if (!remove.size) return reply;
+  const items = reply.Items.filter((_, index) => !remove.has(index));
   return {
     ...reply,
     Items: items,
