@@ -1,0 +1,68 @@
+# HomeDocker-only Jellyfin NextUp Gateway — opt-in canary
+
+**NOT DEPLOYED. PR #94 remains DRAFT.** The existing AIOStreams upstream continues on its own latest image. Never modify AIO source, fork, database, or Docker digest; never automatically re-drop an alias. Current Bridge production RC6 is left untouched.
+
+## What the new Bridge-owned gateway actually does
+
+The Bridge has an additional HTTP listener, disabled by default. It implements only the exact GET /Shows/NextUp route. All other Jellyfin routes (playback, streaming, images, /Users/Me, /Items details, WebSockets and /UserItems/Resume) remain on the existing nginx-to-AIO path.
+
+For NextUp only, the listener passes the original Jellyfin auth headers to AIO. It validates the exact authenticated AIO user using AIO GET /Users/Me and requires an explicit one-to-one map to a Trakt Bridge profile. It then uses the **same token** to call AIO GET /Items/{opaqueSeriesId} for show-level ProviderIds.Imdb, compares with the Bridge-owned proven Trakt/IMDb alias graph, and returns one NextUp card only when non-conflicting resume/recency evidence proves a winner. It preserves the original Jellyfin episode IDs, watched history, play states and AIO SQLite. No speculative Trakt reads, direct AIO writes, automatic Drop Show, title matching or opaque ID parsing.
+
+On an unknown ID, unverified user, metadata error, competing active resumes, incomplete graph or upstream failure, it passes the original NextUp data through. The gateway is read-only and cannot fix the underlying AIO 10+8 watched-state row split by itself. It does not normalize users who keep connecting directly to AIO.
+
+## Configuration on the NEXT Bridge build — defaults off
+
+Use these settings only in a separately approved Bridge canary Compose file after checking actual network and nginx routing. They are Bridge settings, NOT AIO settings.
+
+- JELLYFIN_GATEWAY_ENABLED=false (set true only for canary)
+- JELLYFIN_GATEWAY_PORT=7101 (inside the Bridge container)
+- JELLYFIN_GATEWAY_UPSTREAM_URL: actual AIO Jellyfin API base URL REACHABLE FROM BRIDGE container (do not guess port or prefix)
+- JELLYFIN_GATEWAY_AIO_USER_ID: exact authorized AIO /Users/Me Id
+- JELLYFIN_GATEWAY_PROFILE_ID: exact connected 24-hex Trakt Bridge profile
+
+The gateway listens on port 7101 inside the Bridge container only when enabled. If the container port is published, bind **only** localhost on host, e.g. 127.0.0.1:17131:7101. Confirm this port is unused. No new public router port forward or change to existing Bridge :7000.
+
+## Native nginx — example ONLY, not yet installed
+
+Once the real nginx server block and Jellyfin path are audited, use an **exact-path** proxy ONLY for GET /Shows/NextUp. The nginx exact location normally matches other HTTP methods too; the gateway answers 405 for non-GET. Existing AIO nginx location remains in place for all other paths, preventing streaming/WS disruption.
+
+Example when current public Jellyfin API is mounted at root:
+
+```nginx
+location = /Shows/NextUp {
+    proxy_pass http://127.0.0.1:17131;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header Authorization $http_authorization;
+    proxy_set_header X-Emby-Authorization $http_x_emby_authorization;
+    proxy_set_header X-Emby-Token $http_x_emby_token;
+    proxy_set_header X-MediaBrowser-Token $http_x_mediabrowser_token;
+    proxy_pass_request_headers on;
+    proxy_buffering off;
+    proxy_read_timeout 20s;
+}
+```
+
+If your live nginx uses /jellyfin or another prefix, do NOT paste this root-path example. Audit the exact existing client URL and adapt request path with an explicit rewrite. Never publicly expose :17131.
+
+## Read-only HomeDocker discovery BEFORE canary
+
+```bash
+docker inspect trakt-bridge aiostreams --format '{{.Name}} {{.Config.Image}} {{.State.Status}}'
+sudo nginx -t
+sudo ss -lntp | grep -E ':(7000|7101|17131)\b' || true
+docker inspect trakt-bridge aiostreams --format '{{.Name}} networks={{range $n,$v := .NetworkSettings.Networks}}{{$n}} {{end}}'
+```
+
+Do **not** paste or log root .env contents, full Config.Env from docker inspect, Trakt tokens, or authenticated Jellyfin URLs.
+
+## Acceptance and release boundary
+
+1. Verify real clients use the nginx hostname and NextUp path being intercepted. Any client reaching AIO directly bypasses the gateway.
+2. Test multiple accounts: only the explicitly mapped user is normalized; all others retain the exact AIO response.
+3. Test real AIO latest Jellyfin series-detail IDs, RC7 10+8 row split, alias playback after undrop, canonical resume and legitimate rewatches. No watch-state changes/deletions.
+4. Check AIO streaming, playback, native Trakt scrobble and all other routes remain unchanged via original nginx location.
+5. Test error, 429 and metadata timeout. Ensure no auth/token/PII logging and bounded metadata load.
+6. Roll back by removing the single nginx exact-path location and disabling the extra Bridge listener; Bridge RC6 pinned digest/SQLite online backup remain available.
+
+**NOT YET DONE:** actual nginx cutover, real hardware/client smoke, multi-user mappings, pagination-safe Resume normalization, AIO upstream upgrade resilience after new alias events, and production release. PR #94 remains DRAFT; Issue #93 remains OPEN. No deployment is authorized by this document.
