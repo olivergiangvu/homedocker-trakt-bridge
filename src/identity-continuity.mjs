@@ -186,7 +186,7 @@ export function observeVerifiedShowIdentity(db, profileId, showIds, rawMetaId, s
   };
 }
 
-/** For tests and future AIO interop: never expose a conflicted equivalence. */
+/** For HomeDocker Jellyfin gateway: never expose conflicted equivalence. */
 export function verifiedCanonicalForImdb(graph, rawImdb) {
   const id = imdb(rawImdb);
   if (!id || graph?.conflicts?.some((x) => x.id === id)) return null;
@@ -197,45 +197,5 @@ export function verifiedCanonicalForImdb(graph, rawImdb) {
     traktShowId: Number(matches[0][0]),
     canonicalImdb: matches[0][1].canonicalImdb,
     verified: true,
-  };
-}
-
-/**
- * A bounded, versioned, evidence-backed *proposal* for an optional future AIO
- * identity equivalence contract. AIO currently DOES NOT consume this payload.
- * Do not automatically send it as watch-state dropped/alias metadata.
- */
-export function identityEquivalenceProposal(graph) {
-  const quarantined = new Set((graph?.conflicts ?? []).map((x) => x.id));
-  const quarantinedShows = new Set((graph?.conflicts ?? [])
-    .map((x) => String(x.observedShow)));
-  const claims = new Map();
-  for (const [trakt, row] of Object.entries(graph?.shows ?? {})) {
-    for (const id of [row.canonicalImdb, ...row.aliases]) {
-      if (!claims.has(id)) claims.set(id, new Set());
-      claims.get(id).add(trakt);
-    }
-  }
-  const identities = Object.entries(graph?.shows ?? {})
-    .filter(([showId, row]) => !quarantinedShows.has(showId)
-      && ![row.canonicalImdb, ...row.aliases]
-      .some((id) => quarantined.has(id) || claims.get(id)?.size !== 1))
-    .map(([trakt, row]) => ({
-      type: 'series',
-      traktShowId: Number(trakt),
-      canonicalImdb: row.canonicalImdb,
-      imdbAliases: [...row.aliases],
-      ...(row.tmdb ? { tmdb: row.tmdb } : {}),
-      ...(row.tvdb ? { tvdb: row.tvdb } : {}),
-      proof: 'successful_trakt_scrobble_response',
-    }))
-    .filter((x) => x.imdbAliases.length)
-    .sort((a, b) => a.traktShowId - b.traktShowId);
-  return {
-    contract: 'homedocker-identity-equivalence-proposal-v1',
-    status: 'NOT_SUPPORTED_BY_AIO_UPSTREAM_YET',
-    revision: graph?.revision ?? 0,
-    identities,
-    conflictCount: graph?.conflicts?.length ?? 0,
   };
 }
