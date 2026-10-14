@@ -114,10 +114,10 @@ export function observeVerifiedShowIdentity(db, profileId, showIds, rawMetaId) {
       break;
     }
   }
-  // Previously conflicted IDs remain quarantined even if another row
-  // later disappears or expires.
+  // Previously conflicted IDs must stay quarantined. Repeating the
+  // same request must be idempotent and cannot create conflict spam.
   if (current.conflicts.some((x) => x.id === observedId || x.id === canonicalImdb)) {
-    conflict = 'previously_quarantined_id';
+    return { changed: false, status: 'QUARANTINED', reason: 'previously_quarantined_id' };
   }
 
   if (conflict) {
@@ -194,6 +194,8 @@ export function verifiedCanonicalForImdb(graph, rawImdb) {
  */
 export function identityEquivalenceProposal(graph) {
   const quarantined = new Set((graph?.conflicts ?? []).map((x) => x.id));
+  const quarantinedShows = new Set((graph?.conflicts ?? [])
+    .map((x) => String(x.observedShow)));
   const claims = new Map();
   for (const [trakt, row] of Object.entries(graph?.shows ?? {})) {
     for (const id of [row.canonicalImdb, ...row.aliases]) {
@@ -202,7 +204,8 @@ export function identityEquivalenceProposal(graph) {
     }
   }
   const identities = Object.entries(graph?.shows ?? {})
-    .filter(([, row]) => ![row.canonicalImdb, ...row.aliases]
+    .filter(([showId, row]) => !quarantinedShows.has(showId)
+      && ![row.canonicalImdb, ...row.aliases]
       .some((id) => quarantined.has(id) || claims.get(id)?.size !== 1))
     .map(([trakt, row]) => ({
       type: 'series',
