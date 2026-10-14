@@ -5,7 +5,6 @@ import { deriveProfileKey, randomToken, safeEqual } from './crypto.mjs';
 import { BridgeError } from './errors.mjs';
 import { page, escapeHtml } from './html.mjs';
 import { buildManifest, planEvent, validatePushEvent } from './watch-state.mjs';
-import { attachIdentityEquivalenceToPull, IDENTITY_EQUIVALENCE_REQUEST_HEADER } from './identity-equivalence-pull.mjs';
 import { formatEventTime, summarizeRecentEvents } from './diagnostics.mjs';
 import { cachedPullPayload, makePullCacheEntry, stalePullPayload } from './pull-cache.mjs';
 import { coveredByRecentBulk, rememberBulkCoverage } from './bulk-dedupe.mjs';
@@ -153,7 +152,7 @@ async function route(req, res, ctx) {
     const [, profileId, addonKey] = manifestMatch;
     requireAddonKey(config, db, profileId, addonKey);
     if (req.method !== 'GET') return methodNotAllowed(res);
-    return sendJson(res, 200, buildManifest(profileId, config.pullHintSeconds ?? config.pullTtlSeconds, config.identityEquivalencesEnabled));
+    return sendJson(res, 200, buildManifest(profileId, config.pullHintSeconds ?? config.pullTtlSeconds));
   }
 
   const pullMatch = path.match(/^\/u\/([a-f0-9]{24})\/([A-Za-z0-9_-]{30,})\/watch_state\/pull\.json$/);
@@ -164,8 +163,7 @@ async function route(req, res, ctx) {
     const profile = db.getProfile(profileId);
     if (!profile?.access_token_enc) throw new BridgeError('Trakt account is not connected', { status: 401, code: 'not_connected' });
     const since = url.searchParams.get('since') || null;
-    const identityCapability = req.headers[IDENTITY_EQUIVALENCE_REQUEST_HEADER];
-    return processPull(res, { profileId, since, db, trakt, config, identityCapability });
+    return processPull(res, { profileId, since, db, trakt, config });
   }
 
   const pushMatch = path.match(/^\/u\/([a-f0-9]{24})\/([A-Za-z0-9_-]{30,})\/watch_state\/push\/(movie|series)\/(.+)\.json$/);
@@ -206,14 +204,7 @@ function clearPullCache(db, profileId) {
   db.cacheDelete(pullCacheKey(profileId));
 }
 
-async function processPull(res, { profileId, since, db, trakt, config, identityCapability }) {
-  // Never persist negotiated identity data in the shared Trakt pull cache.
-  // Older AIO clients get byte-for-byte equivalent schema by default.
-  const sendPull = (payload) => sendJson(res, 200,
-    attachIdentityEquivalenceToPull(
-      payload, db, profileId, identityCapability,
-      config.identityEquivalencesEnabled,
-    ));
+async function processPull(res, { profileId, since, db, trakt, config }) {
   const eventId = `pull|${since || 'initial'}`;
   const now = Date.now();
   const cacheState = getPullCache(db, profileId);
@@ -227,7 +218,7 @@ async function processPull(res, { profileId, since, db, trakt, config, identityC
       ageSeconds: Math.max(0, Math.floor((now - cacheState.entry.fetchedAt) / 1000)),
     });
     db.logEvent({ profileId, eventId, event: 'pull', status: 'cached', detail: JSON.stringify(detail) });
-    return sendPull(cached);
+    return sendJson(res, 200, cached);
   }
 
   const inflightKey = `${profileId}|${since || 'initial'}`;
@@ -244,7 +235,7 @@ async function processPull(res, { profileId, since, db, trakt, config, identityC
     if (cacheEntry) storePullCache(db, profileId, cacheEntry, config.pullStaleIfErrorSeconds);
     const detail = pullDetail(payload, { source: coalesced ? 'coalesced' : 'trakt' });
     db.logEvent({ profileId, eventId, event: 'pull', status: 'ok', detail: JSON.stringify(detail) });
-    return sendPull(payload);
+    return sendJson(res, 200, payload);
   } catch (err) {
     const mayUseStale = err?.status === 429 || Number(err?.status) >= 500;
     const staleState = getPullCache(db, profileId);
@@ -262,7 +253,7 @@ async function processPull(res, { profileId, since, db, trakt, config, identityC
         retryAfter: err.retryAfter || null,
       });
       db.logEvent({ profileId, eventId, event: 'pull', status: 'stale', detail: JSON.stringify(detail) });
-      return sendPull(stale);
+      return sendJson(res, 200, stale);
     }
 
     db.logEvent({
