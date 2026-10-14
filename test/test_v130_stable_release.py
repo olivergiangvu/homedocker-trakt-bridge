@@ -1,6 +1,9 @@
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -77,6 +80,66 @@ class StablePromotionRegressionTests(unittest.TestCase):
         self.assertNotIn("docker system prune", src)
         self.assertNotIn("docker volume prune", src)
         self.assertNotIn("container rm", src)
+
+    def test_root_only_compose_checker_accepts_interpolated_image_safely(self):
+        source = (ROOT / "scripts/deploy-v1.3.0-homedocker.py").read_text()
+        self.assertIn('run("sudo", "-v")', source)
+        self.assertIn('cmd = ["sudo", "-n", "docker", "compose"', source)
+        self.assertIn("ROOT_ONLY_COMPOSE_ENV=VALIDATED_WITHOUT_SECRET_OUTPUT", source)
+        code = source.split('    check = r"""', 1)[1].split('"""', 1)[0]
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            envfile = root / ".env"
+            compose = root / "compose.yml"
+            envfile.write_text("TRAKT_BRIDGE_IMAGE=secret-digest\\nTRAKT_CLIENT_SECRET=DO_NOT_PRINT\\n")
+            envfile.chmod(0o600)
+            compose.write_text("services:\\n  trakt-bridge:\\n    image: ${TRAKT_BRIDGE_IMAGE:-fallback}\\n")
+            p = subprocess.run(
+                [sys.executable, "-c", code, str(envfile), str(compose)],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(p.returncode, 0, p.stderr)
+            self.assertIn("ROOT_ONLY_COMPOSE_ENV=", p.stdout)
+            self.assertNotIn("DO_NOT_PRINT", p.stdout)
+            compose.write_text("services:\\n  trakt-bridge:\\n    image: fixed:latest\\n")
+            p = subprocess.run(
+                [sys.executable, "-c", code, str(envfile), str(compose)],
+                capture_output=True, text=True,
+            )
+            self.assertNotEqual(p.returncode, 0)
+            compose.write_text("image: ${TRAKT_BRIDGE_IMAGE}\\n")
+            envfile.write_text("TRAKT_BRIDGE_IMAGE=one\\nTRAKT_BRIDGE_IMAGE=two\\n")
+            p = subprocess.run(
+                [sys.executable, "-c", code, str(envfile), str(compose)],
+                capture_output=True, text=True,
+            )
+            self.assertNotEqual(p.returncode, 0)
+
+    def test_rc7_mitigation_is_required_before_and_after_stable(self):
+        from unittest.mock import patch
+        source = (ROOT / "scripts/deploy-v1.3.0-homedocker.py").read_text()
+        self.assertEqual(source.count("    rc7_identity_guard()"), 2)
+        with tempfile.TemporaryDirectory() as td:
+            m = Path(td) / "monitor-identity-drift.py"
+            m.write_text("placeholder")
+            good = {
+                "mode": "SQLITE_READ_ONLY", "attention": 0, "database_writes": 0,
+                "pairs": [{
+                    "alias_imdb": "tt44094505",
+                    "canonical_imdb": "tt44051354",
+                    "status": "MITIGATED_BY_DROP",
+                    "alias_drop_effective": True, "canonical_resumes": 1
+                }]
+            }
+            with patch.object(deploy.Path, "home", return_value=Path(td)), \\
+                 patch.object(deploy, "run", return_value=json.dumps(good)):
+                deploy.rc7_identity_guard()
+            bad = json.loads(json.dumps(good))
+            bad["pairs"][0]["alias_drop_effective"] = False
+            with patch.object(deploy.Path, "home", return_value=Path(td)), \\
+                 patch.object(deploy, "run", return_value=json.dumps(bad)):
+                with self.assertRaises(deploy.Stop):
+                    deploy.rc7_identity_guard()
 
     def test_release_notes_does_not_falsely_claim_live_stable_deployed(self):
         text = (ROOT / "docs/releases/v1.3.0.md").read_text()
