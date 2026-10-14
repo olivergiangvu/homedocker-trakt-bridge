@@ -115,7 +115,11 @@ function responseHeaders(res, response, mutated) {
     res.removeHeader('etag');
     res.removeHeader('content-md5');
     res.setHeader('cache-control', 'private, no-store');
-    res.setHeader('vary', 'Authorization, X-Emby-Authorization, X-Emby-Token, X-MediaBrowser-Token');
+    const inheritedVary = response.headers.get('vary');
+    res.setHeader('vary', [
+      inheritedVary,
+      'Authorization, X-Emby-Authorization, X-Emby-Token, X-MediaBrowser-Token',
+    ].filter(Boolean).join(', '));
   }
 }
 
