@@ -9,6 +9,7 @@ No AIO/Bridge container, nginx, network, Compose, env or image is changed.
 import json
 import sqlite3
 import subprocess
+import time
 from pathlib import Path
 
 
@@ -96,16 +97,19 @@ def sqlite_status(bridge):
             "legacy_alias_known_show": False,
             "legacy_canonical_matches": False,
             "legacy_alias_matches": False,
+            "legacy_alias_timestamp_valid": False,
+            "legacy_cache_unexpired": False,
+            "legacy_owner_connected": False,
             "verified_graph_present": False,
             "verified_graph_known_show": False,
             "verified_graph_alias_matches": False,
         }
         rows = db.execute(
-            "SELECT cache_key,payload_json FROM media_cache "
+            "SELECT cache_key,payload_json,expires_at FROM media_cache "
             "WHERE cache_key LIKE 'identity-alias:v1:%' OR "
             "cache_key LIKE 'identity-graph:v1:%' LIMIT 1000"
         ).fetchall()
-        for key, payload_json in rows:
+        for key, payload_json, expires_at in rows:
             try:
                 state = json.loads(payload_json)
             except (TypeError, ValueError):
@@ -118,6 +122,26 @@ def sqlite_status(bridge):
                         result["legacy_canonical_matches"] = True
                     if value.get("preferredMetaId") == "tt44094505":
                         result["legacy_alias_matches"] = True
+                    try:
+                        result["legacy_alias_timestamp_valid"] = (
+                            isinstance(value.get("updatedAt"), int)
+                            and value.get("updatedAt") > 0
+                        )
+                        result["legacy_cache_unexpired"] = (
+                            int(expires_at) >= int(time.time())
+                        )
+                        owner_id = key.split("identity-alias:v1:", 1)[1]
+                        if len(owner_id) == 24 and all(
+                            c in "0123456789abcdef" for c in owner_id
+                        ):
+                            found = db.execute(
+                                "SELECT 1 FROM profiles WHERE id=? "
+                                "AND access_token_enc IS NOT NULL LIMIT 1",
+                                (owner_id,),
+                            ).fetchone()
+                            result["legacy_owner_connected"] = bool(found)
+                    except (TypeError, ValueError, sqlite3.Error):
+                        result["legacy_owner_connected"] = False
             elif key.startswith("identity-graph:v1:"):
                 result["verified_graph_present"] = True
                 if value:
