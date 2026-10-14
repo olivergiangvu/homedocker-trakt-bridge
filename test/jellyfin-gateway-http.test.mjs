@@ -53,23 +53,26 @@ function response(res, code, body, headers = {}) {
 async function fixture(t, {
   enabled = true, expectedUser = USER, metadataFails = false,
   nextUp = reply, graph = true, upstreamError = false,
+  upstreamPrefix = '',
 } = {}) {
   const hits = [];
   const upstream = await serve((req, res) => {
     hits.push({
       path: req.url, auth: req.headers['x-emby-token'] ? 'present' : 'absent',
     });
-    if (req.url?.startsWith('/Shows/NextUp')) {
+    const route = req.url?.startsWith(upstreamPrefix + '/')
+      ? req.url.slice(upstreamPrefix.length) : null;
+    if (route?.startsWith('/Shows/NextUp')) {
       if (upstreamError) return response(res, 503, { error: 'aio_down' });
       return response(res, 200, nextUp);
     }
-    if (req.url === '/Users/Me') {
+    if (route === '/Users/Me') {
       if (req.headers['x-emby-token'] !== AIO_TOKEN) {
         return response(res, 401, { Message: 'Unauthorized' });
       }
       return response(res, 200, { Id: USER });
     }
-    const match = req.url?.match(/^\/Items\/(seriesCanon|seriesOld)$/);
+    const match = route?.match(/^\/Items\/(seriesCanon|seriesOld)$/);
     if (match) {
       if (metadataFails) return response(res, 500, { error: 'metadata_down' });
       return response(res, 200, {
@@ -90,7 +93,7 @@ async function fixture(t, {
 
   const config = {
     jellyfinGatewayEnabled: enabled,
-    jellyfinGatewayUpstreamUrl: upstream.url,
+    jellyfinGatewayUpstreamUrl: upstream.url + upstreamPrefix,
     jellyfinGatewayProfileId: PROFILE,
     jellyfinGatewayUserId: expectedUser,
   };
@@ -130,6 +133,22 @@ test('authenticated matching user receives one canonical NextUp card', async t =
   assert.ok(hits.some(h => h.path === '/Items/seriesCanon'));
   assert.ok(hits.every(h => h.auth === 'present'));
   assert.ok(hits.every(h => h.path.startsWith('/')));
+});
+
+test('AIO official /jellyfin prefix is preserved for NextUp, Users/Me and Series details', async t => {
+  const { base, hits } = await fixture(t, { upstreamPrefix: '/jellyfin' });
+  const result = await fetch(base + '/Shows/NextUp?Limit=20', {
+    headers: { 'X-Emby-Token': AIO_TOKEN },
+  });
+  assert.equal(result.status, 200);
+  const parsed = await result.json();
+  assert.equal(parsed.Items.length, 1);
+  assert.equal(parsed.Items[0].Id, 'episodeCanon');
+  assert.ok(hits.some(h => h.path === '/jellyfin/Shows/NextUp?Limit=20'));
+  assert.ok(hits.some(h => h.path === '/jellyfin/Users/Me'));
+  assert.ok(hits.some(h => h.path === '/jellyfin/Items/seriesOld'));
+  assert.ok(hits.some(h => h.path === '/jellyfin/Items/seriesCanon'));
+  assert.ok(hits.every(h => h.path.startsWith('/jellyfin/')));
 });
 
 test('new playback with old alias uses same verified group and wins on recency', async t => {
