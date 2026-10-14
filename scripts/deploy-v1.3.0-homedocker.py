@@ -116,9 +116,9 @@ p=Path(envfile)
 if not p.is_file() or p.is_symlink():
     raise SystemExit("STOP: .env is not a regular file")
 data=p.read_text(encoding="utf-8")
-if len(re.findall(r"(?m)^\\s*TRAKT_BRIDGE_IMAGE\\s*=",data))>1:
+if len(re.findall(r"(?m)^\s*TRAKT_BRIDGE_IMAGE\s*=",data))>1:
     raise SystemExit("STOP: duplicate TRAKT_BRIDGE_IMAGE")
-if not any(re.search(r"\\$\\{TRAKT_BRIDGE_IMAGE(?=[:}?])",Path(path).read_text(encoding="utf-8")) for path in files):
+if not any(re.search(r"\$\{TRAKT_BRIDGE_IMAGE(?=[:}?])",Path(path).read_text(encoding="utf-8")) for path in files):
     raise SystemExit("STOP: Compose does not interpolate TRAKT_BRIDGE_IMAGE")
 print("ROOT_ONLY_COMPOSE_ENV=VALIDATED_WITHOUT_SECRET_OUTPUT")
 """
