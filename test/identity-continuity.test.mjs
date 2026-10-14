@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  identityEquivalenceProposal,
   loadVerifiedIdentityGraph,
   observeVerifiedShowIdentity,
   verifiedCanonicalForImdb,
@@ -36,16 +35,6 @@ test('verified scrobble learns two IMDb spellings for one show without rewriting
     canonicalImdb: 'tt44051354',
     verified: true,
   });
-  const proposal = identityEquivalenceProposal(graph);
-  assert.deepEqual(proposal.identities, [{
-    type: 'series',
-    traktShowId: 263102,
-    canonicalImdb: 'tt44051354',
-    imdbAliases: ['tt44094505'],
-    tmdb: 276470,
-    proof: 'successful_trakt_scrobble_response',
-  }]);
-  assert.equal(proposal.status, 'NOT_SUPPORTED_BY_AIO_UPSTREAM_YET');
   assert.equal(verifyWriteSideEffects(db), 1);
 });
 
@@ -74,7 +63,6 @@ test('conflicting Trakt show claim is quarantined without canonical merge', () =
   assert.deepEqual(Object.keys(g.shows), ['263102']);
   assert.equal(g.conflicts.length, 1);
   assert.equal(verifiedCanonicalForImdb(g, 'tt44094505'), null);
-  assert.deepEqual(identityEquivalenceProposal(g).identities, []);
   assert.equal(
     observeVerifiedShowIdentity(db, 'profile-1',
       { trakt: 42, imdb: 'tt99999999' }, 'tt44094505').changed,
@@ -131,7 +119,6 @@ test('canonical-only Trakt stop is not an invented raw alias', () => {
   const db = fakeDb();
   observeVerifiedShowIdentity(db, 'p', fixed, 'tt44051354');
   assert.deepEqual(loadVerifiedIdentityGraph(db, 'p').shows['263102'].aliases, []);
-  assert.deepEqual(identityEquivalenceProposal(loadVerifiedIdentityGraph(db, 'p')).identities, []);
 });
 
 test('never learn identity from unrelated pause, failed scrobble or a speculative Trakt GET', async () => {
@@ -161,11 +148,11 @@ test('never learn identity from unrelated pause, failed scrobble or a speculativ
   assert.equal(loadVerifiedIdentityGraph(db, 'p').shows['263102'].aliases[0], 'tt44094505');
 });
 
-test('no episode timeline or watched timestamp is part of the proposal', () => {
+test('Bridge-owned graph stores no episode timeline, watched timestamp or personal credentials', () => {
   const db = fakeDb();
   observeVerifiedShowIdentity(db, 'p', fixed, 'tt44094505');
-  const json = JSON.stringify(identityEquivalenceProposal(loadVerifiedIdentityGraph(db, 'p')));
+  const json = JSON.stringify(loadVerifiedIdentityGraph(db, 'p'));
   assert.equal(json.includes('watched_at'), false);
   assert.equal(json.includes('positionMs'), false);
-  assert.equal(json.includes('persona'), false);
+  assert.equal(json.includes('access_token'), false);
 });
