@@ -14,6 +14,7 @@ import {
   mediaFromScrobbleResponse,
   sourceSemanticMediaKey,
 } from './direct-media.mjs';
+import { observeVerifiedShowIdentity } from './identity-continuity.mjs';
 import {
   identityAliasVersion,
   learnShowAlias,
@@ -669,6 +670,7 @@ export class TraktClient {
       }
 
       let identityAlias = null;
+      let identityContinuity = null;
       // Learn the AIOStreams spelling from the canonical show returned by the
       // successful Trakt scrobble instead of resolving it before the write.
       if (
@@ -682,6 +684,14 @@ export class TraktClient {
           canonicalMedia.show.ids,
           event.metaId,
         );
+        // An independent multi-alias registry: keep all verified spellings,
+        // quarantine cross-show claims, and never mutate AIO or Trakt here.
+        identityContinuity = observeVerifiedShowIdentity(
+          this.db,
+          profileId,
+          canonicalMedia.show.ids,
+          event.metaId,
+        );
       }
 
       return {
@@ -690,6 +700,16 @@ export class TraktClient {
         transport: 'direct-provider-ids',
         upstreamStatus: response.status,
         upstreamAction: scrobbleResult?.action || null,
+        ...(identityContinuity?.changed || identityContinuity?.status === 'QUARANTINED'
+          ? {
+              identityContinuity: {
+                status: identityContinuity.status,
+                ...(identityContinuity.reason ? { reason: identityContinuity.reason } : {}),
+                ...(identityContinuity.aliasCount != null
+                  ? { aliasCount: identityContinuity.aliasCount } : {}),
+              },
+            }
+          : {}),
         ...(identityAlias?.changed ? {
           identityAlias: {
             traktShowId: identityAlias.traktShowId,
