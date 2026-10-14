@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { filterNextUpForVerifiedAliases } from '../experiments/bridge-jellyfin-nextup-filter.mjs';
+import { filterNextUpForVerifiedAliases } from '../src/jellyfin-nextup-filter.mjs';
 import { loadVerifiedIdentityGraph, observeVerifiedShowIdentity } from '../src/identity-continuity.mjs';
 
 const canonical = 'tt44051354', alias = 'tt44094505';
