@@ -173,7 +173,8 @@ def read_preview(token, max_detail):
 
     result = {
         "audit": "jellyfin-auth-preview-v1",
-        "side_effects": "JELLYFIN_READ_ONLY" ,
+        "media_history_writes": 0,
+        "aio_settings_writes": 0,
         "api_user_session_verified": True,
         "aio_nextup_http": a_status,
         "gateway_nextup_http": b_status,
@@ -224,6 +225,7 @@ def main():
         raise Stop("Invalid metadata sample size")
     token = obtain_session(args.auth)
     result, user_id = read_preview(token, args.max_series_details)
+    result["new_login_session_created"] = args.auth == "login"
     if args.save_user_env:
         if not result["preview_opaque_item_signature_equal"]:
             raise Stop("Preview differed: will not export user mapping")
