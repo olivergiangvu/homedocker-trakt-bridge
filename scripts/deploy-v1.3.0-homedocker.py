@@ -215,17 +215,27 @@ def rc7_identity_guard():
         fixture = [p for p in pairs
                    if p.get("alias_imdb") == "tt44094505"
                    and p.get("canonical_imdb") == "tt44051354"]
+        pair = fixture[0] if len(fixture) == 1 else {}
+        # A legitimate later completed S01E10 may eliminate the active resume.
+        # It MUST NOT make the Stable cutover permanently impossible.
+        drop_effective = (
+            pair.get("status") == "MITIGATED_BY_DROP"
+            and pair.get("alias_drop_effective") is True
+        )
+        old_alias_gone = (
+            pair.get("status") == "SINGLE_TIMELINE"
+            and pair.get("alias_episode_rows") == 0
+        )
         if not (state.get("mode") == "SQLITE_READ_ONLY"
                 and state.get("attention") == 0
                 and state.get("database_writes") == 0
                 and len(fixture) == 1
-                and fixture[0].get("status") == "MITIGATED_BY_DROP"
-                and fixture[0].get("alias_drop_effective") is True
-                and fixture[0].get("canonical_resumes", 0) >= 1):
-            raise Stop("RC7 dual-IMDb dropped preference/NextUp mitigation not verified")
+                and pair.get("canonical_episode_rows", 0) >= 1
+                and (drop_effective or old_alias_gone)):
+            raise Stop("RC7 dual-IMDb mitigation/canonical timeline not verified")
     except (KeyError, TypeError, ValueError) as exc:
         raise Stop("invalid RC7 read-only identity monitor output") from exc
-    print("RC7_IDENTITY=MITIGATED_BY_DROP_VERIFIED_READONLY")
+    print("RC7_IDENTITY=KNOWN_PAIR_SAFE_READONLY")
 
 
 def stable_image():
