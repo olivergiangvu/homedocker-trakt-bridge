@@ -3,11 +3,36 @@ import { BridgeDb } from './db.mjs';
 import { ManagedTraktClient } from './managed-trakt.mjs';
 import { createServer } from './server.mjs';
 import { createJellyfinGateway } from './jellyfin-gateway.mjs';
+import { importLegacyIdentityAliases } from './identity-legacy-import.mjs';
 import { startAioReconciler } from './aio-reconciler.mjs';
 import { startAioHistoryEvidenceJournal } from './aio-history-evidence.mjs';
 
 const config = loadConfig();
 const db = new BridgeDb(config);
+if (config.jellyfinGatewayLegacyImport !== 'off') {
+  if (config.jellyfinGatewayLegacyImport === 'apply'
+      && !config.jellyfinGatewayEnabled) {
+    throw new Error('Legacy identity import apply requires gateway enabled');
+  }
+  const outcome = importLegacyIdentityAliases(db, config.jellyfinGatewayProfileId, {
+    dryRun: config.jellyfinGatewayLegacyImport !== 'apply',
+  });
+  // Never log the profile id, IMDb ids, cache JSON or any secrets.
+  console.log(JSON.stringify({
+    level: outcome.status === 'DRY_RUN_READY'
+      || outcome.status === 'LEGACY_IMPORTED'
+      || outcome.status === 'GRAPH_ALREADY_EXISTS' ? 'info' : 'error',
+    component: 'legacy-identity-import',
+    status: outcome.status,
+    changed: outcome.changed,
+    showCount: outcome.showCount ?? 0,
+    aliasedShows: outcome.aliasedShows ?? 0,
+  }));
+  if (config.jellyfinGatewayLegacyImport === 'apply'
+      && !['LEGACY_IMPORTED', 'GRAPH_ALREADY_EXISTS'].includes(outcome.status)) {
+    throw new Error('Requested legacy identity import failed closed');
+  }
+}
 const trakt = new ManagedTraktClient(config, db);
 const server = createServer({ config, db, trakt });
 // Gateway is a separate optional listener inside our Bridge process.
