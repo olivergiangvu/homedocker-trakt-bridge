@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 /**
  * AIOStreams upstream-side proof of concept. NOT part of Bridge runtime.
  * An in-memory model of a future persistent, scoped equivalence table.
@@ -39,6 +41,7 @@ export class ProposedAioIdentityLedger {
     this.scope = { uuid: scope.uuid, persona: scope.persona };
     this.allowedSinkId = allowedSinkId;
     this.revision = 0;
+    this.lastPullFingerprint = null;
     this.relations = new Map();
     this.quarantined = new Set();
     if (restoredState) this.restore(restoredState);
@@ -59,8 +62,8 @@ export class ProposedAioIdentityLedger {
         || !Array.isArray(relations) || relations.length > MAX_RELATIONS) {
       return { accepted: false, reason: 'INVALID_OR_UNBOUNDED_PAYLOAD' };
     }
-    if (revision <= this.revision) {
-      return { accepted: false, reason: 'STALE_OR_REPLAYED_REVISION' };
+    if (revision < this.revision) {
+      return { accepted: false, reason: 'STALE_REVISION' };
     }
 
     // Validate all entries first; never commit a malformed partial snapshot.
@@ -78,6 +81,19 @@ export class ProposedAioIdentityLedger {
         }
         claim.set(id, clean.traktShowId);
       }
+    }
+
+    // AIO polls identical state versions repeatedly. Same revision with
+    // exactly identical *canonicalized* payload is a successful no-op, not
+    // an upstream HTTP/pull error; changed data with same revision fails closed.
+    const fingerprint = createHash('sha256')
+      .update(JSON.stringify([...incoming]
+        .sort((a, b) => a.traktShowId - b.traktShowId)))
+      .digest('hex');
+    if (revision === this.revision) {
+      return fingerprint === this.lastPullFingerprint
+        ? { accepted: true, unchanged: true, revision }
+        : { accepted: false, reason: 'REVISION_REUSED_WITH_DIFFERENT_CONTENT' };
     }
 
     const tentative = new Map([...this.relations].map(([id, r]) =>
@@ -127,6 +143,7 @@ export class ProposedAioIdentityLedger {
     this.relations = tentative;
     this.quarantined = blocked;
     this.revision = revision;
+    this.lastPullFingerprint = fingerprint;
     return {
       accepted: true,
       revision,
@@ -169,6 +186,7 @@ export class ProposedAioIdentityLedger {
       scope: { ...this.scope },
       allowedSinkId: this.allowedSinkId,
       revision: this.revision,
+      lastPullFingerprint: this.lastPullFingerprint,
       relations: [...this.relations.values()].map((x) => ({
         ...x, imdbAliases: [...x.imdbAliases],
       })),
@@ -182,6 +200,8 @@ export class ProposedAioIdentityLedger {
         || snapshot.allowedSinkId !== this.allowedSinkId
         || !Number.isSafeInteger(snapshot.revision)
         || snapshot.revision < 0
+        || (snapshot.revision > 0
+          && !/^[0-9a-f]{64}$/.test(snapshot.lastPullFingerprint || ''))
         || !Array.isArray(snapshot.relations)
         || snapshot.relations.length > MAX_RELATIONS
         || !Array.isArray(snapshot.quarantined)) {
@@ -206,6 +226,7 @@ export class ProposedAioIdentityLedger {
       throw new TypeError('invalid saved conflict');
     }
     this.revision = snapshot.revision;
+    this.lastPullFingerprint = snapshot.lastPullFingerprint ?? null;
     this.relations = candidate;
     this.quarantined = new Set(snapshot.quarantined);
   }
