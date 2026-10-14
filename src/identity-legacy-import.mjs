@@ -45,16 +45,16 @@ export function importLegacyIdentityAliases(db, profileId, {
   if (!profile || !profile.access_token_enc) {
     return result('PROFILE_NOT_CONNECTED', { changed: false });
   }
-  if (typeof db?.cacheGet !== 'function' || typeof db?.cacheSet !== 'function') {
+  if (typeof db?.cachePeek !== 'function' || typeof db?.cacheInsertIfAbsent !== 'function') {
     return result('CACHE_UNAVAILABLE', { changed: false });
   }
 
-  const existing = db.cacheGet(GRAPH_PREFIX + profileId);
+  const existing = db.cachePeek(GRAPH_PREFIX + profileId);
   if (existing !== null && existing !== undefined) {
     return result('GRAPH_ALREADY_EXISTS', { changed: false });
   }
 
-  const legacy = db.cacheGet(LEGACY_PREFIX + profileId);
+  const legacy = db.cachePeek(LEGACY_PREFIX + profileId);
   if (!legacy || typeof legacy !== 'object' || Array.isArray(legacy)
       || !legacy.shows || typeof legacy.shows !== 'object'
       || Array.isArray(legacy.shows)) {
@@ -112,15 +112,14 @@ export function importLegacyIdentityAliases(db, profileId, {
   };
   if (dryRun) return result('DRY_RUN_READY', preview);
 
-  // A single insert into media_cache is atomic. Preserve old key unchanged.
-  // Recheck against a changed graph before the write (one Bridge process).
-  if (db.cacheGet(GRAPH_PREFIX + profileId) != null) {
-    return result('GRAPH_CREATED_CONCURRENTLY', { changed: false });
-  }
-  db.cacheSet(GRAPH_PREFIX + profileId, {
+  // The single DB insertion is atomic and must not overwrite a graph
+  // from a simultaneous process. The RC6 legacy key remains untouched.
+  const inserted = db.cacheInsertIfAbsent(GRAPH_PREFIX + profileId, {
     revision: 1,
     shows: proposed,
     conflicts: [],
   }, TTL);
-  return result('LEGACY_IMPORTED', { ...preview, changed: true });
+  return inserted
+    ? result('LEGACY_IMPORTED', { ...preview, changed: true })
+    : result('GRAPH_CREATED_CONCURRENTLY', { changed: false });
 }
