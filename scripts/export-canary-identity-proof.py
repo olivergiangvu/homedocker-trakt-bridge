@@ -83,9 +83,31 @@ def proof_from_db(db, now=None):
         raise Stop("Invalid legacy cache JSON") from ex
     if not isinstance(legacy, dict) or not isinstance(legacy.get("shows"), dict):
         raise Stop("Invalid legacy state")
-    if set(legacy["shows"]) != {"263102"}:
-        raise Stop("Unexpected legacy shows; refuse unsafe export")
-    show = legacy["shows"]["263102"]
+    # One media_cache row can contain MANY learned shows. We only export
+    # the exact verified fixture; unrelated valid rows must not block it.
+    # However, if another Trakt show claims either fixture IMDb spelling,
+    # the equivalence is ambiguous and the entire export must stop.
+    shows = legacy["shows"]
+    if not 1 <= len(shows) <= 10000:
+        raise Stop("Legacy shows empty or exceeds audit bound")
+    show = shows.get("263102")
+    if not isinstance(show, dict):
+        raise Stop("Known verified show is missing from legacy cache")
+    claimed_ids = {"tt44051354", "tt44094505"}
+    for show_id, other in shows.items():
+        if show_id == "263102":
+            continue
+        if not (isinstance(show_id, str) and show_id.isascii()
+                and show_id.isdecimal()
+                and 0 < int(show_id) <= 9007199254740991):
+            raise Stop("Invalid unrelated legacy Trakt show key")
+        if not isinstance(other, dict):
+            raise Stop("Invalid unrelated legacy show row")
+        for provider in ("preferredMetaId", "traktImdb"):
+            spelling = other.get(provider)
+            if (isinstance(spelling, str)
+                    and spelling.strip().lower() in claimed_ids):
+                raise Stop("Cross-show IMDb collision in RC6 legacy cache")
     if not isinstance(show, dict) or (show.get("traktImdb") != "tt44051354"
            or show.get("preferredMetaId") != "tt44094505"
            or not IMDB.fullmatch(show["traktImdb"])
