@@ -151,6 +151,21 @@ test('AIO official /jellyfin prefix is preserved for NextUp, Users/Me and Series
   assert.ok(hits.every(h => h.path.startsWith('/jellyfin/')));
 });
 
+test('verified AIO user reuses bounded series metadata cache across NextUp refresh', async t => {
+  const { base, hits } = await fixture(t);
+  for (let n = 0; n < 2; n++) {
+    const r = await fetch(base + '/Shows/NextUp?Limit=20', {
+      headers: { 'X-Emby-Token': AIO_TOKEN },
+    });
+    assert.equal(r.status, 200);
+    assert.deepEqual((await r.json()).Items, [mockRows[1]]);
+  }
+  assert.equal(hits.filter(x => x.path === '/Users/Me').length, 2);
+  assert.equal(hits.filter(x => x.path === '/Items/seriesOld').length, 1);
+  assert.equal(hits.filter(x => x.path === '/Items/seriesCanon').length, 1);
+  assert.equal(hits.filter(x => x.path.startsWith('/Shows/NextUp')).length, 2);
+});
+
 test('new playback with old alias uses same verified group and wins on recency', async t => {
   const altered = {
     Items: [
