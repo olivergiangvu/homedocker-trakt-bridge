@@ -45,6 +45,49 @@ location = /Shows/NextUp {
 
 If your live nginx uses /jellyfin or another prefix, do NOT paste this root-path example. Audit the exact existing client URL and adapt request path with an explicit rewrite. Never publicly expose :17131.
 
+## Confirmed HomeDocker topology — operator audit 2026-10-14
+
+The owner ran a **read-only** audit confirming: Bridge RC6 configured by pinned digest and attached ONLY to `homedocker-trakt-bridge_default`; AIOStreams `ghcr.io/viren070/aiostreams:latest` attached ONLY to `media_core_net`; AIO listens on container TCP/3000 exposed as host loopback `127.0.0.1:3240`; Bridge listens on container TCP/7000 exposed as `127.0.0.1:7000`; no host listener on proposed port 17131 or container port 7101; host nginx config test succeeds.
+
+**Implications**:
+
+- `http://127.0.0.1:3240` **inside the Bridge container is incorrect**: it addresses the Bridge container's own loopback, NOT the host or AIO.
+- The gateway can connect directly to `http://aiostreams:3000` **only after** the operator confirms `aiostreams` DNS alias is available on `media_core_net` and a **new canary Bridge** is joined to that existing external network.
+- Do **not** connect/recreate the existing RC6 production Bridge during this audit, and do **not** disconnect, restart, modify or pin AIOStreams. The gateway canary must preserve the existing Bridge default network and add the existing media network; never replace its current network.
+- Adding a shared network expands Bridge's lateral reach to media services. Treat this as an explicitly approved security change. If the user does not approve this additional attachment, return to a sidecar/network design that doesn't alter either production container.
+- `JELLYFIN_GATEWAY_UPSTREAM_URL=http://aiostreams:3000` is a **candidate** only, conditional on alias + container reachability, not a previously tested fact.
+- The current RC6 persisted `identity-alias:v1:<profile>` evidence may exist while the **new** `identity-graph:v1:<profile>` registry does not. Do not presume the gateway can merge 10+8 rows until the exact owner-scoped legacy evidence is audited and either safely imported with conflict checks or freshly learned from a verified Trakt scrobble. Never silently seed aliases by matching titles or AIO row counts.
+
+### Required read-only second audit
+
+From the draft PR, `scripts/audit-gateway-readiness.py` uses Docker inspection and Bridge SQLite `mode=ro` to produce **only** boolean/aggregate evidence for network/alias and the known Trakt fixture. It does not expose the Bridge profile ID, tokens, `.env` or SQLite payload:
+
+```bash
+sudo python3 "$HOME/audit-gateway-readiness.py"
+```
+
+See the accompanying tests `test/test_gateway_readiness.py`. Don't attempt the network/Compose/nginx change until the exact read-only result is reviewed.
+
+### Future (NOT DEPLOYED) Compose overlay shape
+
+For an existing Compose project already owning `homedocker-trakt-bridge_default`, a potential **additional** overlay is:
+
+```yaml
+services:
+  trakt-bridge:
+    networks:
+      - default
+      - media_core_net
+    ports:
+      - "127.0.0.1:17131:7101"
+
+networks:
+  media_core_net:
+    external: true
+```
+
+This is **not an instruction to apply now**. It requires reviewing the actual root-owned Compose stack (preserving all existing services, labels, volumes and ports), testing `docker compose config`, available port + AIO alias, a qualified own-code canary image, safe Bridge SQLite backup and a verified RC6 rollback. The Gateway feature flag must remain off until canary. If the existing Compose project has nondefault networks, adapt its network list rather than copying this literal example. An opt-in preview should be staged without recreating RC6.
+
 ## Read-only HomeDocker discovery BEFORE canary
 
 ```bash
