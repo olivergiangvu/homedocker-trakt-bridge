@@ -83,7 +83,12 @@ test('snapshot restores exact scope and revision across restart, not another per
   const restored = create(snapshot);
   assert.deepEqual(restored.snapshot(), snapshot);
   assert.equal(restored.canonicalSeriesFor(scope, 's|tt44094505').traktShowId, 263102);
-  assert.equal(pull(restored, [relation], 1).reason, 'STALE_OR_REPLAYED_REVISION');
+  const same = pull(restored, [relation], 1);
+  assert.equal(same.accepted, true);
+  assert.equal(same.unchanged, true);
+  assert.equal(pull(restored, [relation], 0).reason, 'INVALID_OR_UNBOUNDED_PAYLOAD');
+  assert.equal(pull(restored, [{ ...relation, imdbAliases: ['tt44094506'] }], 1)
+    .reason, 'REVISION_REUSED_WITH_DIFFERENT_CONTENT');
   assert.throws(() => new ProposedAioIdentityLedger({
     scope: { uuid: 'other-uuid', persona: scope.persona },
     allowedSinkId: authorizedSinkId, restoredState: snapshot,
