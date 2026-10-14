@@ -62,8 +62,8 @@ jobs:
           cat > "$td/identity-proof.json" <<'JSON'
           {"contract":"homedocker-canary-identity-proof-v1","profileId":"aaaaaaaaaaaaaaaaaaaaaaaa","graph":{"revision":1,"conflicts":[],"shows":{"263102":{"canonicalImdb":"tt44051354","aliases":["tt44094505"],"tmdb":null,"tvdb":null}}}}
           JSON
-          sudo chown 1000:1000 "$td/identity-proof.json"
           chmod 600 "$td/identity-proof.json"
+          sudo chown 1000:1000 "$td/identity-proof.json"
           docker run -d --name nextup-gateway-ci \
             --read-only --cap-drop ALL --security-opt no-new-privileges \
             --mount "type=bind,src=$td/identity-proof.json,dst=/run/identity-proof.json,readonly" \
