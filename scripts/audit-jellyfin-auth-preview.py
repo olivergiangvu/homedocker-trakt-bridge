@@ -15,6 +15,7 @@ With --save-user-env OUTPUT (optional), atomically create one private new
 Never overwrite an existing file.
 """
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import getpass
 import json
 import os
@@ -30,7 +31,7 @@ AGENT = ('MediaBrowser Client="HomeDockerReadOnlyAudit",Device="SSH",'
 IMDB = re.compile(r"^tt[0-9]{7,12}$", re.I)
 UID = re.compile(r"^[a-zA-Z0-9_-]{8,128}$")
 NEXTUP_LIMIT = 50
-MAX_DETAIL = 8
+MAX_DETAIL = 50
 MAX_RESPONSE = 2 * 1024 * 1024
 
 
@@ -148,28 +149,36 @@ def read_preview(token, max_detail):
         "canonical_imdb_in_sample": False,
         "alias_imdb_in_sample": False,
     }
-    for sid in series_ids:
+    def lookup_series(sid):
         # Never infer series IMDb from episode ProviderIds; use series detail.
         if len(sid) > 512:
-            continue
+            return False, False, None
         from urllib.parse import quote
         code, item = json_http(
             "GET", AIO + "/Items/" + quote(sid, safe=""),
             token=token, limit=128 * 1024,
         )
         if code != 200:
-            continue
-        counts["metadata_http_200"] += 1
+            return False, False, None
         if (not isinstance(item, dict)
                 or item.get("Type") != "Series" or item.get("Id") != sid):
-            continue
-        counts["metadata_series_valid"] += 1
+            return True, False, None
         ids = item.get("ProviderIds") or {}
         imdb = ids.get("Imdb") if isinstance(ids, dict) else None
-        if isinstance(imdb, str) and IMDB.fullmatch(imdb):
-            counts["metadata_imdb_present"] += 1
-            counts["canonical_imdb_in_sample"] |= imdb.lower() == "tt44051354"
-            counts["alias_imdb_in_sample"] |= imdb.lower() == "tt44094505"
+        if not isinstance(imdb, str) or not IMDB.fullmatch(imdb):
+            return True, True, None
+        return True, True, imdb.lower()
+
+    # AIO /Items is not a Trakt API call. Four parallel requests avoid a
+    # serial 50*15s wall clock while keeping local metadata traffic bounded.
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        for ok, valid, imdb in pool.map(lookup_series, series_ids):
+            counts["metadata_http_200"] += int(ok)
+            counts["metadata_series_valid"] += int(valid)
+            if imdb:
+                counts["metadata_imdb_present"] += 1
+                counts["canonical_imdb_in_sample"] |= imdb == "tt44051354"
+                counts["alias_imdb_in_sample"] |= imdb == "tt44094505"
 
     result = {
         "audit": "jellyfin-auth-preview-v1",
