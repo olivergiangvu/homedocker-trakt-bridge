@@ -20,9 +20,10 @@ export function identityEquivalencePullExtension(
   if (enabled !== true || requestedHeader !== 'v1') return null;
   const graph = loadVerifiedIdentityGraph(db, profileId);
   const proposal = identityEquivalenceProposal(graph);
+  if (graph.revision < 1 || proposal.identities.length > 1000) return null;
   // The version/revision travels independently of Trakt watched-state version:
   // a new alias must be usable even when Trakt last_activities did not change.
-  const relations = proposal.identities.slice(0, 1000).map((row) => ({
+  const relations = proposal.identities.map((row) => ({
     kind: 'series',
     traktShowId: row.traktShowId,
     canonicalImdb: row.canonicalImdb,
@@ -33,6 +34,16 @@ export function identityEquivalencePullExtension(
     capability: 'identity-equivalences-v1',
     revision: graph.revision,
     relations,
+    // AIO must quarantine these after a *newer* Bridge revision, including
+    // any previously imported trusted alias. Silently omitting an identity
+    // would otherwise leave the old AIO mapping active forever.
+    quarantinedImdbs: [...new Set(
+      graph.conflicts.map((c) => c.id).filter((x) => /^tt\d{7,12}$/.test(x)),
+    )].sort(),
+    quarantinedTraktShows: [...new Set(
+      graph.conflicts.map((c) => c.observedShow)
+        .filter((n) => Number.isSafeInteger(n) && n > 0),
+    )].sort((a, b) => a - b),
     conflictCount: proposal.conflictCount,
   };
 }
