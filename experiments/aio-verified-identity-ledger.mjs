@@ -19,6 +19,7 @@ function normalizedRelation(raw) {
     || raw.proof !== 'successful_trakt_scrobble_response') return null;
   if (raw.imdbAliases.some((id) => !IMDB.test(id))) return null;
   return {
+    kind: 'series',
     traktShowId: raw.traktShowId,
     canonicalImdb: raw.canonicalImdb,
     imdbAliases: [...new Set(raw.imdbAliases.filter(
