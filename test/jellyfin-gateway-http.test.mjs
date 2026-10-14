@@ -166,7 +166,30 @@ test('verified AIO user reuses bounded series metadata cache across NextUp refre
   assert.equal(hits.filter(x => x.path.startsWith('/Shows/NextUp')).length, 2);
 });
 
-test('new playback with old alias uses same verified group and wins on recency', async t => {
+test('new alias resume is chosen only when canonical is not actively resumed', async t => {
+  const altered = {
+    Items: [
+      { ...mockRows[1], UserData: {
+        PlaybackPositionTicks: 0, LastPlayedDate: '2026-10-13T16:00:00Z',
+      } },
+      { ...mockRows[0], Id: 'episodeNewAlias',
+        UserData: {
+          PlaybackPositionTicks: 500000,
+          LastPlayedDate: '2026-10-14T16:00:00Z',
+        } },
+    ],
+    TotalRecordCount: 2,
+  };
+  const { base } = await fixture(t, { nextUp: altered });
+  const r = await fetch(base + '/Shows/NextUp', {
+    headers: { 'X-Emby-Token': AIO_TOKEN },
+  });
+  const result = await r.json();
+  assert.equal(result.Items.length, 1);
+  assert.equal(result.Items[0].Id, 'episodeNewAlias');
+});
+
+test('HTTP gateway preserves both active alias and canonical resumes', async t => {
   const altered = {
     Items: [
       { ...mockRows[1], UserData: {
@@ -184,9 +207,24 @@ test('new playback with old alias uses same verified group and wins on recency',
   const r = await fetch(base + '/Shows/NextUp', {
     headers: { 'X-Emby-Token': AIO_TOKEN },
   });
-  const result = await r.json();
-  assert.equal(result.Items.length, 1);
-  assert.equal(result.Items[0].Id, 'episodeNewAlias');
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), altered);
+});
+
+test('HTTP gateway preserves two episodes of the same IMDb spelling', async t => {
+  const altered = {
+    Items: [
+      { ...mockRows[1], Id: 'episodeCanonA' },
+      { ...mockRows[1], Id: 'episodeCanonB' },
+    ],
+    TotalRecordCount: 2,
+  };
+  const { base } = await fixture(t, { nextUp: altered });
+  const r = await fetch(base + '/Shows/NextUp', {
+    headers: { 'X-Emby-Token': AIO_TOKEN },
+  });
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), altered);
 });
 
 test('different Jellyfin account and unauthenticated caller retain AIO response', async t => {
