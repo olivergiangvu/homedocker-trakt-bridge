@@ -691,6 +691,7 @@ export class TraktClient {
           profileId,
           canonicalMedia.show.ids,
           event.metaId,
+          event.ids,
         );
       }
 
