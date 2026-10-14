@@ -156,6 +156,21 @@ Results are aggregate: /Users/Me accepted, direct vs canary NextUp HTTP and boun
 
 The audit's optional `--save-user-env /opt/homedocker/gateway-canary/jellyfin-user.env` creates a new root-private **0600** file with only `JELLYFIN_GATEWAY_AIO_USER_ID`, not a token; it refuses overwrite. Do **not** request this or change the running preview canary's configured user until exact AIO scope and requested Bridge/Trakt profile ownership are reviewed. Keep all session tokens strictly local; never paste them into ChatGPT, GitHub, scripts or terminal logs.
 
+### Authenticated audit PASS on actual HomeDocker — 2026-10-14
+
+The operator ran the hidden-input official Jellyfin login audit against the *correct* AIO `/jellyfin` base and isolated canary. Results:
+
+- `api_user_session_verified=true`
+- AIO authenticated NextUp `200`, gateway authenticated NextUp `200`
+- `direct_items=50`, `gateway_items=50`, `preview_opaque_item_signature_equal=true`
+- 8/8 SeriesId detail GETs returned `200`, `Type=Series` and a valid IMDb provider ID.
+- Neither known canonical `tt44051354` nor alias `tt44094505` appeared in **the first 8** series; this says nothing about the other 42 entries or local historical AIO rows.
+- `new_login_session_created=true`, `session_token_saved=false`, `normalization_applied=false`. No watched history, AIO config, nginx or Docker changes.
+
+**Next gate before enabling actual user filtering:** sample up to the *entire existing 50-card NextUp response* through the same official AIO /Items endpoint, limited to four concurrent metadata requests, while keeping results aggregate-only. `scripts/audit-jellyfin-auth-preview.py` now allows `--max-series-details 50` (the default remains 8). The optional `--save-user-env` writes only one private 0600 local User ID, not a token. It is operator-controlled, never printed, and must not be posted to GitHub or chat. If the target pair is not in the 50-card shelf, treat the isolated filter as NOT LIVE-VERIFIED, not as a normalization success.
+
+**Traffic performance safeguard** in `src/jellyfin-gateway.mjs` now caches only the validated, single-user `SeriesId → IMDb` metadata mapping for five minutes with a maximum of 128 entries after /Users/Me was checked, never caching passwords, auth tokens or watch rows. This requires building a **new exact source-commit canary image** before enabling any real user. The previously built `canary-96f229afcfcd` image is still in preview-only mode and does not include this performance patch. No AIO source change.
+
 ### Read-only proof export prerequisites (do NOT export until operator acceptance)
 
 Example commands after reviewing the actual host ownership and mounted paths:
