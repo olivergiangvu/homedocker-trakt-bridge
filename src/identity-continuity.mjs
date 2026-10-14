@@ -79,12 +79,25 @@ export function loadVerifiedIdentityGraph(db, profileId) {
 }
 
 /** Only positive completed Trakt identity evidence, not heuristics. */
-export function observeVerifiedShowIdentity(db, profileId, showIds, rawMetaId) {
+export function observeVerifiedShowIdentity(db, profileId, showIds, rawMetaId, sourceIds = {}) {
   const trakt = positiveId(showIds?.trakt);
   const canonicalImdb = imdb(showIds?.imdb);
   const observedId = imdb(rawMetaId);
   if (!trakt || !canonicalImdb || !observedId) {
     return { changed: false, status: 'NO_VERIFIED_CROSS_IMDB_EVIDENCE' };
+  }
+
+  // The raw AIO Jellyfin spelling must not contradict any explicit provider
+  // IDs in the SAME push. A Trakt response to a mixed-ID scrobble proves which
+  // target accepted the request, not that every source spelling is equivalent.
+  const presented = imdb(sourceIds?.imdb);
+  if ((sourceIds?.imdb && presented !== observedId)
+      || (positiveId(sourceIds?.trakt) && positiveId(sourceIds.trakt) !== trakt)
+      || (positiveId(sourceIds?.tmdb) && positiveId(showIds?.tmdb)
+          && positiveId(sourceIds.tmdb) !== positiveId(showIds.tmdb))
+      || (positiveId(sourceIds?.tvdb) && positiveId(showIds?.tvdb)
+          && positiveId(sourceIds.tvdb) !== positiveId(showIds.tvdb))) {
+    return { changed: false, status: 'CONTRADICTORY_SOURCE_PROVIDER_IDS' };
   }
 
   const current = loadVerifiedIdentityGraph(db, profileId);
