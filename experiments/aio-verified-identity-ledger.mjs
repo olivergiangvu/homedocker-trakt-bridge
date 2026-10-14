@@ -52,7 +52,10 @@ export class ProposedAioIdentityLedger {
    * and persona. On pull, old evidence remains until deliberate admin removal.
    * Version is monotonic and disallows replay of a stale snapshot.
    */
-  applyVerifiedPull({ scope, sinkId, revision, relations, negotiatedCapability }) {
+  applyVerifiedPull({
+    scope, sinkId, revision, relations, negotiatedCapability,
+    quarantinedImdbs = [], quarantinedTraktShows = [],
+  }) {
     if (scopeKey(scope ?? {}) !== scopeKey(this.scope)
         || sinkId !== this.allowedSinkId
         || negotiatedCapability !== 'identity-equivalences-v1') {
@@ -64,6 +67,12 @@ export class ProposedAioIdentityLedger {
     }
     if (revision < this.revision) {
       return { accepted: false, reason: 'STALE_REVISION' };
+    }
+    if (!Array.isArray(quarantinedImdbs) || quarantinedImdbs.length > 100
+        || quarantinedImdbs.some((id) => !IMDB.test(id))
+        || !Array.isArray(quarantinedTraktShows) || quarantinedTraktShows.length > 100
+        || quarantinedTraktShows.some((id) => !safeInt(id))) {
+      return { accepted: false, reason: 'INVALID_QUARANTINE' };
     }
 
     // Validate all entries first; never commit a malformed partial snapshot.
@@ -87,8 +96,11 @@ export class ProposedAioIdentityLedger {
     // exactly identical *canonicalized* payload is a successful no-op, not
     // an upstream HTTP/pull error; changed data with same revision fails closed.
     const fingerprint = createHash('sha256')
-      .update(JSON.stringify([...incoming]
-        .sort((a, b) => a.traktShowId - b.traktShowId)))
+      .update(JSON.stringify({
+        relations: [...incoming].sort((a, b) => a.traktShowId - b.traktShowId),
+        quarantinedImdbs: [...new Set(quarantinedImdbs)].sort(),
+        quarantinedTraktShows: [...new Set(quarantinedTraktShows)].sort((a, b) => a - b),
+      }))
       .digest('hex');
     if (revision === this.revision) {
       return fingerprint === this.lastPullFingerprint
@@ -104,6 +116,16 @@ export class ProposedAioIdentityLedger {
       for (const id of [relation.canonicalImdb, ...relation.imdbAliases]) {
         if (!owners.has(id)) owners.set(id, relation.traktShowId);
       }
+    }
+    // Pull-time revocation/quarantine always takes priority over previous
+    // learned evidence. This blocks old alias mapping after Bridge discovers
+    // a later Trakt cross-show or canonical-ID conflict.
+    for (const id of quarantinedImdbs) {
+      const owner = owners.get(id);
+      if (owner) blocked.add(owner);
+    }
+    for (const show of quarantinedTraktShows) {
+      if (tentative.has(show)) blocked.add(show);
     }
     let conflicts = 0;
     for (const relation of incoming) {
