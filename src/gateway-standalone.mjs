@@ -8,7 +8,7 @@
  *
  * The ordinary production Bridge entrypoint stays src/index.mjs unchanged.
  */
-import { readFileSync, statSync } from 'node:fs';
+import { readFileSync, lstatSync } from 'node:fs';
 import { createJellyfinGateway } from './jellyfin-gateway.mjs';
 
 const PROFILE = /^[a-f0-9]{24}$/;
@@ -78,8 +78,9 @@ export function launchCanaryGateway({
   if (!file || !file.startsWith('/') || file.length > 256) {
     throw new Error('Absolute gateway proof path is required');
   }
-  const stat = statSync(file);
-  if (!stat.isFile() || (stat.mode & 0o077) !== 0 || stat.size > 8192) {
+  const stat = lstatSync(file);
+  if (!stat.isFile() || stat.isSymbolicLink()
+      || (stat.mode & 0o077) !== 0 || stat.size > 8192) {
     throw new Error('Gateway proof must be private, small regular file');
   }
   const proof = parseCanaryIdentityProof(readFileSync(file, 'utf8'));
