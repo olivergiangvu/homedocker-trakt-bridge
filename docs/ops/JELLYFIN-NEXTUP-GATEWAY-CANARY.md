@@ -52,10 +52,10 @@ The owner ran a **read-only** audit confirming: Bridge RC6 configured by pinned 
 **Implications**:
 
 - `http://127.0.0.1:3240` **inside the Bridge container is incorrect**: it addresses the Bridge container's own loopback, NOT the host or AIO.
-- The gateway can connect directly to `http://aiostreams:3000` **only after** the operator confirms `aiostreams` DNS alias is available on `media_core_net` and a **new canary Bridge** is joined to that existing external network.
+- An isolated gateway-only canary can connect to AIO's `http://aiostreams:3000/jellyfin` API base after the media-network DNS alias and authenticated Jellyfin route are verified. **Do not attach production RC6 to media_core_net** (the standalone sidecar supersedes an in-place second Bridge).
 - Do **not** connect/recreate the existing RC6 production Bridge during this audit, and do **not** disconnect, restart, modify or pin AIOStreams. The gateway canary must preserve the existing Bridge default network and add the existing media network; never replace its current network.
 - Adding a shared network expands Bridge's lateral reach to media services. Treat this as an explicitly approved security change. If the user does not approve this additional attachment, return to a sidecar/network design that doesn't alter either production container.
-- `JELLYFIN_GATEWAY_UPSTREAM_URL=http://aiostreams:3000` is a **candidate** only, conditional on alias + container reachability, not a previously tested fact.
+- `JELLYFIN_GATEWAY_UPSTREAM_URL=http://aiostreams:3000/jellyfin` is the correct **candidate** for AIO's official Jellyfin API base, conditional on the running image's public unauthenticated `/jellyfin/System/Info/Public` probe. The former bare `http://aiostreams:3000` URL is the AIO web-server root and causes false `/Shows/NextUp` 404 responses.
 - The current RC6 persisted `identity-alias:v1:<profile>` evidence may exist while the **new** `identity-graph:v1:<profile>` registry does not. Do not presume the gateway can merge 10+8 rows until the exact owner-scoped legacy evidence is audited and either safely imported with conflict checks or freshly learned from a verified Trakt scrobble. Never silently seed aliases by matching titles or AIO row counts.
 
 ### Required read-only second audit
@@ -112,6 +112,18 @@ The first proof-export attempt returned `STOP: Unexpected legacy shows; refuse u
 
 The corrected exporter selects only the verified Trakt show **263102**, checks its canonical+alias IDs/expiry/timestamp/connected profile, and examines all other bounded show rows to reject **any conflicting ownership of either `tt44051354` or `tt44094505`**. Unrelated show rows are not exported or printed. A malformed unrelated row or a collision aborts before creating any proof. Regression tests cover multiple valid shows, unknown canonical IDs on unrelated shows, malformed rows, and conflicting IMDb ownership. Continue to refuse pre-existing proof files; never delete a file merely to bypass the guard.
 
+### Actual on-host canary checkpoint — running, still NOT normalized (2026-10-14)
+
+The operator successfully exported private 0600 proof (owner UID/GID 1000:1000), built the immutable-source canary image at commit `96f229afcfcd...`, started `homedocker-nextup-canary` on `media_core_net` with host loopback `127.0.0.1:17131`, and got `/health` 200. Production RC6 and AIO image IDs remained **unchanged**. The unauthenticated Jellyfin NextUp comparison incorrectly returned `404/404` because the canary was given upstream base `http://aiostreams:3000` (AIO *web root*) rather than the official AIO Jellyfin API base `http://aiostreams:3000/jellyfin`. **Matched 404s were only evidence of HTTP reachability, not NextUp API compatibility.**
+
+Official AIO app mounts Jellyfin API at `/jellyfin`, optionally beneath picker/user addresses `/jellyfin/u/:alias`, `/jellyfin/p/:code` or `/jellyfin/:uuid/:encryptedPassword`. The gateway itself intentionally listens for `GET /Shows/NextUp` on its **local** root. Do not confuse inbound gateway URL with the **prefixed upstream** AIO Jellyfin URL. A synthetic authenticated regression covers the `/jellyfin` base prefix.
+
+**Correct next safety gate:** without credentials, probe only HTTP status for `http://127.0.0.1:3240/jellyfin/System/Info/Public` (expect 200) and `http://127.0.0.1:3240/jellyfin/Shows/NextUp` (authorization-specific, may return 401/403 or another error). If public info probe is not 200, stop and inspect AIO configuration; do not recreate the sidecar blindly.
+
+**Then** recreate **only** `homedocker-nextup-canary` with its verified current local image and corrected upstream base `http://aiostreams:3000/jellyfin`. Do not change nginx, RC6, AIO, proof file or image. Keep the intentionally unmatched `JELLYFIN_GATEWAY_AIO_USER_ID=CANARY_PREVIEW_NO_MATCH_USER`; no user-specific normalization is authorized yet. Repeat unauthenticated `GET /Shows/NextUp` status parity against `/jellyfin/Shows/NextUp`, not AIO web root.
+
+Public AIO docs: https://docs.aiostreams.viren070.me/apps/jellyfin/ and https://docs.aiostreams.viren070.me/reference/jellyfin-extensions/
+
 ### Read-only proof export prerequisites (do NOT export until operator acceptance)
 
 Example commands after reviewing the actual host ownership and mounted paths:
@@ -131,7 +143,7 @@ Exporter refuses an existing proof rather than overwrite it, and sets file mode 
 Use the reviewed `v1.3.1` feature branch source's Dockerfile as a **separately tagged local image** (e.g. `localhost/homedocker-nextup-canary:<reviewed-sha>`) while passing `node src/gateway-canary-entry.mjs` as the command. The container may use AIO's `media_core_net` and loopback-only host port, but does not need `homedocker-trakt-bridge_default` at all. It requires:
 
 - `GATEWAY_PROOF_FILE=/run/identity-proof.json` (single-file readonly bind mount);
-- `JELLYFIN_GATEWAY_UPSTREAM_URL=http://aiostreams:3000` **only after verifying internal reachability**;
+- `JELLYFIN_GATEWAY_UPSTREAM_URL=http://aiostreams:3000/jellyfin` **only after verifying `/jellyfin/System/Info/Public` is accessible**;
 - `JELLYFIN_GATEWAY_AIO_USER_ID`: operator-verified ID from AIO existing `/Users/Me` (never paste Jellyfin auth tokens);
 - `JELLYFIN_GATEWAY_PORT=7101` (container), loopback-only host mapping `127.0.0.1:17131:7101`.
 
