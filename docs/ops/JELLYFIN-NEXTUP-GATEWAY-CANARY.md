@@ -124,6 +124,38 @@ Official AIO app mounts Jellyfin API at `/jellyfin`, optionally beneath picker/u
 
 Public AIO docs: https://docs.aiostreams.viren070.me/apps/jellyfin/ and https://docs.aiostreams.viren070.me/reference/jellyfin-extensions/
 
+### Real Jellyfin API connectivity PASS; next: authenticated preview, still NO nginx change
+
+Owner's actual on-host command (2026-10-14) confirmed:
+
+| Request | Status |
+| --- | --- |
+| AIO `http://127.0.0.1:3240/jellyfin/System/Info/Public` | 200 |
+| AIO `/jellyfin/Shows/NextUp` without credentials | 401 |
+| Loopback canary `/Shows/NextUp` without credentials | 401 |
+| Canary `/health` | 200 |
+
+`BRIDGE_UNCHANGED=true`, `AIOSTREAMS_UNCHANGED=true`, `JELLYFIN_API_PREFIX=VERIFIED`, `GATEWAY_CANARY=PASS`. The only recreated container was **the separate** `homedocker-nextup-canary`, still with deliberately unmatched `JELLYFIN_GATEWAY_AIO_USER_ID=CANARY_PREVIEW_NO_MATCH_USER`. This proves real Jellyfin API routing and equivalent unauthenticated authorization behavior, **not** same-user identity normalization.
+
+New **read-only and privacy-preserving** audit `scripts/audit-jellyfin-auth-preview.py` exercises the real authenticated AIO user, the unmodified canary response and a bounded (default 8) sample of SeriesId details. It never prints/saves the session token, username, Jellyfin user ID, series or episode identifiers, titles, watch timestamps or raw API responses. It only contacts loopback `127.0.0.1:3240` and `127.0.0.1:17131`; no Trakt requests; no AIO configuration/DB writes; no user watched-history mutations.
+
+Operator can choose:
+
+```bash
+# AIO Jellyfin **session** token from an existing client, entered hidden:
+python3 "$HOME/audit-jellyfin-auth-preview.py" --auth token
+
+# Or use the *existing official Jellyfin AuthenticateByName* login API,
+# prompting for both username/alias and password invisibly:
+python3 "$HOME/audit-jellyfin-auth-preview.py" --auth login
+```
+
+The `login` option creates a **new Jellyfin login session**, which may be recorded in AIO's own authentication/session state; it is not a strict zero-write audit of all AIO state, although it does not change playback/watch history, AIO config, the Docker image or SQLite schema. Prefer an existing session token where practical. Jellyfin **API keys are not equivalent to user session tokens**: AIO `/Users/Me` explicitly rejects keys without user identity.
+
+Results are aggregate: /Users/Me accepted, direct vs canary NextUp HTTP and bounded item IDs/positions parity, number of SeriesId metadata lookups that successfully resolve `Type=Series` plus whether either protected IMDb spelling appears **in the small sample**. Absence of either spelling in this sample is NOT evidence that the historical watched-state rows are gone, especially with prior Drop preference applied.
+
+The audit's optional `--save-user-env /opt/homedocker/gateway-canary/jellyfin-user.env` creates a new root-private **0600** file with only `JELLYFIN_GATEWAY_AIO_USER_ID`, not a token; it refuses overwrite. Do **not** request this or change the running preview canary's configured user until exact AIO scope and requested Bridge/Trakt profile ownership are reviewed. Keep all session tokens strictly local; never paste them into ChatGPT, GitHub, scripts or terminal logs.
+
 ### Read-only proof export prerequisites (do NOT export until operator acceptance)
 
 Example commands after reviewing the actual host ownership and mounted paths:
