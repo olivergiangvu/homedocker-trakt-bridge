@@ -7,7 +7,7 @@ const TRAKT_MIN_SCROBBLE_PROGRESS = 1;
 // "Use stop to scrobble". Never turn a pause into watched without AIO proof.
 const TRAKT_TERMINAL_PAUSE_MIN_PROGRESS = 99;
 
-export function buildManifest(profileId, pullTtlSeconds = 300) {
+export function buildManifest(profileId, pullTtlSeconds = 300, identityEquivalencesEnabled = false) {
   return {
     id: `homedocker.trakt.watchstate.${profileId}`,
     version: APP_VERSION,
@@ -18,7 +18,9 @@ export function buildManifest(profileId, pullTtlSeconds = 300) {
     watchState: {
       version: 2,
       push: { events: PUSH_EVENTS, bulk: true },
-      pull: { items: true, watched: true, watchlist: true, ttlSeconds: pullTtlSeconds },
+      pull: { items: true, watched: true, watchlist: true, ttlSeconds: pullTtlSeconds,
+        ...(identityEquivalencesEnabled === true ? { identityEquivalences: 'v1' } : {}),
+      },
     },
   };
 }
