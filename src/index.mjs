@@ -35,8 +35,9 @@ if (gateway) {
     console.error(JSON.stringify({
       level: 'error', component: 'jellyfin-gateway', code: err?.code || 'listen_failed',
     }));
-    process.exitCode = 1;
-    server.close();
+    // An explicitly enabled canary MUST NOT silently start without its
+    // protected listener; Compose should observe the failure and roll back.
+    process.exit(1);
   });
   gateway.listen(config.jellyfinGatewayPort, '0.0.0.0', () => {
     console.log(JSON.stringify({
@@ -51,7 +52,7 @@ function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(JSON.stringify({ level: 'info', message: `received ${signal}, shutting down` }));
-  if (gateway) gateway.close();
+  if (gateway?.listening) gateway.close();
   server.close(() => {
     try { aioReconciler.stop(); } catch {}
     try { aioHistoryEvidence.stop(); } catch {}
