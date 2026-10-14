@@ -84,6 +84,8 @@ export function loadConfig() {
     jellyfinGatewayUpstreamUrl: (process.env.JELLYFIN_GATEWAY_UPSTREAM_URL || '').trim(),
     jellyfinGatewayUserId: (process.env.JELLYFIN_GATEWAY_AIO_USER_ID || '').trim(),
     jellyfinGatewayProfileId: (process.env.JELLYFIN_GATEWAY_PROFILE_ID || '').trim(),
+    // Old RC6 proof import is never automatic in a normal Bridge deploy.
+    jellyfinGatewayLegacyImport: enumEnv('JELLYFIN_GATEWAY_LEGACY_IMPORT', 'off', ['off', 'preview', 'apply']),
     aioReconcilerMode: enumEnv('AIO_RECONCILER_MODE', 'off', ['off', 'detect', 'compare']),
     aioDbPath: (process.env.AIO_DB_PATH || '/aio-data/db.sqlite').trim(),
     aioUnplayedEchoGuard: boolEnv('AIO_UNPLAYED_ECHO_GUARD', false),
