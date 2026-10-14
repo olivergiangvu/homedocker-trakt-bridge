@@ -88,6 +88,51 @@ Migration is implemented entirely inside OUR Bridge code:
 
 A successful gateway canary requires one actual known verified alias in `identity-graph:v1` *after import*; a running HTTP listener without such a graph does **not** prove NextUp normalization.
 
+## Preferred architecture after successful ownership audit: *isolated gateway sidecar*
+
+**This supersedes the earlier suggestion to add `media_core_net` to the running production Bridge.** Do not change RC6 networks, Compose, volumes or its pinned digest; no need to restart or recreate it. The operator's read-only audit now confirms:
+
+- `legacy_alias_timestamp_valid=true`
+- `legacy_cache_unexpired=true`
+- `legacy_owner_connected=true`
+- `legacy_canonical_matches=true`, `legacy_alias_matches=true`
+- AIO's `aiostreams` DNS alias exists on `media_core_net`.
+- `verified_graph_present=false` (expected before canary).
+
+The canary now has **no dependency on a Bridge database copy**:
+
+1. `scripts/export-canary-identity-proof.py` reads the current pinned RC6 `bridge.db` in SQLite `mode=ro`, verifies **exactly one** connected owner and the already-confirmed single mapping `263102: tt44094505 → tt44051354`, validates expiry and timestamp, then writes a **new 0600 file** `identity-proof.json` in a caller-prepared 0700 directory. It includes ONLY the exact IMDb pair, a profile-scoped reference and a conflict-free revision. **No Trakt OAuth token, encrypted token, watched/resume history, SQLite database or `.env` goes into the sidecar.** Never print the file contents in chat.
+2. `src/gateway-standalone.mjs` loads that sanitized proof via `GATEWAY_PROOF_FILE` and supplies a **read-only in-memory** `cacheGet` facade to `src/jellyfin-gateway.mjs`. No `BridgeDb`, `ManagedTraktClient`, `src/index.mjs`, scrobble, reconciler, DB migration or Trakt HTTP calls are started. `src/gateway-canary-entry.mjs` is the standalone Node entrypoint.
+3. Run only this **separately named** canary container on existing `media_core_net`, publishing the NextUp listener solely to host `127.0.0.1:17131`. Do **not** attach existing RC6 to media network, mount production Bridge DB/volume, copy secrets, or modify AIO `latest`. Use the **reviewed canary image built at an exact commit** after CI, never floating source.
+4. The canary is isolated from all public Jellyfin requests until an explicitly reviewed native nginx exact-path location change. Testing its `/health` does not require passing any real Jellyfin token or modifying live clients.
+
+### Read-only proof export prerequisites (do NOT export until operator acceptance)
+
+Example commands after reviewing the actual host ownership and mounted paths:
+
+```bash
+# Preparation for separate nonsecret proof only. Creates NO Docker containers.
+sudo install -d -m 0700 -o root -g root /opt/homedocker/gateway-canary
+sudo python3 "$HOME/export-canary-identity-proof.py" \
+  --output /opt/homedocker/gateway-canary/identity-proof.json
+sudo stat -c '%a %u %g %n' /opt/homedocker/gateway-canary/identity-proof.json
+```
+
+Exporter refuses an existing proof rather than overwrite it, and sets file mode 0600 / owner UID 1000 for the nonroot Node image. Keep canary directory private. A root-only directory is safe when its **file** is mounted directly as a read-only bind mount via Docker; never mount that directory or an OAuth/Trakt data volume into the canary.
+
+### Standalone canary container execution design (NOT YET AUTHORIZED)
+
+Use the reviewed `v1.3.1` feature branch source's Dockerfile as a **separately tagged local image** (e.g. `localhost/homedocker-nextup-canary:<reviewed-sha>`) while passing `node src/gateway-canary-entry.mjs` as the command. The container may use AIO's `media_core_net` and loopback-only host port, but does not need `homedocker-trakt-bridge_default` at all. It requires:
+
+- `GATEWAY_PROOF_FILE=/run/identity-proof.json` (single-file readonly bind mount);
+- `JELLYFIN_GATEWAY_UPSTREAM_URL=http://aiostreams:3000` **only after verifying internal reachability**;
+- `JELLYFIN_GATEWAY_AIO_USER_ID`: operator-verified ID from AIO existing `/Users/Me` (never paste Jellyfin auth tokens);
+- `JELLYFIN_GATEWAY_PORT=7101` (container), loopback-only host mapping `127.0.0.1:17131:7101`.
+
+The container must have `--read-only`, `--cap-drop=ALL`, `--security-opt=no-new-privileges`, restart policy `no`, no `docker.sock`, no writable bind mounts, no Trakt secrets and no public router forwarding. It is a **read-only view adapter**, not a second Trakt Bridge.
+
+**Rollback** before nginx: stop/remove the standalone canary container; nothing else changed. After nginx canary: remove the exact-path location and verify `nginx -t`, then stop the standalone canary. No watch-state rollback is necessary because this path never writes it.
+
 ### Future (NOT DEPLOYED) Compose overlay shape
 
 For an existing Compose project already owning `homedocker-trakt-bridge_default`, a potential **additional** overlay is:
@@ -106,7 +151,7 @@ networks:
     external: true
 ```
 
-This is **not an instruction to apply now**. It requires reviewing the actual root-owned Compose stack (preserving all existing services, labels, volumes and ports), testing `docker compose config`, available port + AIO alias, a qualified own-code canary image, safe Bridge SQLite backup and a verified RC6 rollback. The Gateway feature flag must remain off until canary. If the existing Compose project has nondefault networks, adapt its network list rather than copying this literal example. An opt-in preview should be staged without recreating RC6.
+This **legacy in-place Compose overlay is NOT the preferred canary plan**: the isolated gateway sidecar above avoids changing the production RC6 Compose/network and avoids copying its full SQLite/OAuth secrets. Do not apply this overlay to the production Bridge.
 
 ## Read-only HomeDocker discovery BEFORE canary
 
