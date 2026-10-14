@@ -85,6 +85,10 @@ def check_flags(info):
 
 
 def inspect_stack():
+    # Production Compose lives at /opt/homedocker/stacks and its .env
+    # intentionally has root-only access. Preflight must support that
+    # without printing/copying credentials, chown or chmod.
+    run("sudo", "-v")
     info = container(BRIDGE)
     labels = info["Config"].get("Labels") or {}
     project = labels.get("com.docker.compose.project")
@@ -102,13 +106,30 @@ def inspect_stack():
         raise Stop("Compose project .env missing or symlink; deployment aborted")
     if "TRAKT_BRIDGE_IMAGE" in os.environ:
         raise Stop("TRAKT_BRIDGE_IMAGE shell env would override .env")
-    # Never print .env values or rendered config; they can include secrets.
-    txt = envfile.read_text()
-    if len(re.findall(r"(?m)^TRAKT_BRIDGE_IMAGE=", txt)) > 1:
-        raise Stop("duplicate TRAKT_BRIDGE_IMAGE env entries")
-    if not any(re.search(r"\$\{TRAKT_BRIDGE_IMAGE(?:[:}?])", p.read_text()) for p in paths):
-        raise Stop("Compose does not interpolate TRAKT_BRIDGE_IMAGE; no safe auto-edit")
-    cmd = ["docker", "compose", "-p", project, "--project-directory", wd]
+    # Ask root to inspect only *the presence and uniqueness* of image
+    # interpolation; never return .env contents, file modes or credentials.
+    check = r"""
+from pathlib import Path
+import re,sys
+envfile,*files=sys.argv[1:]
+p=Path(envfile)
+if not p.is_file() or p.is_symlink():
+    raise SystemExit("STOP: .env is not a regular file")
+data=p.read_text(encoding="utf-8")
+if len(re.findall(r"(?m)^\\s*TRAKT_BRIDGE_IMAGE\\s*=",data))>1:
+    raise SystemExit("STOP: duplicate TRAKT_BRIDGE_IMAGE")
+if not any(re.search(r"\\$\\{TRAKT_BRIDGE_IMAGE(?=[:}?])",Path(path).read_text(encoding="utf-8")) for path in files):
+    raise SystemExit("STOP: Compose does not interpolate TRAKT_BRIDGE_IMAGE")
+print("ROOT_ONLY_COMPOSE_ENV=VALIDATED_WITHOUT_SECRET_OUTPUT")
+"""
+    summary = run("sudo", "-n", "python3", "-c", check,
+                  str(envfile), *(str(p) for p in paths))
+    if "ROOT_ONLY_COMPOSE_ENV=VALIDATED_WITHOUT_SECRET_OUTPUT" not in summary:
+        raise Stop("root-only Compose source validation failed")
+    print("ROOT_ONLY_COMPOSE_ENV=VALIDATED_WITHOUT_SECRET_OUTPUT")
+    # Use the SAME privileged Compose context for read-only config, apply,
+    # and rollback. Nonroot docker compose cannot read protected .env.
+    cmd = ["sudo", "-n", "docker", "compose", "-p", project, "--project-directory", wd]
     for p in paths:
         cmd += ["-f", str(p)]
     render = json.loads(run(*cmd, "config", "--format", "json"))
@@ -179,6 +200,34 @@ finally:
     run("sudo", "python3", "-c", code, str(envfile), ref)
 
 
+def rc7_identity_guard():
+    # The RC7 duplicate-NextUp remedy was an AIO-side dropped preference,
+    # NOT a runtime code patch. Require that preference to remain effective
+    # both before and after cutover; never issue any Jellyfin POST/write.
+    monitor = Path.home() / "monitor-identity-drift.py"
+    if not monitor.is_file() or monitor.is_symlink():
+        raise Stop("RC7 identity monitor missing: ~/monitor-identity-drift.py")
+    raw = run("sudo", "-n", "python3", str(monitor),
+              "--json", "--fail-on-drift")
+    try:
+        state = json.loads(raw)
+        pairs = state["pairs"]
+        fixture = [p for p in pairs
+                   if p.get("alias_imdb") == "tt44094505"
+                   and p.get("canonical_imdb") == "tt44051354"]
+        if not (state.get("mode") == "SQLITE_READ_ONLY"
+                and state.get("attention") == 0
+                and state.get("database_writes") == 0
+                and len(fixture) == 1
+                and fixture[0].get("status") == "MITIGATED_BY_DROP"
+                and fixture[0].get("alias_drop_effective") is True
+                and fixture[0].get("canonical_resumes", 0) >= 1):
+            raise Stop("RC7 dual-IMDb dropped preference/NextUp mitigation not verified")
+    except (KeyError, TypeError, ValueError) as exc:
+        raise Stop("invalid RC7 read-only identity monitor output") from exc
+    print("RC7_IDENTITY=MITIGATED_BY_DROP_VERIFIED_READONLY")
+
+
 def stable_image():
     if shutil.which("gh") is None:
         raise Stop("GitHub CLI required to verify published v1.3 release")
@@ -206,6 +255,7 @@ def do_deploy():
         raise Stop("AIO upstream image reference not latest")
     check_flags(info)
     check_ready("1.3.0-rc.6")
+    rc7_identity_guard()
     docker("image","inspect",info["Image"])
     print("RC6_BASELINE=READY")
     print("COMPOSE_PROJECT=" + (info["Config"]["Labels"] or {}).get("com.docker.compose.project","?"))
@@ -257,6 +307,7 @@ def main():
         if container(AIO)["Image"] != aio_id:
             raise Stop("AIOStreams image changed during Bridge-only deploy")
         check_flags(current)
+        rc7_identity_guard()
     except Exception:
         if changed:
             print("DEPLOY_FAILED=AUTOMATIC_RC6_REFERENCE_ROLLBACK_ATTEMPT")
