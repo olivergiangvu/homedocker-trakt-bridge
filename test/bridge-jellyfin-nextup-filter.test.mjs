@@ -49,10 +49,10 @@ test('canonical resume wins and all original AIO episode IDs remain unchanged', 
   assert.deepEqual(response, saved);
 });
 
-test('after playback using old alias newer timestamp wins without AIO drop', async () => {
+test('new alias active resume wins when canonical has no active resume', async () => {
   const response = {
     Items: [
-      item('opaqueSeriesC', 10, { ticks: 100000000, time: '2026-10-13T13:00:00Z' }),
+      item('opaqueSeriesC', 10, { ticks: 0, time: '2026-10-13T13:00:00Z' }),
       item('opaqueSeriesA', 11, { ticks: 700000000, time: '2026-10-14T13:00:00Z' }),
     ],
     TotalRecordCount: 2,
@@ -62,6 +62,47 @@ test('after playback using old alias newer timestamp wins without AIO drop', asy
   });
   assert.equal(result.Items.length, 1);
   assert.equal(result.Items[0].Id, 'opaqueSeriesA:11');
+});
+
+test('same IMDb spelling with multiple episode cards is never collapsed', async () => {
+  const response = { Items: [
+    item('opaqueSeriesC', 10, { time: '2026-10-13T13:00:00Z' }),
+    item('opaqueSeriesC', 11, { time: '2026-10-14T13:00:00Z' }),
+  ], TotalRecordCount: 2 };
+  assert.strictEqual(await filterNextUpForVerifiedAliases(response, {
+    verifiedGraph: graph(), resolveSeriesImdb,
+  }), response);
+});
+
+test('two active alias/canonical resumes survive even with different recency', async () => {
+  const response = { Items: [
+    item('opaqueSeriesC', 10, { ticks: 100000000, time: '2026-10-13T13:00:00Z' }),
+    item('opaqueSeriesA', 11, { ticks: 700000000, time: '2026-10-14T13:00:00Z' }),
+  ], TotalRecordCount: 2 };
+  assert.strictEqual(await filterNextUpForVerifiedAliases(response, {
+    verifiedGraph: graph(), resolveSeriesImdb,
+  }), response);
+});
+
+test('three candidate cards in a verified group remain untouched', async () => {
+  const response = { Items: [
+    item('opaqueSeriesC', 10),
+    item('opaqueSeriesC', 11),
+    item('opaqueSeriesA', 9, { ticks: 100000000 }),
+  ], TotalRecordCount: 3 };
+  assert.strictEqual(await filterNextUpForVerifiedAliases(response, {
+    verifiedGraph: graph(), resolveSeriesImdb,
+  }), response);
+});
+
+test('verified IMDb pair alone cannot suppress a card without winner evidence', async () => {
+  const response = { Items: [
+    item('opaqueSeriesC', 10),
+    item('opaqueSeriesA', 9),
+  ], TotalRecordCount: 2 };
+  assert.strictEqual(await filterNextUpForVerifiedAliases(response, {
+    verifiedGraph: graph(), resolveSeriesImdb,
+  }), response);
 });
 
 test('two simultaneous incomparable resumes preserve both records visibly', async () => {
