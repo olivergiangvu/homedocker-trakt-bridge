@@ -17,6 +17,7 @@ races; it is not a substitute for kernel-enforced policy.
 import importlib.util
 import json
 from pathlib import Path
+import re
 import threading
 
 HERE=Path(__file__).resolve().parent
@@ -139,6 +140,101 @@ def check_guard(nft_doc,*,bridge,subnet,host_gateway,canary,relay_port):
     if rules!=expected_rules(bridge,gw,canary,relay_port):
         raise Stop("NFT_GUARD_RULE_CHANGED")
     return True
+
+FINAL_NETWORK="homedocker_v140_r23d_local"
+FINAL_CONTAINER="homedocker-v140-r23d-gateway-canary"
+FINAL_PHASE="r23d-persistent-canary"
+EXPECTED_GATEWAY_HOST_PORT="17145"
+EXPECTED_GATEWAY_INNER_PORT="7101/tcp"
+IMAGE_SHA_RE=re.compile(r"^sha256:[0-9a-f]{64}$")
+IMAGE_TAG_RE=re.compile(r"^homedocker-trakt-bridge:v140-r23d-[0-9a-f]{12}$")
+
+def check_final_docker_scope(container_doc,network_doc,*,bridge,subnet,
+                             host_gateway,canary,expected_image_id):
+    """Pure final-network verification. NO Docker engine or host access.
+
+    Tests must use full Docker inspect JSON, not simulated summary counters.
+    This does not verify symlink/file content or that the nft guard is present;
+    check_guard MUST also pass on fresh kernel nft JSON.
+    """
+    expected=renderer()
+    try:
+        expected.validate(bridge,subnet,host_gateway,canary,expected.RELAY_PORT)
+    except Exception:
+        raise Stop("DOCKER_GUARD_NETWORK_SCOPE_INVALID") from None
+    if not IMAGE_SHA_RE.fullmatch(str(expected_image_id)):
+        raise Stop("DOCKER_EXPECTED_IMAGE_ID_INVALID")
+    if (not isinstance(container_doc,list) or len(container_doc)!=1
+        or not isinstance(container_doc[0],dict)
+        or not isinstance(network_doc,list) or len(network_doc)!=1
+        or not isinstance(network_doc[0],dict)):
+        raise Stop("DOCKER_GUARD_INSPECT_DOCUMENT_REJECTED")
+    obj=container_doc[0]
+    net=network_doc[0]
+    conf=obj.get("Config") or {}
+    host=obj.get("HostConfig") or {}
+    settings=(obj.get("NetworkSettings") or {}).get("Networks") or {}
+    expected_labels={"homedocker.phase":FINAL_PHASE}
+    if (obj.get("Name")!="/"+FINAL_CONTAINER
+        or not obj.get("State",{}).get("Running")
+        or obj.get("Image")!=expected_image_id
+        or not IMAGE_TAG_RE.fullmatch(str(conf.get("Image")))
+        or conf.get("User") not in ("node","1000","1000:1000")
+        or not all((conf.get("Labels") or {}).get(k)==v for k,v in expected_labels.items())
+        or host.get("ReadonlyRootfs") is not True
+        or host.get("Privileged") is not False
+        or (host.get("CapAdd") or [])
+        or "ALL" not in [str(x).upper() for x in host.get("CapDrop") or []]
+        or not any("no-new-privileges" in str(x) for x in host.get("SecurityOpt") or [])
+        or host.get("NetworkMode")!=FINAL_NETWORK
+        or set(settings)!={FINAL_NETWORK}
+        or settings[FINAL_NETWORK].get("IPAddress")!=canary):
+        raise Stop("DOCKER_FINAL_CANARY_SCOPE_CHANGED")
+    bindings=host.get("PortBindings") or {}
+    if (set(bindings)!={EXPECTED_GATEWAY_INNER_PORT}
+        or bindings[EXPECTED_GATEWAY_INNER_PORT]!=[
+            {"HostIp":"127.0.0.1","HostPort":EXPECTED_GATEWAY_HOST_PORT}
+        ]):
+        raise Stop("DOCKER_FINAL_CANARY_PUBLISH_CHANGED")
+    mounts=obj.get("Mounts") or []
+    if (not isinstance(mounts,list) or len(mounts)!=1
+        or mounts[0].get("Type")!="bind"
+        or mounts[0].get("Destination")!="/app/identity-proof.json"
+        or mounts[0].get("RW") is not False):
+        raise Stop("DOCKER_FINAL_CANARY_PROOF_MOUNT_CHANGED")
+    opt=net.get("Options") or {}
+    if (net.get("Name")!=FINAL_NETWORK
+        or net.get("Driver")!="bridge"
+        or net.get("Internal") is not False
+        or net.get("EnableIPv6") is not False
+        or opt.get("com.docker.network.bridge.name")!=bridge
+        or opt.get("com.docker.network.bridge.enable_ip_masquerade")!="false"
+        or not all((net.get("Labels") or {}).get(k)==v for k,v in expected_labels.items())
+        or (net.get("IPAM") or {}).get("Config")!=[
+            {"Subnet":subnet,"Gateway":host_gateway}
+        ]):
+        raise Stop("DOCKER_FINAL_NETWORK_SCOPE_CHANGED")
+    peers=net.get("Containers") or {}
+    container_id=obj.get("Id")
+    if (not isinstance(container_id,str)
+        or not re.fullmatch(r"[0-9a-f]{64}",container_id)
+        or set(peers)!={container_id}
+        or not isinstance(peers[container_id],dict)
+        or peers[container_id].get("Name")!=FINAL_CONTAINER
+        or peers[container_id].get("IPv4Address")!=canary+"/"+subnet.split("/")[-1]):
+        raise Stop("DOCKER_FINAL_NETWORK_PEERS_CHANGED")
+    return True
+
+def check_persistent_state(nft_doc,container_doc,network_doc,**expected):
+    """Both state sources must match at the SAME observation cycle."""
+    if not check_final_docker_scope(
+        container_doc,network_doc,
+        **expected):
+        raise Stop("DOCKER_FINAL_SCOPE_NOT_VERIFIED")
+    return check_guard(nft_doc,**{
+        key:expected[key] for key in
+        ("bridge","subnet","host_gateway","canary","relay_port")
+    })
 
 class GuardLifetimeGate:
     """Closed until initial verification; permanently closed on ANY failure.
