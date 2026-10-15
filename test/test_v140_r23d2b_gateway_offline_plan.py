@@ -124,10 +124,10 @@ class OfflineGatewayPlanTests(unittest.TestCase):
             if path==m.RENDER: return renderer
             if path==m.NFT: return verified
             return real_load(path,name)
-        with mock.patch.object(m,"source_identity",return_value=SHA), \\
-             mock.patch.object(m,"check_gateway_source",return_value=True), \\
+        with mock.patch.object(m,"source_identity",return_value=SHA), \
+             mock.patch.object(m,"check_gateway_source",return_value=True), \
              mock.patch.object(m,"load",side_effect=fake_load):
-            planner.run.side_effect=[b"old_net\\n",b"old_container\\n",b""]
+            planner.run.side_effect=[b"old_net\n",b"old_container\n",b""]
             plan=m.preflight()
             self.assertEqual(plan["net"],str(NET))
             self.assertEqual(planner.run.call_count,3)
@@ -141,7 +141,7 @@ class OfflineGatewayPlanTests(unittest.TestCase):
                 m.preflight()
             planner.parsed.return_value=[{"ifname":"eth0"}]
             planner.run.reset_mock()
-            planner.run.side_effect=[b"homedocker_v140_r23d_local\\n",b""]
+            planner.run.side_effect=[b"homedocker_v140_r23d_local\n",b""]
             with self.assertRaisesRegex(m.Stop,"FINAL_R23D_DOCKER_RESOURCES_ALREADY_EXIST"):
                 m.preflight()
 
