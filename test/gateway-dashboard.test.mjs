@@ -251,3 +251,31 @@ test('listener telemetry is aggregate only and withheld from unrelated profiles'
   const other = buildGatewayDashboardStatus({ db, config, profileId: OTHER, gateway });
   assert.equal(other.telemetry, null);
 });
+
+test('actual Bridge HTTP route receives the integrated Gateway listener context', async t => {
+  const { db, config } = context({ jellyfinGatewayEnabled: true });
+  const gateway = {
+    listening: true,
+    gatewayMetricsSnapshot: () => ({
+      nextUpRequests: 7,
+      nextUpNormalizedResponses: 2,
+    }),
+  };
+  const server = createServer({ config, db, trakt: null, gateway });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => server.close());
+  const key = deriveProfileKey(config.bridgeSecret, 'setup', OWNER);
+  const url = 'http://127.0.0.1:' + server.address().port
+    + '/u/' + OWNER + '/gateway/status.json?key='
+    + encodeURIComponent(key);
+  const result = await fetch(url);
+  assert.equal(result.status, 200);
+  const payload = await result.json();
+  assert.equal(payload.enabled, true);
+  assert.equal(payload.listening, true);
+  assert.equal(payload.state, 'listener_active_not_client_qualified');
+  assert.equal(payload.telemetry.nextUpRequests, 7);
+  assert.equal(payload.telemetry.nextUpNormalizedResponses, 2);
+  assert.equal(payload.productionRoutingQualified, false);
+});
