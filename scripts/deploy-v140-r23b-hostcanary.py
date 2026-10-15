@@ -87,11 +87,11 @@ def state():
     nets = (original.get("NetworkSettings") or {}).get("Networks") or {}
     if set(nets) != {ORIGINAL_NETWORK}:
         raise Stop("R23A not on its only expected isolated network")
+    if any(m.get("Type") in ("volume", "bind") for m in original.get("Mounts") or []):
+        raise Stop("R23A gained a persistent source mount")
     net = json.loads(execute("docker", "network", "inspect", ORIGINAL_NETWORK))[0]
     if net.get("Internal") is not True:
         raise Stop("R23A rollback network unexpectedly non-internal")
-    if any(m.get("Type") in ("volume", "bind") for m in original.get("Mounts") or []):
-        raise Stop("R23A gained a persistent source mount")
     for name in ("trakt-bridge", "aiostreams", "homedocker-resume-contract-canary"):
         c = inspect(name)
         if not c.get("State", {}).get("Running"):
