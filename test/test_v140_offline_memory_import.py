@@ -75,6 +75,41 @@ class R20OfflineMemoryTests(unittest.TestCase):
                 mod.audit(str(source))
             self.assertEqual(source.read_bytes(), before)
 
+    def test_explicit_docker_runner_never_pulls_or_mounts_production(self):
+        from unittest import mock
+        import subprocess
+        proof = subprocess.CompletedProcess(
+            args=["docker", "inspect"], returncode=0,
+            stdout="sha256:" + ("f" * 64) + "|true\\n", stderr=""
+        )
+        with mock.patch.object(mod.subprocess, "run", return_value=proof) as run:
+            cmd = mod.docker_runner()
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(cmd[0:4], ["docker", "run", "--rm", "-i"])
+        self.assertIn("--network", cmd)
+        self.assertEqual(cmd[cmd.index("--network") + 1], "none")
+        self.assertIn("--read-only", cmd)
+        self.assertEqual(cmd[cmd.index("--cap-drop") + 1], "ALL")
+        self.assertEqual(cmd[cmd.index("--user") + 1], "1000:1000")
+        self.assertEqual(cmd[cmd.index("--entrypoint") + 1], "/usr/local/bin/node")
+        self.assertEqual(cmd[-2], "sha256:" + ("f" * 64))
+        self.assertFalse(any(s in cmd for s in ("--env", "-e", "-p", "--publish")))
+        self.assertEqual(sum(x == "--mount" for x in cmd), 2)
+        self.assertTrue(all("/var/lib/docker/volumes" not in x for x in cmd))
+
+    def test_docker_runner_requires_running_unchanged_sha_image(self):
+        from unittest import mock
+        import subprocess
+        stopped = subprocess.CompletedProcess(
+            args=["docker", "inspect"], returncode=0,
+            stdout="sha256:" + ("f" * 64) + "|false\\n", stderr=""
+        )
+        with mock.patch.object(mod.subprocess, "run", return_value=stopped):
+            with self.assertRaisesRegex(
+                RuntimeError, "production_runtime_not_qualified"
+            ):
+                mod.docker_runner()
+
     def test_existing_graph_rejected(self):
         with TemporaryDirectory() as temp:
             source = Path(temp) / "bridge.db"
