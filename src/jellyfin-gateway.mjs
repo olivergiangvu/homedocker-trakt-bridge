@@ -1,8 +1,9 @@
 /**
- * Opt-in, same-user Jellyfin NextUp API gateway running INSIDE our Bridge.
+ * Opt-in, same-user Jellyfin NextUp gateway and exact-route Resume passthrough.
  * AIOStreams is NOT modified, patched, forked, pinned or written to.
  *
- * Native nginx routes ONLY exact GET /Shows/NextUp to this extra Bridge port.
+ * NextUp is an opt-in read-only view projection. Resume may ONLY be
+ * passed through byte-for-byte when separately enabled, never normalized.
  * Streaming/WebSocket/playback and all other AIO paths stay directly on AIO.
  *
  * The upstream Jellyfin API authenticates all requests. We additionally ask
@@ -20,6 +21,7 @@ const MAX_METADATA_CONCURRENCY = 6;
 const NETWORK_TIMEOUT_MS = 8000;
 const SERIES_METADATA_TTL_MS = 5 * 60 * 1000;
 const MAX_SERIES_CACHE = 128;
+const LEGACY_RESUME = /^\/Users\/[A-Za-z0-9_-]{8,128}\/Items\/Resume$/;
 const HOP_HEADERS = new Set([
   'host', 'connection', 'keep-alive', 'proxy-connection',
   'transfer-encoding', 'upgrade', 'te', 'trailer',
@@ -53,6 +55,7 @@ export function validateGatewayConfig(config) {
     base: url.origin + prefix,
     userId: config.jellyfinGatewayUserId,
     profileId: config.jellyfinGatewayProfileId,
+    resumePassThrough: config.jellyfinGatewayResumePassThrough === true,
   };
 }
 
@@ -246,7 +249,11 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
     let requested;
     try { requested = new URL(req.url || '/', 'http://gateway.local'); }
     catch { return sendJson(res, 400, { error: 'invalid_path' }); }
-    if (requested.pathname !== '/Shows/NextUp') {
+    const nextUp = requested.pathname === '/Shows/NextUp';
+    const resumeRoute = requested.pathname === '/UserItems/Resume'
+      || LEGACY_RESUME.test(requested.pathname);
+    const resumePassthrough = options.resumePassThrough && resumeRoute;
+    if (!nextUp && !resumePassthrough) {
       return sendJson(res, 404, { error: 'gateway_route_not_enabled' });
     }
     if (req.method !== 'GET') {
@@ -255,7 +262,7 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
     }
 
     const headers = outboundHeaders(req);
-    const destination = upstreamPath(options.base, '/Shows/NextUp', requested.search);
+    const destination = upstreamPath(options.base, requested.pathname, requested.search);
     let upstream;
     try {
       upstream = await fetchImpl(destination, {
@@ -268,7 +275,10 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
     try {
       const bytes = await readBounded(upstream, res);
       if (!bytes) return; // large response streamed as-is
-      if (upstream.status !== 200) {
+      if (upstream.status !== 200 || resumePassthrough) {
+        // Resume is ALWAYS a byte-for-byte representation passthrough:
+        // preserve Items, pagination, TotalRecordCount and every movie/resume.
+        // AIO's reported TotalRecordCount may be a fetched-prefix count.
         responseHeaders(res, upstream, false);
         return res.end(bytes);
       }
