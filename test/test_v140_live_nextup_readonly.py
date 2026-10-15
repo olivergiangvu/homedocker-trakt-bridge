@@ -129,6 +129,62 @@ class R23B2LiveTests(unittest.TestCase):
             status, imdb = app.item_imdb("f" * 32, "X" * 40)
         self.assertEqual((status, imdb), ("metadata_404", None))
 
+    def test_preflight_does_not_need_session_or_call_aio(self):
+        with TemporaryDirectory() as root:
+            db = make_db(root)
+            with mock.patch.object(app, "check_localhost") as check, \
+                 mock.patch.object(app, "fixed_get") as aio:
+                out = app.source_preflight(str(db))
+            check.assert_called_once_with()
+            aio.assert_not_called()
+            self.assertEqual(out["status"], "PRECHECK_PASS")
+            self.assertFalse(out["session_token_requested_or_saved"])
+
+    def test_preflight_legacy_expiry_has_safe_stage_and_reason(self):
+        with TemporaryDirectory() as root:
+            db = make_db(root)
+            sqlite = sqlite3.connect(db)
+            sqlite.execute("UPDATE media_cache SET expires_at=1")
+            sqlite.commit()
+            sqlite.close()
+            with mock.patch.object(app, "check_localhost"):
+                with self.assertRaises(app.StageStop) as exc:
+                    app.source_preflight(str(db))
+            self.assertEqual(exc.exception.phase, "RC6_LEGACY_PROVENANCE")
+            self.assertEqual(exc.exception.code, "RC6_LEGACY_IDENTITY_NOT_READY")
+
+    def test_canary_precheck_failure_skips_token(self):
+        with TemporaryDirectory() as root:
+            db = make_db(root)
+            with mock.patch.object(app, "check_localhost",
+                                   side_effect=app.Stop("R23B-1 localhost canary no longer reachable")):
+                with self.assertRaises(app.StageStop) as exc:
+                    app.source_preflight(str(db))
+            self.assertEqual(exc.exception.phase, "CANARY_LOCAL_HEALTH")
+            self.assertEqual(exc.exception.code, "CANARY_LOOPBACK_UNREACHABLE")
+
+    def test_http_401_is_safe_coded_without_token_or_url(self):
+        with TemporaryDirectory() as root:
+            db = make_db(root)
+            def deny(path, **kwargs):
+                raise app.Stop("AIO GET status 401")
+            with mock.patch.object(app, "check_localhost"), \
+                 mock.patch.object(app, "fixed_get", side_effect=deny):
+                with self.assertRaises(app.StageStop) as exc:
+                    app.audit("X" * 40, str(db), 20)
+            self.assertEqual(exc.exception.phase, "AIO_USERS_ME")
+            self.assertEqual(exc.exception.code, "AIO_HTTP_401")
+            self.assertNotIn("X" * 40, str(exc.exception))
+
+    def test_no_raw_untrusted_errors_are_reflected_in_sanitized_stage(self):
+        secret = "not_for_log-PRIVATE-TOKEN"
+        with self.assertRaises(app.StageStop) as exc:
+            app.run_phase("AIO_USERS_ME", lambda: (_ for _ in ()).throw(
+                app.Stop(secret)
+            ))
+        self.assertEqual(exc.exception.code, "SOURCE_AUDIT_REJECTED")
+        self.assertNotIn(secret, str(exc.exception))
+
     def test_expired_legacy_source_rejected(self):
         with TemporaryDirectory() as root:
             path = make_db(root)
