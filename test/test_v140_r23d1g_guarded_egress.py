@@ -171,6 +171,83 @@ class GuardedEgressTests(unittest.TestCase):
                 m.cleanup(Plan(),RUN_ID,b"original")
         self.assertEqual(seen,[])
 
+    def test_synthetic_guard_lifecycle_with_fault_injection_preserves_order(self):
+        def run_case(fail_on_run):
+            events=[]
+            state={"network":False,"guard":False,"container":False}
+            class Socket:
+                def __init__(self): self.port=None
+                def bind(self,addr): self.port=addr[1]
+                def listen(self,_): pass
+                def settimeout(self,_): pass
+                def accept(self):
+                    if self.port==m.RELAY_PORT:
+                        return (self,None)
+                    raise OSError("denied tcp connection")
+                def close(self): pass
+            def fake_command(argv,**kw):
+                events.append(tuple(argv[:3]))
+                if argv[:3]==["docker","network","create"]:
+                    state["network"]=True
+                    return b"temporary-network"
+                if argv[:3]==["nft","--file","-"]:
+                    self.assertTrue(state["network"])
+                    state["guard"]=True
+                    return b""
+                if argv[:2]==["docker","run"]:
+                    self.assertTrue(state["guard"],"NEVER run a canary before nft guard")
+                    if fail_on_run:
+                        raise m.Stop("SYNTHETIC_INJECTED_FAILURE")
+                    return json.dumps(GOOD_TCP).encode()
+                if argv[:3]==["docker","network","rm"]:
+                    self.assertTrue(state["guard"],"Never remove nft until network gone")
+                    state["network"]=False
+                    return b""
+                if argv[:3]==["nft","delete","table"]:
+                    self.assertFalse(state["network"])
+                    state["guard"]=False
+                    return b""
+                if argv[:3]==["nft","--check","--file"]:
+                    return b""
+                raise AssertionError("Unexpected Docker/nft call: "+str(argv))
+            def absent(kind,name):
+                return not state["container"] if kind=="container" else not state["network"]
+            def table_snapshot(_):
+                return b"constant-owned-json" if state["guard"] else None
+            with mock.patch.object(m,"command",side_effect=fake_command), \
+                 mock.patch.object(m,"parsed",return_value=[{"ifname":Plan.TEST_BRIDGE}]), \
+                 mock.patch.object(m,"owned_network",return_value={
+                     **valid_network()[0],"Containers":{}}), \
+                 mock.patch.object(m,"absence",side_effect=absent), \
+                 mock.patch.object(m,"table_snapshot",side_effect=table_snapshot), \
+                 mock.patch.object(m,"secrets") as secrets, \
+                 mock.patch.object(m.socket,"socket",side_effect=Socket):
+                secrets.token_hex.return_value=RUN_ID
+                plan=Plan()
+                from importlib.machinery import SourceFileLoader
+                renderer=SourceFileLoader("offline_renderer_r23d1g",
+                    str(SRC.parent/"render-v140-r23d-nft-policy-offline.py")).load_module()
+                plan.renderer=renderer
+                if fail_on_run:
+                    with self.assertRaisesRegex(m.Stop,"GUARDED_SYNTHETIC_TRIAL_STOPPED"):
+                        m._apply_inner(plan)
+                else:
+                    report=m._apply_inner(plan)
+                    self.assertEqual(report["status"],
+                        "SYNTHETIC_TCP_GUARD_CONTROLS_PASS_NOT_AUTH_APPROVED")
+                    self.assertFalse(report["jellyfin_session_allowed"])
+                self.assertFalse(state["network"])
+                self.assertFalse(state["guard"])
+            assert ("docker","network","create") in events
+            assert ("nft","--file","-") in events
+            assert ("docker","run","--rm") in events
+            self.assertLess(events.index(("nft","--file","-")),
+                            events.index(("docker","run","--rm")))
+            self.assertLess(events.index(("docker","network","rm")),
+                            events.index(("nft","delete","table")))
+        run_case(False)
+        run_case(True)
+
     def test_dry_run_can_never_mutate_docker_or_firewall(self):
         output=io.StringIO()
         with mock.patch("sys.argv",["prog"]), \
