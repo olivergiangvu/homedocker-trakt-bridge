@@ -4,6 +4,7 @@ import { APP_NAME, APP_VERSION } from './config.mjs';
 import { deriveProfileKey, randomToken, safeEqual } from './crypto.mjs';
 import { BridgeError } from './errors.mjs';
 import { page, escapeHtml } from './html.mjs';
+import { buildGatewayDashboardStatus } from './gateway-dashboard.mjs';
 import { buildManifest, planEvent, validatePushEvent } from './watch-state.mjs';
 import { formatEventTime, summarizeRecentEvents } from './diagnostics.mjs';
 import { cachedPullPayload, makePullCacheEntry, stalePullPayload } from './pull-cache.mjs';
@@ -73,6 +74,9 @@ async function route(req, res, ctx) {
     return sendJson(res, 200, {
       readiness: buildReadiness({ db }),
       profiles,
+      gateway: buildGatewayDashboardStatus({
+        db, config, profileId: config.jellyfinGatewayProfileId, gateway: ctx.gateway,
+      }),
     });
   }
 
@@ -110,6 +114,18 @@ async function route(req, res, ctx) {
     const setupKey = deriveProfileKey(config.bridgeSecret, 'setup', profileId);
     redirect(res, `/u/${profileId}/setup?key=${encodeURIComponent(setupKey)}&connected=1`);
     return;
+  }
+
+  // Same profile setup-key authorization as the existing dashboard. No tokens,
+  // user IDs or raw identity registry rows leave this aggregate-only endpoint.
+  const gatewayStatusMatch = path.match(/^\/u\/([a-f0-9]{24})\/gateway\/status\.json$/);
+  if (gatewayStatusMatch) {
+    const profileId = gatewayStatusMatch[1];
+    requireSetupKey(url, config, db, profileId);
+    if (req.method !== 'GET') return methodNotAllowed(res);
+    return sendJson(res, 200, buildGatewayDashboardStatus({
+      db, config, profileId, gateway: ctx.gateway,
+    }));
   }
 
   const setupMatch = path.match(/^\/u\/([a-f0-9]{24})\/setup$/);
@@ -421,8 +437,11 @@ function requireAddonKey(config, db, profileId, candidate) {
   if (!safeEqual(candidate, expected)) throw new BridgeError('Not found', { status: 404, code: 'not_found' });
 }
 
-function renderAdmin(res, { config, db }, adminKey) {
+function renderAdmin(res, { config, db, gateway }, adminKey) {
   const readiness = buildReadiness({ db });
+  const gatewayStatus = buildGatewayDashboardStatus({
+    db, config, profileId: config.jellyfinGatewayProfileId, gateway,
+  });
   const profiles = db.listProfiles();
   const rows = profiles.map((p) => {
     const setupKey = deriveProfileKey(config.bridgeSecret, 'setup', p.id);
@@ -434,12 +453,24 @@ function renderAdmin(res, { config, db }, adminKey) {
       <div class="row"><span class="badge">v${APP_VERSION}</span><span class="badge ${readiness.ready ? 'ok' : 'warn'}">${escapeHtml(readiness.status)}</span><span class="badge">DB schema ${escapeHtml(readiness.schemaVersion)}</span></div>
     </div>
     <div class="card"><h2>Profiles</h2><table><thead><tr><th>Name</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="card">
+      <div class="row"><h2 style="margin-right:auto">AIO Identity Gateway</h2><span class="badge">v1.4 target</span></div>
+      <p class="muted">Managed Trakt Bridge module. Read-only dashboard preview; live client routing is not qualified.</p>
+      <div class="grid">
+        <div class="stat"><span class="label">Runtime state</span><span class="value">${escapeHtml(gatewayStatus.state)}</span></div>
+        <div class="stat"><span class="label">Verified alias groups</span><span class="value">${escapeHtml(gatewayStatus.identity.aliasGroups)}</span></div>
+        <div class="stat"><span class="label">Conflicts quarantined</span><span class="value">${escapeHtml(gatewayStatus.identity.quarantinedConflicts)}</span></div>
+        <div class="stat"><span class="label">Resume</span><span class="value">${escapeHtml(gatewayStatus.resumeMode)}</span></div>
+      </div>
+      <p class="hint">Configuration remains opt-in and OFF by default. This dashboard does not switch nginx, write to AIO history, or enable a live gateway.</p>
+    </div>
     <div class="card"><h2>Create profile</h2><form method="post" action="/setup?key=${encodeURIComponent(adminKey)}"><label>Name</label><input name="name" value="Trakt" maxlength="80"><button class="btn" type="submit">Create profile</button></form></div>
   `));
 }
 
-function renderProfile(res, { config, db }, profileId, setupKey, eventFilter = 'all') {
+function renderProfile(res, { config, db, gateway }, profileId, setupKey, eventFilter = 'all') {
   const p = db.getProfile(profileId);
+  const gatewayStatus = buildGatewayDashboardStatus({ db, config, profileId, gateway });
   const addonKey = deriveProfileKey(config.bridgeSecret, 'addon', profileId);
   const manifestUrl = `${config.publicBaseUrl}/u/${profileId}/${addonKey}/manifest.json`;
   const operational = buildProfileOperationalStatus({ db, config, profileId });
@@ -505,6 +536,21 @@ function renderProfile(res, { config, db }, profileId, setupKey, eventFilter = '
         <div class="stat"><span class="label">DB schema</span><span class="value">${escapeHtml(operational?.schemaVersion ?? '—')}</span></div>
         <div class="stat"><span class="label">Active errors · 30m</span><span class="value ${activeErrors ? 'bad' : 'ok'}">${escapeHtml(activeErrors)}</span></div>
       </div>
+    </div>
+
+    <div class="card" id="aio-identity-gateway">
+      <div class="row"><h2 style="margin-right:auto">AIO Identity Gateway</h2><span class="badge">v1.4 target</span><span class="badge ${gatewayStatus.listening ? 'warn' : 'muted'}">${escapeHtml(gatewayStatus.state)}</span></div>
+      <p class="muted">Read-only identity continuity view, managed inside Trakt Bridge. Production client routing is not qualified.</p>
+      <div class="grid">
+        <div class="stat"><span class="label">Verified shows</span><span class="value">${escapeHtml(gatewayStatus.identity.verifiedShows)}</span></div>
+        <div class="stat"><span class="label">Alias groups</span><span class="value">${escapeHtml(gatewayStatus.identity.aliasGroups)}</span></div>
+        <div class="stat"><span class="label">Verified aliases</span><span class="value">${escapeHtml(gatewayStatus.identity.verifiedAliases)}</span></div>
+        <div class="stat"><span class="label">Conflicts quarantined</span><span class="value">${escapeHtml(gatewayStatus.identity.quarantinedConflicts)}</span></div>
+        <div class="stat"><span class="label">Resume mode</span><span class="value">${escapeHtml(gatewayStatus.resumeMode)}</span></div>
+        <div class="stat"><span class="label">Gateway listener</span><span class="value">${gatewayStatus.listening ? 'Listening (not client-qualified)' : 'Inactive'}</span></div>
+      </div>
+      <p class="hint">NextUp: fail-open on ambiguity; Resume: passthrough only. No live routing switch, watch-state writes or alias merges.</p>
+      <div class="row"><a class="btn secondary" href="/u/${profileId}/gateway/status.json?key=${encodeURIComponent(setupKey)}">Read-only JSON diagnostics</a></div>
     </div>
 
     <div class="card">
