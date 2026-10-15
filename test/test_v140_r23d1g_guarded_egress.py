@@ -176,7 +176,7 @@ class GuardedEgressTests(unittest.TestCase):
             events=[]
             state={"network":False,"guard":False,"container":False}
             class Socket:
-                def __init__(self): self.port=None
+                def __init__(self,*_args,**_kwargs): self.port=None
                 def bind(self,addr): self.port=addr[1]
                 def listen(self,_): pass
                 def settimeout(self,_): pass
