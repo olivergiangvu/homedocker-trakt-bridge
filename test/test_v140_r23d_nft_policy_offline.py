@@ -36,8 +36,8 @@ class OfflineR23DPolicyTests(unittest.TestCase):
         self.assertIn("ip daddr "+mod.SYNTHETIC["host_gateway"],inp)
         self.assertIn("ip saddr "+mod.SYNTHETIC["canary"],inp)
         self.assertIn("tcp dport 17420 accept",inp)
-        self.assertEqual(inp.count(" accept"),1)
-        self.assertEqual(inp.count(" drop"),1)
+        self.assertEqual(len(re.findall(r"\\saccept\\s*$", inp, flags=re.M)), 1)
+        self.assertEqual(len(re.findall(r"\\sdrop\\s*$", inp, flags=re.M)), 1)
 
     def test_rejects_outside_bridge_name_or_relay_destination(self):
         ok=dict(mod.SYNTHETIC)
