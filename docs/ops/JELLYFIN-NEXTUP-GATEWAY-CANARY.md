@@ -239,3 +239,18 @@ Do **not** paste or log root .env contents, full Config.Env from docker inspect,
 6. Roll back by removing the single nginx exact-path location and disabling the extra Bridge listener; Bridge RC6 pinned digest/SQLite online backup remain available.
 
 **NOT YET DONE:** actual nginx cutover, real hardware/client smoke, multi-user mappings, pagination-safe Resume normalization, AIO upstream upgrade resilience after new alias events, and production release. PR #94 remains DRAFT; Issue #93 remains OPEN. No deployment is authorized by this document.
+
+## RC7 C10/C10.1 Resume pagination evidence and Phase-0 adapter contract (2026-10-15)
+
+Actual HomeDocker authenticated AIO `/jellyfin/UserItems/Resume` and `/jellyfin/Users/{userId}/Items/Resume` (20 per page) returned 200 with identical ordered ID/position signatures on pages 0 and 1. Page 0 was stable on repeat, with zero IDs overlapping page 1. Page 0: 13 Episodes + 7 Movies, page 1: 18 Episodes + 2 Movies; **all 40 returned entries had active PlaybackPositionTicks**.
+
+The actual AIO `TotalRecordCount` was **20 for StartIndex=0, Limit=20**, and **40 for StartIndex=20, Limit=20**. This matches the fetched-prefix-count behavior of upstream `packages/server/src/routes/jellyfin/library.ts`, which passes `items.length` after fetching up to StartIndex+Limit into `send()`. This is **not proof of a global total**; counts may also differ if some upstream items cannot be built. Never fabricate totals, assume 20/40 represents an entire library, or interpret two paginated active-resume cards as safe to merge.
+
+**Code contract added in the HomeDocker DRAFT source only:**
+- `jellyfinGatewayResumePassThrough` defaults **OFF**. Standalone canary may opt in **only** with `JELLYFIN_GATEWAY_RESUME_PASSTHROUGH=true` in a *new* isolated canary, not on RC6/production or existing canaries.
+- Enabled gateway serves exact GET `/UserItems/Resume` and `/Users/{userId}/Items/Resume` as **raw upstream passthrough** with original query, authorization headers, statuses, items, movies, active positions, StartIndex and TotalRecordCount. No /Users/Me or SeriesId metadata lookups occur for Resume; this is **not an identity-fixing filter**.
+- POST returns 405; unknown paths remain 404; failures pass through upstream status, with gateway 502 only for actual transport failure. No Trakt, AIO SQLite or watch-history writes.
+- Synthetic HTTP regression covers opt-in guard, modern/legacy page 0/1 parity, 20/40 prefix count, mixed Episode/Movie active resumes, auth failure, unsupported method, unrecognized route, and upstream 503.
+- **Release BLOCKED for actual Resume deduplication.** Requires independently proven complete stable snapshot across all pages, robust exact-user scope, deterministic cursor/order, and unambiguous non-active alias duplicates; if any one property is missing, fail-open. Actual 40/40 resumes were active, so no safe client-facing deduplication is currently demonstrated. Keep nginx routing unchanged.
+
+Current deployed images `17131`, `17132`, `17133` are from earlier commits and remain untouched. PR #94 stays DRAFT and Issue #93 OPEN.
