@@ -165,13 +165,59 @@ def audit():
         "production_modifications": 0,
     }
 
+# Only these hard-coded tokens may be printed. Never emit raw subprocess
+# stderr, container inspect values, URLs, credentials or exception strings.
+SAFE_DIAGNOSTIC_STAGES = {
+    "sudo_required_for_readonly_host_inventory": "HOST_PERMISSIONS",
+    "docker_or_host_inspection_unavailable": "DOCKER_INSPECTION",
+    "container_identity_unexpected": "DOCKER_INSPECTION",
+    "network_identity_unexpected": "DOCKER_NETWORK",
+    "required_production_or_comparator_stopped": "PRODUCTION_INVARIANT",
+    "required_image_reference_changed": "PRODUCTION_INVARIANT",
+    "AIO_expected_loopback_3240_binding_missing": "AIO_LOCAL_BINDING",
+    "resume_contract_comparator_unavailable": "RETAINED_COMPARATOR",
+    "R23B_active_or_R23A_rollback_state_changed": "CANARY_ROLLBACK",
+    "R23A_rollback_original_source_tag_changed": "CANARY_IMAGE_PROVENANCE",
+    "R23B_immutable_container_image_id_invalid": "CANARY_IMAGE_PROVENANCE",
+    "R23A_rollback_image_different_from_R23B": "CANARY_IMAGE_PROVENANCE",
+    "R23B_image_reference_not_immutable_parent": "CANARY_IMAGE_PROVENANCE",
+    "R23B_readonly_rootfs_missing": "CANARY_ISOLATION",
+    "R23B_dedicated_network_changed": "CANARY_ISOLATION",
+    "R23B_network_membership_changed": "CANARY_ISOLATION",
+    "R23B_persistent_mount_added": "CANARY_ISOLATION",
+    "R23B_loopback_binding_changed": "CANARY_HOST_BINDING",
+    "R23B_network_assumptions_changed": "CANARY_NETWORK",
+    "R23B_localhost_health_unavailable": "CANARY_HEALTH",
+    "separate_R23D_canary_already_exists": "R23D_NAME_COLLISION",
+    "separate_R23D_network_already_exists": "R23D_NAME_COLLISION",
+    "proposed_gateway_or_relay_loopback_port_occupied": "R23D_PORT_COLLISION",
+    "proposed_gateway_or_relay_port_reserved_by_docker": "R23D_PORT_COLLISION",
+}
+
+def sanitized_diagnostic(error):
+    reason = error.args[0] if isinstance(error, Stop) and len(error.args) == 1 else ""
+    if not isinstance(reason, str) or reason not in SAFE_DIAGNOSTIC_STAGES:
+        reason = "UNKNOWN_HOST_RUNTIME_FAILURE"
+        stage = "UNCLASSIFIED"
+    else:
+        stage = SAFE_DIAGNOSTIC_STAGES[reason]
+    return {
+        "audit": "R23D0_SAFE_DIAGNOSTIC",
+        "status": "STOP",
+        "stage": stage,
+        "reason": reason,
+        "aio_get_or_login_attempted": False,
+        "credentials_or_docker_details_printed": False,
+        "production_modifications": 0,
+        "next_action": "DO_NOT_DEPLOY_R23D_CANARY_OR_RELAY",
+    }
+
 def main():
     try:
         print(json.dumps(audit(), indent=2))
         print("R23D0_READONLY_PREFLIGHT_PASS")
-    except (Stop, ValueError, KeyError, TypeError, OSError):
-        print("STOP: R23D0 host topology not qualified; no changes attempted",
-              file=sys.stderr)
+    except (Stop, ValueError, KeyError, TypeError, OSError) as ex:
+        print(json.dumps(sanitized_diagnostic(ex), indent=2), file=sys.stderr)
         sys.exit(1)
 
 if __name__ == "__main__":
