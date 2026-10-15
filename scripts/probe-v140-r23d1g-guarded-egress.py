@@ -341,9 +341,10 @@ def _apply_inner(plan):
         except BaseException as ex:
             cleanup_error=ex
     if cleanup_error:
-        raise Stop("GUARDED_CLEANUP_REQUIRES_MANUAL_INSPECTION")
+        raise Stop("GUARDED_CLEANUP_REQUIRES_MANUAL_INSPECTION") from cleanup_error
     if err:
-        raise Stop("GUARDED_SYNTHETIC_TRIAL_STOPPED")
+        # CLI prints only the sanitized STOP code, never underlying internals.
+        raise Stop("GUARDED_SYNTHETIC_TRIAL_STOPPED") from err
     if tcp is None or not control["allowed"] or control["denied"]:
         raise Stop("SYNTHETIC_TCP_POSITIVE_OR_NEGATIVE_CONTROL_FAILED")
     return {
