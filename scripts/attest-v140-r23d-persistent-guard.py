@@ -199,7 +199,7 @@ def check_final_docker_scope(container_doc,network_doc,*,bridge,subnet,
     mounts=obj.get("Mounts") or []
     if (not isinstance(mounts,list) or len(mounts)!=1
         or mounts[0].get("Type")!="bind"
-        or mounts[0].get("Destination")!="/app/identity-proof.json"
+        or mounts[0].get("Destination")!="/run/identity-proof.json"
         or mounts[0].get("RW") is not False):
         raise Stop("DOCKER_FINAL_CANARY_PROOF_MOUNT_CHANGED")
     opt=net.get("Options") or {}
