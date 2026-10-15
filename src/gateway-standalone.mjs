@@ -61,8 +61,15 @@ export function canaryGatewayConfig(proof, env) {
   if (!Number.isSafeInteger(port) || port < 1024 || port > 65535) {
     throw new Error('Invalid gateway canary port');
   }
+  const nextUpTimeoutMs = env.JELLYFIN_GATEWAY_NEXTUP_TIMEOUT_MS == null
+    ? 8000 : Number(env.JELLYFIN_GATEWAY_NEXTUP_TIMEOUT_MS);
+  if (!Number.isSafeInteger(nextUpTimeoutMs) || nextUpTimeoutMs < 8000
+      || nextUpTimeoutMs > 20000) {
+    throw new Error('Invalid NextUp canary timeout');
+  }
   return {
     jellyfinGatewayEnabled: true,
+    jellyfinGatewayNextUpTimeoutMs: nextUpTimeoutMs,
     jellyfinGatewayPort: port,
     jellyfinGatewayUpstreamUrl: env.JELLYFIN_GATEWAY_UPSTREAM_URL,
     jellyfinGatewayUserId: env.JELLYFIN_GATEWAY_AIO_USER_ID,
