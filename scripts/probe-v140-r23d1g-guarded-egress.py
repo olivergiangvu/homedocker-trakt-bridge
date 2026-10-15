@@ -218,6 +218,22 @@ def owned_container(plan,run_id):
     return assert_container(parsed(["docker","container","inspect",plan.TEST_CONTAINER]),
                             plan,run_id,plan.image_id)
 
+def postflight(plan):
+    """Independently recheck baseline + exact ephemeral absence after cleanup."""
+    planner=module(PLANNER,"r23d1g_postflight")
+    try:
+        if planner.baseline() is not True:
+            raise Stop("POSTFLIGHT_PRODUCTION_BASELINE_FAILED")
+    except BaseException:
+        raise Stop("POSTFLIGHT_PRODUCTION_BASELINE_FAILED") from None
+    if not absence("container",plan.TEST_CONTAINER):
+        raise Stop("POSTFLIGHT_PROBE_CONTAINER_STILL_PRESENT")
+    if not absence("network",plan.TEST_NET):
+        raise Stop("POSTFLIGHT_PROBE_NETWORK_STILL_PRESENT")
+    if table_snapshot(plan.renderer) is not None:
+        raise Stop("POSTFLIGHT_NFT_GUARD_STILL_PRESENT")
+    return True
+
 def cleanup(plan,run_id,snapshot):
     """Never remove nft guard while an unverified container/bridge could live.
 
@@ -347,6 +363,7 @@ def _apply_inner(plan):
         raise Stop("GUARDED_SYNTHETIC_TRIAL_STOPPED") from err
     if tcp is None or not control["allowed"] or control["denied"]:
         raise Stop("SYNTHETIC_TCP_POSITIVE_OR_NEGATIVE_CONTROL_FAILED")
+    postflight(plan)
     return {
         "audit":"R23D1G_ZERO_CREDENTIAL_SCOPED_GUARD_TRIAL",
         "status":"SYNTHETIC_TCP_GUARD_CONTROLS_PASS_NOT_AUTH_APPROVED",
