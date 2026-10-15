@@ -37,10 +37,11 @@ class R23DPreflightTests(unittest.TestCase):
             "aiostreams": entry("aiostreams", image=mod.AIO_IMAGE,
                                 ports=[(3240, 3000)]),
             "homedocker-resume-contract-canary": entry("homedocker-resume-contract-canary"),
-            mod.R23B: entry(mod.R23B, image="homedocker-trakt-bridge:v140-r23a-e442ce461209",
+            mod.R23B: entry(mod.R23B, image="sha256:" + "a"*64,
                             network=mod.R23B_NETWORK,
                             ports=[(17041, 7000),(17141,7101)]),
-            mod.R23A: entry(mod.R23A, running=False),
+            mod.R23A: entry(mod.R23A, running=False,
+                            image="homedocker-trakt-bridge:v140-r23a-e442ce461209"),
         }
         self.patches = [
             mock.patch.object(mod.os, "geteuid", return_value=0),
@@ -73,6 +74,24 @@ class R23DPreflightTests(unittest.TestCase):
         del self.fixture[mod.R23B]["NetworkSettings"]["Networks"]["media_core_net"]
         self.fixture[mod.R23B]["HostConfig"]["ReadonlyRootfs"] = False
         with self.assertRaises(mod.Stop):
+            mod.audit()
+
+    def test_real_r23b_sha256_run_reference_is_valid_only_for_exact_r23a_image(self):
+        # Actual deploy-v140-r23b-hostcanary.py runs Docker with Image ID,
+        # so .Config.Image is sha256:... whereas stopped R23A uses its tag.
+        assert self.fixture[mod.R23B]["Config"]["Image"].startswith("sha256:")
+        self.assertEqual(mod.audit()["status"], "PREFLIGHT_PASS")
+        self.fixture[mod.R23A]["Image"] = "sha256:" + "b"*64
+        with self.assertRaisesRegex(mod.Stop, "R23A_rollback_image_different"):
+            mod.audit()
+        self.fixture[mod.R23A]["Image"] = "sha256:" + "a"*64
+        self.fixture[mod.R23B]["Config"]["Image"] = "unverified-external-tag:latest"
+        with self.assertRaisesRegex(mod.Stop, "R23B_image_reference"):
+            mod.audit()
+
+    def test_original_rollback_tag_must_match_verified_source(self):
+        self.fixture[mod.R23A]["Config"]["Image"] = "unverified"
+        with self.assertRaisesRegex(mod.Stop, "R23A_rollback_original"):
             mod.audit()
 
     def test_rejects_expected_production_aio_or_rollback_mutation(self):
