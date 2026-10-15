@@ -220,6 +220,7 @@ class GuardedEgressTests(unittest.TestCase):
                      **valid_network()[0],"Containers":{}}), \
                  mock.patch.object(m,"absence",side_effect=absent), \
                  mock.patch.object(m,"table_snapshot",side_effect=table_snapshot), \
+                 mock.patch.object(m,"postflight",return_value=True) as postcheck, \
                  mock.patch.object(m,"secrets") as secrets, \
                  mock.patch.object(m.socket,"socket",side_effect=Socket):
                 secrets.token_hex.return_value=RUN_ID
@@ -238,6 +239,7 @@ class GuardedEgressTests(unittest.TestCase):
                     self.assertFalse(report["jellyfin_session_allowed"])
                 self.assertFalse(state["network"])
                 self.assertFalse(state["guard"])
+                self.assertEqual(postcheck.call_count,0 if fail_on_run else 1)
             assert ("docker","network","create") in events
             assert ("nft","--file","-") in events
             assert ("docker","run","--rm") in events
@@ -247,6 +249,29 @@ class GuardedEgressTests(unittest.TestCase):
                             events.index(("nft","delete","table")))
         run_case(False)
         run_case(True)
+
+    def test_postflight_checks_production_and_exact_docker_nft_absence(self):
+        plan=Plan()
+        with mock.patch.object(m,"module") as getmod, \
+             mock.patch.object(m,"absence",return_value=True) as absent, \
+             mock.patch.object(m,"table_snapshot",return_value=None):
+            getmod.return_value.baseline.return_value=True
+            self.assertTrue(m.postflight(plan))
+            self.assertEqual(absent.call_count,2)
+            getmod.return_value.baseline.assert_called_once_with()
+        with mock.patch.object(m,"module") as getmod, \
+             mock.patch.object(m,"absence",return_value=True), \
+             mock.patch.object(m,"table_snapshot",return_value=None):
+            getmod.return_value.baseline.side_effect=RuntimeError("possible user token")
+            with self.assertRaisesRegex(m.Stop,"POSTFLIGHT_PRODUCTION_BASELINE_FAILED") as stopped:
+                m.postflight(plan)
+            self.assertNotIn("token",str(stopped.exception))
+        with mock.patch.object(m,"module") as getmod, \
+             mock.patch.object(m,"absence",return_value=True), \
+             mock.patch.object(m,"table_snapshot",return_value=b'{"table":"leftover"}'):
+            getmod.return_value.baseline.return_value=True
+            with self.assertRaisesRegex(m.Stop,"POSTFLIGHT_NFT_GUARD_STILL_PRESENT"):
+                m.postflight(plan)
 
     def test_dry_run_can_never_mutate_docker_or_firewall(self):
         output=io.StringIO()
