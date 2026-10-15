@@ -248,6 +248,18 @@ def cleanup(plan,run_id,snapshot):
     return True
 
 def apply(plan):
+    # Interrupted sessions attempt the same fail-closed finally cleanup.
+    # SIGKILL/power failures cannot be trapped and need operator inspection.
+    def stop_on_term(_sig,_frame):
+        raise Stop("GUARDED_SYNTHETIC_TRIAL_STOPPED")
+    previous=signal.getsignal(signal.SIGTERM)
+    signal.signal(signal.SIGTERM,stop_on_term)
+    try:
+        return _apply_inner(plan)
+    finally:
+        signal.signal(signal.SIGTERM,previous)
+
+def _apply_inner(plan):
     run_id=secrets.token_hex(12)
     image_id=plan.image_id
     created_network=False
@@ -295,8 +307,8 @@ def apply(plan):
         try:
             denied_sock,denied_thread=listener(plan.gateway,DENIED_CONTROL_PORT,"denied")
             try:
-                command(["docker","run","--rm","--name",plan.TEST_CONTAINER,
-                    "--restart","no","--network",plan.TEST_NET,
+                raw=command(["docker","run","--rm","--name",plan.TEST_CONTAINER,
+                    "--restart","no","--pull","never","--network",plan.TEST_NET,
                     "--ip",plan.canary,"--read-only",
                     "--cap-drop","ALL","--security-opt","no-new-privileges",
                     "--pids-limit","48","--memory","128m","--cpus","0.5",
@@ -305,7 +317,12 @@ def apply(plan):
                     "--label","homedocker.probe_run="+run_id,
                     "--entrypoint","node",image_id,
                     "-e",NODE,plan.gateway,plan.canary],timeout=55)
-                # Cannot call docker run twice: take output in assigned var.
+                tcp=parse_tcp(raw)
+                if (not tcp["allowed_relay"]
+                    or tcp["denied_open_control"]
+                    or any(tcp["host_ports"])
+                    or any(tcp["forward_testnet"])):
+                    raise Stop("SYNTHETIC_TCP_NEGATIVE_CONTROL_FAILED")
             finally:
                 denied_sock.close()
                 denied_thread.join(timeout=1)
@@ -327,13 +344,21 @@ def apply(plan):
         raise Stop("GUARDED_CLEANUP_REQUIRES_MANUAL_INSPECTION")
     if err:
         raise Stop("GUARDED_SYNTHETIC_TRIAL_STOPPED")
-    # A successful set of subprocesses still requires explicit independent
-    # TCP verdict evaluation. This function intentionally reports BLOCKED
-    # until structured TCP output and negative controls are qualified.
-    return {"status":"GUARD_TRIAL_EXECUTED_NO_AUTH_APPROVAL",
-            "firewall_effective_egress_isolation_verified":False,
-            "jellyfin_session_allowed":False,
-            "temporary_objects_cleanup_verified":True}
+    if tcp is None or not control["allowed"] or control["denied"]:
+        raise Stop("SYNTHETIC_TCP_POSITIVE_OR_NEGATIVE_CONTROL_FAILED")
+    return {
+        "audit":"R23D1G_ZERO_CREDENTIAL_SCOPED_GUARD_TRIAL",
+        "status":"SYNTHETIC_TCP_GUARD_CONTROLS_PASS_NOT_AUTH_APPROVED",
+        "known_host_tcp_ports_denied_count":len(tcp["host_ports"]),
+        "independent_open_denied_control_blocked":True,
+        "temporary_host_relay_positive_control_reached":True,
+        "testnet_tcp_probes_denied_or_unreachable":len(tcp["forward_testnet"]),
+        "failed_testnet_connections_do_not_prove_general_forward_isolation":True,
+        "firewall_effective_egress_isolation_verified":False,
+        "jellyfin_session_allowed":False,
+        "trakt_or_aio_sessions_or_history_used":False,
+        "temporary_objects_cleanup_verified":True,
+    }
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
