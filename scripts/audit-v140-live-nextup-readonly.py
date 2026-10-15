@@ -5,10 +5,15 @@ This probe is NOT a Gateway cutover. It never connects to Trakt or the canary's
 Gateway to normalize; it measures real *source* NextUp and verified provider
 spelling seen by the SAME AIO Jellyfin session.
 
-An EXISTING Jellyfin session token is entered via getpass on HomeDocker SSH.
-The token remains in process memory only, is never saved/echoed/logged, and
-is only sent to the fixed host-loopback AIO Jellyfin API. No new session
-creation/login POST, write requests, AIO database edits or client routing.
+Default mode uses the existing official AIO Jellyfin helper to ask for
+SERVER username + password/PIN via SSH hidden getpass; it sends exactly
+ONE authentication POST /Users/AuthenticateByName to AIO's fixed loopback,
+receives a short-lived user AccessToken in process memory, then issues bounded
+GETs only. Alternatively --auth token accepts an existing user session.
+
+User credentials, tokens and user/media IDs are never printed, persisted or
+committed. The login POST MAY create a user session on AIO, but no watch-state,
+history or playback write requests are made. No Trakt calls or client routing.
 
 WARNING: ordinary AIO GET handlers may update AIO's own server-side caches.
 """
