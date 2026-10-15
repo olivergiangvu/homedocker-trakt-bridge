@@ -49,11 +49,29 @@ def load_readiness():
     spec.loader.exec_module(mod)
     return mod
 
+def require_local_docker_socket():
+    """Avoid pulling into a remote Docker context or unexpected daemon."""
+    if os.environ.get("DOCKER_HOST","") not in ("","unix:///var/run/docker.sock"):
+        raise Stop("REMOTE_DOCKER_HOST_DISALLOWED")
+    if os.environ.get("DOCKER_CONTEXT","") not in ("","default"):
+        raise Stop("REMOTE_DOCKER_HOST_DISALLOWED")
+    if not Path("/var/run/docker.sock").is_socket():
+        raise Stop("LOCAL_DOCKER_SOCKET_UNAVAILABLE")
+    try:
+        context=subprocess.run(["docker","context","show"],
+             capture_output=True,timeout=12,check=False)
+    except (OSError,subprocess.TimeoutExpired):
+        raise Stop("LOCAL_DOCKER_CONTEXT_UNAVAILABLE") from None
+    if context.returncode or context.stdout.strip()!=b"default":
+        raise Stop("REMOTE_DOCKER_HOST_DISALLOWED")
+    return True
+
 def preflight(readiness):
     # Does not pull. Re-runs current RC6/R23B/R23A/AIO, source checkout,
     # final bridge names, nft syntax, dedicated ports and image collision.
     if os.geteuid()!=0:
         raise Stop("ROOT_REQUIRED_FOR_PROTECTED_HOST_PREFLIGHT")
+    require_local_docker_socket()
     if PINNED_BASE != (
         "node:24-alpine@sha256:"
         "ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1"
@@ -175,6 +193,9 @@ def main():
         allowed={
             "REVIEWED_READINESS_SOURCE_MISSING",
             "ROOT_REQUIRED_FOR_PROTECTED_HOST_PREFLIGHT",
+            "REMOTE_DOCKER_HOST_DISALLOWED",
+            "LOCAL_DOCKER_SOCKET_UNAVAILABLE",
+            "LOCAL_DOCKER_CONTEXT_UNAVAILABLE",
             "SOURCE_IMAGE_DIGEST_CHANGED",
             "GATEWAY_ONLY_IMAGE_CONTRACT_CHANGED",
             "EXPLICIT_IMAGE_PULL_CONFIRMATION_REQUIRED",
