@@ -23,11 +23,11 @@ const pullInflight = new Map();
 const pullCache = new Map();
 const PULL_CACHE_PREFIX = 'pull-state:v5:';
 
-export function createServer({ config, db, trakt }) {
+export function createServer({ config, db, trakt, gateway = null }) {
   return http.createServer(async (req, res) => {
     const started = Date.now();
     try {
-      await route(req, res, { config, db, trakt });
+      await route(req, res, { config, db, trakt, gateway });
     } catch (err) {
       const e = err instanceof BridgeError ? err : new BridgeError(err?.message || 'Internal error', { status: 500, cause: err });
       if (!res.headersSent) {
