@@ -61,9 +61,12 @@ def source_identity():
     if os.geteuid()!=0:
         raise Stop("SUDO_REQUIRED_FOR_PROTECTED_PRECHECK")
     try:
-        rev=subprocess.run(["git","-C",str(ROOT),"rev-parse","HEAD"],
+        # sudo runs Git as root against a user-owned detached checkout.
+        # Trust ONLY this exact source directory, never a global wildcard.
+        git=["git","-c","safe.directory="+str(ROOT),"-C",str(ROOT)]
+        rev=subprocess.run([*git,"rev-parse","HEAD"],
                            capture_output=True,text=True,timeout=10,check=False)
-        dirty=subprocess.run(["git","-C",str(ROOT),"status","--porcelain"],
+        dirty=subprocess.run([*git,"status","--porcelain"],
                              capture_output=True,text=True,timeout=10,check=False)
     except (OSError,subprocess.TimeoutExpired):
         raise Stop("PINNED_GIT_SOURCE_UNAVAILABLE") from None
