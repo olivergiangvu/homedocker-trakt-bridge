@@ -67,6 +67,9 @@ export function canaryGatewayConfig(proof, env) {
     jellyfinGatewayUpstreamUrl: env.JELLYFIN_GATEWAY_UPSTREAM_URL,
     jellyfinGatewayUserId: env.JELLYFIN_GATEWAY_AIO_USER_ID,
     jellyfinGatewayProfileId: proof.profileId,
+    // Resume is disabled by default, even for authenticated canaries.
+    // It is raw upstream passthrough only; never a deduplication switch.
+    jellyfinGatewayResumePassThrough: env.JELLYFIN_GATEWAY_RESUME_PASSTHROUGH === 'true',
   };
 }
 
