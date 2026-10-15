@@ -187,16 +187,51 @@ def parse_probe(raw):
         raise Stop("PROBE_OUTPUT_REJECTED")
     return result
 
+def owned_container():
+    """Refuse to remove a name that was raced/reused by another workload."""
+    raw = json.loads(docker("container", "inspect", CONTAINER, timeout=15))
+    if len(raw) != 1:
+        raise Stop("PROBE_CLEANUP_FAILED")
+    item = raw[0]
+    tags = (item.get("Config") or {}).get("Labels") or {}
+    nets = (item.get("NetworkSettings") or {}).get("Networks") or {}
+    return (
+        item.get("Name") == "/" + CONTAINER
+        and tags.get("homedocker.phase") == "r23d1b-temp"
+        and set(nets) == {NETWORK}
+        and (item.get("HostConfig") or {}).get("ReadonlyRootfs") is True
+        and not any(x.get("Type") in ("bind","volume") for x in item.get("Mounts") or [])
+    )
+
+def owned_network():
+    """Never delete a bridge that was not created for this exact test."""
+    raw = json.loads(docker("network", "inspect", NETWORK, timeout=15))
+    if len(raw) != 1:
+        raise Stop("PROBE_CLEANUP_FAILED")
+    net = raw[0]
+    return (
+        net.get("Name") == NETWORK
+        and net.get("Driver") == "bridge"
+        and net.get("Internal") is False
+        and (net.get("Labels") or {}).get("homedocker.phase") == "r23d1b-temp"
+        and (net.get("Options") or {}).get("com.docker.network.bridge.enable_ip_masquerade") == "false"
+    )
+
 def cleanup(container_started, network_created):
-    # Strict, explicit names only. Never prune or remove external resources.
+    # Strict ownership assertions prevent a name-race from deleting somebody
+    # else's Docker container or network. If unsure, STOP for inspection.
     errors = []
     if container_started or exists("container", CONTAINER):
         try:
+            if not owned_container():
+                raise Stop("PROBE_CLEANUP_FAILED")
             docker("rm", "-f", CONTAINER, timeout=20)
         except Stop:
             errors.append("container")
     if network_created:
         try:
+            if not owned_network():
+                raise Stop("PROBE_CLEANUP_FAILED")
             docker("network", "rm", NETWORK, timeout=20)
         except Stop:
             errors.append("network")
@@ -301,7 +336,8 @@ def main():
             "audit":"R23D1B_SAFE_DIAGNOSTIC",
             "status":"STOP","stage":STAGES[reason],"reason":reason,
             "network_egress_firewall_verified":False,
-            "production_changes_attempted":False,
+            "production_services_modified":False,
+            "temporary_docker_network_mutation_may_have_occurred":bool(args.apply),
             "docker_probe_resources_may_require_inspection":True,
             "no_credentials_in_probe":True,
         },indent=2), file=sys.stderr)
