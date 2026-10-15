@@ -30,6 +30,7 @@ jobs:
           python3 -m py_compile scripts/cleanup-github-branches.py
           python3 -m py_compile scripts/cleanup-rc7-canaries.py
           python3 -m py_compile scripts/audit-v140-performance.py
+          python3 -m py_compile scripts/audit-v140-unused-images.py
           python3 -m py_compile scripts/audit-dangling-image-ownership.py
           python3 -m py_compile scripts/publish-v1.3.0-tag.py
           python3 -m py_compile scripts/deploy-v1.3.0-homedocker.py
