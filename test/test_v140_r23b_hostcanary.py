@@ -67,7 +67,7 @@ class R23BTests(unittest.TestCase):
         self.assertEqual(result["status"],"LOCALHOST_TWO_LISTENERS_PASS")
         self.assertTrue(result["old_r23a_stopped_retained_for_rollback"])
         self.assertFalse(result["real_aio_or_trakt_access_qualified"])
-        self.assertEqual(len(commands),5)
+        self.assertEqual(len(commands),4)
         self.assertEqual(commands[0][:3],("docker","network","create"))
         self.assertNotIn("--internal",commands[0])
         self.assertIn("com.docker.network.bridge.enable_ip_masquerade=false",commands[0])
