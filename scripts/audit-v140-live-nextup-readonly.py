@@ -105,6 +105,10 @@ def fixed_get(path, *, token=None, limit=MAX_HTTP):
             if len(raw) > limit:
                 raise Stop("AIO JSON response too large")
     except error.HTTPError as ex:
+        if ex.code == 404 and path.startswith("/Items/"):
+            # A stale NextUp series may have no AIO metadata row; absence is
+            # a bounded observation, NOT justification to merge identities.
+            return None, int((time.monotonic() - started) * 1000)
         raise Stop("AIO GET status " + str(ex.code)) from None
     except (error.URLError, OSError, TimeoutError):
         raise Stop("AIO GET connection unavailable") from None
@@ -137,6 +141,8 @@ def item_imdb(item_id, token):
         return "invalid_id", None
     detail, _ = fixed_get("/Items/" + parse.quote(item_id, safe=""),
                           token=token, limit=128 * 1024)
+    if detail is None:
+        return "metadata_404", None
     if detail.get("Type") != "Series" or detail.get("Id") != item_id:
         return "invalid_detail", None
     ids = detail.get("ProviderIds")
