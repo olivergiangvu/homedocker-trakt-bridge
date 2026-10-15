@@ -111,7 +111,8 @@ export function validateGatewayConfig(config) {
     profileId: config.jellyfinGatewayProfileId,
     resumePassThrough: config.jellyfinGatewayResumePassThrough === true,
     nextUpTimeoutMs: validatedNextUpTimeoutMs(
-      config.jellyfinGatewayNextUpTimeoutMs ?? NETWORK_TIMEOUT_MS
+      config.jellyfinGatewayNextUpTimeoutMs === undefined
+        ? NETWORK_TIMEOUT_MS : config.jellyfinGatewayNextUpTimeoutMs
     ),
   };
 }
