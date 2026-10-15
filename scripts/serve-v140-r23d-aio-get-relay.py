@@ -242,12 +242,27 @@ def handler_factory(allowed_ip, expected_host, upstream_get=fetch_aio):
 
     return Handler
 
+def require_persistent_guard_attestation():
+    """Fail closed until same-network nft guard *lifetime* is implemented.
+
+    A successful disposable R23D1G test removed its nft rules before return.
+    Inspecting a guard once at startup is NOT sufficient if nft/Docker change
+    while an authenticated user session is active. A future implementation
+    must attest the exact owned network/interface, INPUT/FORWARD rule scope,
+    test canary -> only relay, and continuously supervise guard integrity.
+    No environment flag or user confirmation bypasses this security gate.
+    """
+    raise Stop("R23D_PERSISTENT_NFT_GUARD_NOT_YET_ATTESTED")
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--confirm", default="")
     args = parser.parse_args()
     if args.confirm != "R23D_TEMPORARY_AIO_GET_ONLY_RELAY":
         raise Stop("explicit_session_relay_confirmation_required")
+    # Real AIO session safety is stronger than the synthetic guard's
+    # successful five-port probe: block until lifecycle attestation exists.
+    require_persistent_guard_attestation()
     gateway_ip, canary_ip = canary_topology()
     expected = gateway_ip + ":" + str(RELAY_PORT)
     server = ThreadingHTTPServer(
