@@ -286,6 +286,7 @@ def audit(token, db_path, max_series):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--max-series-details", type=int, default=20)
+    parser.add_argument("--auth", choices=("login", "token"), default="login")
     parser.add_argument("--bridge-db", default=preview_module().DEFAULT_DB)
     parser.add_argument("--preflight-only", action="store_true",
                         help="verify local canary/RC6 proof, no Jellyfin session required")
