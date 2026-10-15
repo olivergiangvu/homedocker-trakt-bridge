@@ -60,6 +60,51 @@ jobs:
       - name: Build production container
         run: docker build -t homedocker-trakt-bridge:ci .
 
+      - name: R23A isolated integrated runtime and both listeners smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          cleanup() {
+            docker rm -f v140-r23a-ci >/dev/null 2>&1 || true
+            docker network rm v140-r23a-ci-net >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker network create --driver bridge --internal v140-r23a-ci-net
+          docker run --rm -d --name v140-r23a-ci --restart no \
+            --network v140-r23a-ci-net --read-only --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --pids-limit 64 --memory 192m --cpus 1 \
+            --tmpfs /app/data:rw,size=33554432,uid=1000,gid=1000,mode=0700 \
+            -p 127.0.0.1:17041:7000 -p 127.0.0.1:17141:7101 \
+            -e PUBLIC_BASE_URL=http://127.0.0.1:17041 \
+            -e TRAKT_CLIENT_ID=ci-fake-client -e TRAKT_CLIENT_SECRET=ci-fake-secret \
+            -e BRIDGE_SECRET_KEY=ci-fake-local-secret \
+            -e ADMIN_KEY=ci-fake-admin-key \
+            -e JELLYFIN_GATEWAY_ENABLED=true \
+            -e JELLYFIN_GATEWAY_PORT=7101 \
+            -e JELLYFIN_GATEWAY_UPSTREAM_URL=http://127.0.0.1:9999/jellyfin \
+            -e JELLYFIN_GATEWAY_AIO_USER_ID=CANARY_PREVIEW_NO_MATCH_USER \
+            -e JELLYFIN_GATEWAY_PROFILE_ID=cccccccccccccccccccccccc \
+            -e AIO_RECONCILER_MODE=off \
+            -e AIO_HISTORY_ECHO_GUARD=false \
+            -e JELLYFIN_GATEWAY_LEGACY_IMPORT=off \
+            homedocker-trakt-bridge:ci
+          ready=0
+          for i in $(seq 1 20); do
+            if docker exec v140-r23a-ci wget -q -O /dev/null http://127.0.0.1:7000/health \
+              && docker exec v140-r23a-ci wget -q -O /dev/null http://127.0.0.1:7101/health; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" -eq 1
+          docker inspect --format '{{json .Mounts}}' v140-r23a-ci \
+            | python3 -c 'import sys,json; m=json.load(sys.stdin); assert not any(x["Type"] in ("volume","bind") for x in m), m'
+          docker inspect --format '{{json .NetworkSettings.Networks}}' v140-r23a-ci \
+            | python3 -c 'import sys,json; n=json.load(sys.stdin); assert list(n)==["v140-r23a-ci-net"], n'
+          echo "R23A_INTEGRATED_RUNTIME_ISOLATED_HEALTH=PASS"
+
       - name: Build and smoke-test isolated gateway-only canary
         shell: bash
         run: |
