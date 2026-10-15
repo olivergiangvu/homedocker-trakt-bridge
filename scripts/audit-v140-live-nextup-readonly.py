@@ -204,6 +204,33 @@ def get_existing_session():
         raise Stop("existing Jellyfin session token missing or malformed")
     return value
 
+def login_from_existing_aio_helper():
+    """Use repository's already-tested official Jellyfin password-login helper."""
+    auth_script = HERE / "audit-jellyfin-auth-preview.py"
+    if not auth_script.is_file() or auth_script.is_symlink():
+        raise Stop("local AIO login helper unavailable")
+    spec = importlib.util.spec_from_file_location("r23b_aio_login_helper", auth_script)
+    helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helper)
+    try:
+        session = helper.obtain_session("login")
+    except Exception as exc:
+        # A foreign helper's error cannot leak user-entered information.
+        message = str(exc)
+        if message.startswith("Official Jellyfin login HTTP "):
+            code = message.removeprefix("Official Jellyfin login HTTP ")
+            if code in {"400", "401", "403", "404", "405", "429", "500", "502", "503"}:
+                raise Stop("AIO_LOGIN_HTTP_" + code) from None
+        raise Stop("AIO_LOGIN_CREDENTIALS_OR_RESPONSE_REJECTED") from None
+    if not isinstance(session, str) or not SESSION.fullmatch(session):
+        raise Stop("AIO_LOGIN_SESSION_RESPONSE_INVALID")
+    return session
+
+def obtain_authenticated_session(mode):
+    if mode == "token":
+        return run_phase("SESSION_INPUT", get_existing_session)
+    return run_phase("AIO_JELLYFIN_LOGIN", login_from_existing_aio_helper)
+
 def item_imdb(item_id, token):
     if not ITEM_ID.fullmatch(item_id):
         return "invalid_id", None
