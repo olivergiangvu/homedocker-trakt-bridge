@@ -461,6 +461,8 @@ function renderAdmin(res, { config, db, gateway }, adminKey) {
         <div class="stat"><span class="label">Verified alias groups</span><span class="value">${escapeHtml(gatewayStatus.identity.aliasGroups)}</span></div>
         <div class="stat"><span class="label">Conflicts quarantined</span><span class="value">${escapeHtml(gatewayStatus.identity.quarantinedConflicts)}</span></div>
         <div class="stat"><span class="label">Resume</span><span class="value">${escapeHtml(gatewayStatus.resumeMode)}</span></div>
+        <div class="stat"><span class="label">NextUp requests</span><span class="value">${escapeHtml(gatewayStatus.telemetry?.nextUpRequests ?? '—')}</span></div>
+        <div class="stat"><span class="label">Filtered responses</span><span class="value">${escapeHtml(gatewayStatus.telemetry?.nextUpNormalizedResponses ?? '—')}</span></div>
       </div>
       <p class="hint">Configuration remains opt-in and OFF by default. This dashboard does not switch nginx, write to AIO history, or enable a live gateway.</p>
     </div>
@@ -548,8 +550,12 @@ function renderProfile(res, { config, db, gateway }, profileId, setupKey, eventF
         <div class="stat"><span class="label">Conflicts quarantined</span><span class="value">${escapeHtml(gatewayStatus.identity.quarantinedConflicts)}</span></div>
         <div class="stat"><span class="label">Resume mode</span><span class="value">${escapeHtml(gatewayStatus.resumeMode)}</span></div>
         <div class="stat"><span class="label">Gateway listener</span><span class="value">${gatewayStatus.listening ? 'Listening (not client-qualified)' : 'Inactive'}</span></div>
+        <div class="stat"><span class="label">NextUp requests</span><span class="value">${escapeHtml(gatewayStatus.telemetry?.nextUpRequests ?? '—')}</span></div>
+        <div class="stat"><span class="label">Normalized responses</span><span class="value">${escapeHtml(gatewayStatus.telemetry?.nextUpNormalizedResponses ?? '—')}</span></div>
+        <div class="stat"><span class="label">Fail-open errors</span><span class="value">${escapeHtml(gatewayStatus.telemetry?.failOpenNormalizationErrors ?? '—')}</span></div>
+        <div class="stat"><span class="label">Upstream transport failures</span><span class="value">${escapeHtml(gatewayStatus.telemetry?.upstreamTransportFailures ?? '—')}</span></div>
       </div>
-      <p class="hint">NextUp: fail-open on ambiguity; Resume: passthrough only. No live routing switch, watch-state writes or alias merges.</p>
+      <p class="hint">Counters cover the entire gateway listener and reset on restart. NextUp fails open on ambiguity; Resume is passthrough only. No live routing switch, watch-state writes or alias merges.</p>
       <div class="row"><a class="btn secondary" href="/u/${profileId}/gateway/status.json?key=${encodeURIComponent(setupKey)}">Read-only JSON diagnostics</a></div>
     </div>
 
