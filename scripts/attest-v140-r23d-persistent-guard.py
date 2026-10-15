@@ -158,6 +158,7 @@ class GuardLifetimeGate:
         self._lock=threading.Lock()
         self._halt=threading.Event()
         self._state="CLOSED"
+        self._started=False
         self._worker=None
         self._loss_signaled=False
 
@@ -169,7 +170,7 @@ class GuardLifetimeGate:
     def observe(self):
         """Fresh verification for every request, not only periodic poll."""
         with self._lock:
-            if self._state=="FAILED" or self._halt.is_set():
+            if not self._started or self._state=="FAILED" or self._halt.is_set():
                 return False
             try:
                 # Only literal True qualifies. False/None/exceptions are STOP.
@@ -191,8 +192,9 @@ class GuardLifetimeGate:
 
     def start(self):
         with self._lock:
-            if self._worker is not None or self._halt.is_set():
+            if self._started or self._halt.is_set():
                 raise Stop("GUARD_MONITOR_ALREADY_STARTED_OR_CLOSED")
+            self._started=True
         if not self.observe():
             raise Stop("PERSISTENT_NFT_GUARD_NOT_ATTESTED")
         with self._lock:
