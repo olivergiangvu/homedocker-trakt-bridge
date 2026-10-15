@@ -407,6 +407,10 @@ test('Gateway metrics are in-memory, aggregate-only, and not public HTTP routes'
     responseFailures: 0,
     oversizedPassThroughResponses: 0,
     invalidJsonPassThroughResponses: 0,
+    metadataActive: 0,
+    metadataQueued: 0,
+    metadataPeakActive: 0,
+    metadataCacheEntries: 0,
   });
   const next = await fetch(base + '/Shows/NextUp?Limit=20', {
     headers: { 'X-Emby-Token': AIO_TOKEN },
