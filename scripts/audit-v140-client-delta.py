@@ -75,7 +75,7 @@ def compare(directory, before):
             with path.open("rb") as source:
                 if offset > 0:
                     source.seek(offset - 1)
-                    aligned = source.read(1) == b"\\n"
+                    aligned = source.read(1) == b"\n"
                 else:
                     aligned = True
                 source.seek(offset)
@@ -87,7 +87,7 @@ def compare(directory, before):
         if raw and not raw.endswith(b"\n"):
             raw = raw.rsplit(b"\n", 1)[0] + b"\n" if b"\n" in raw else b""
         if raw and not aligned:
-            raw = raw.split(b"\\n", 1)[1] if b"\\n" in raw else b""
+            raw = raw.split(b"\n", 1)[1] if b"\n" in raw else b""
         for line in raw.decode("utf-8", errors="replace").splitlines():
             row = parse_new_line(line)
             if row is None:
