@@ -43,6 +43,7 @@ jobs:
           python3 -m py_compile scripts/audit-v140-live-resume-alias-readonly.py
           python3 -m py_compile scripts/audit-v140-r23d-host-preflight.py
           python3 -m py_compile scripts/audit-v140-r23d-firewall-readonly.py
+          python3 -m py_compile scripts/probe-v140-r23d-egress-synthetic.py
           python3 -m py_compile scripts/serve-v140-r23d-aio-get-relay.py
           node --check scripts/verify-v140-legacy-import-memory.mjs
           python3 -m py_compile scripts/audit-dangling-image-ownership.py
