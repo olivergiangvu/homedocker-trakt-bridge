@@ -37,6 +37,7 @@ class ExactBaseAcquisitionTests(unittest.TestCase):
         readiness.BASE_RE=__import__("re").compile(
             r"(?m)^FROM\s+(node:24-alpine@sha256:[a-f0-9]{64})\s*$")
         with mock.patch.object(m.os,"geteuid",return_value=0), \
+             mock.patch.object(m,"require_local_docker_socket",return_value=True), \
              self.assertRaisesRegex(m.Stop,"SOURCE_IMAGE_DIGEST_CHANGED"):
             m.preflight(readiness)
         readiness.preflight.assert_not_called()
@@ -53,9 +54,37 @@ class ExactBaseAcquisitionTests(unittest.TestCase):
         readiness.BASE_RE=__import__("re").compile(
             r"(?m)^FROM\s+(node:24-alpine@sha256:[a-f0-9]{64})\s*$")
         readiness.preflight.return_value=False
-        with mock.patch.object(m.os,"geteuid",return_value=0):
+        with mock.patch.object(m.os,"geteuid",return_value=0), \
+             mock.patch.object(m,"require_local_docker_socket",return_value=True):
             self.assertFalse(m.preflight(readiness))
         readiness.preflight.assert_called_once_with()
+
+    def test_only_local_rootful_default_docker_context_is_allowed(self):
+        with mock.patch.dict(m.os.environ,{"DOCKER_HOST":"tcp://10.0.0.5:2375"},
+                             clear=False), \
+             self.assertRaisesRegex(m.Stop,"REMOTE_DOCKER_HOST_DISALLOWED"):
+            m.require_local_docker_socket()
+        with mock.patch.dict(m.os.environ,{"DOCKER_CONTEXT":"remote"},
+                             clear=False), \
+             self.assertRaisesRegex(m.Stop,"REMOTE_DOCKER_HOST_DISALLOWED"):
+            m.require_local_docker_socket()
+        env_patch={"DOCKER_HOST":"","DOCKER_CONTEXT":""}
+        with mock.patch.dict(m.os.environ,env_patch,clear=False), \
+             mock.patch.object(m.Path,"is_socket",return_value=False), \
+             self.assertRaisesRegex(m.Stop,"LOCAL_DOCKER_SOCKET_UNAVAILABLE"):
+            m.require_local_docker_socket()
+        with mock.patch.dict(m.os.environ,env_patch,clear=False), \
+             mock.patch.object(m.Path,"is_socket",return_value=True), \
+             mock.patch.object(m.subprocess,"run",return_value=mock.Mock(
+                 returncode=0,stdout=b"remote\n")), \
+             self.assertRaisesRegex(m.Stop,"REMOTE_DOCKER_HOST_DISALLOWED"):
+            m.require_local_docker_socket()
+        with mock.patch.dict(m.os.environ,env_patch,clear=False), \
+             mock.patch.object(m.Path,"is_socket",return_value=True), \
+             mock.patch.object(m.subprocess,"run",return_value=mock.Mock(
+                 returncode=0,stdout=b"default\n")) as runner:
+            self.assertTrue(m.require_local_docker_socket())
+            self.assertEqual(runner.call_args.args[0],["docker","context","show"])
 
     def test_image_provenance_requires_exact_digest_and_linux_os(self):
         for value in ("node@"+m.DIGEST,
