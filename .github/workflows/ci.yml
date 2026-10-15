@@ -84,6 +84,57 @@ jobs:
           test "$(docker inspect nextup-gateway-ci --format '{{.State.Running}}')" = "true"
           echo "ISOLATED_GATEWAY_HEALTH=PASS"
 
+      - name: Smoke-test v1.4 Gateway inside ONE Trakt Bridge runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="trakt-bridge-v14-module-ci"
+          cleanup() { docker rm -f -v "$name" >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          # Synthetic keys only: CI is isolated and NEVER connects to a live
+          # HomeDocker AIO, Trakt or production network.
+          docker run -d --name "$name" \
+            --cap-drop ALL --security-opt no-new-privileges \
+            -p 127.0.0.1:17041:7000 \
+            -p 127.0.0.1:17141:7101 \
+            -e PUBLIC_BASE_URL=http://127.0.0.1:17041 \
+            -e TRAKT_CLIENT_ID=ci-client \
+            -e TRAKT_CLIENT_SECRET=ci-fake-secret \
+            -e BRIDGE_SECRET_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+            -e ADMIN_KEY=abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789 \
+            -e JELLYFIN_GATEWAY_ENABLED=true \
+            -e JELLYFIN_GATEWAY_PORT=7101 \
+            -e JELLYFIN_GATEWAY_AIO_USER_ID=11111111abcdef00 \
+            -e JELLYFIN_GATEWAY_PROFILE_ID=aaaaaaaaaaaaaaaaaaaaaaaa \
+            -e JELLYFIN_GATEWAY_UPSTREAM_URL=http://127.0.0.1:3240/jellyfin \
+            -e JELLYFIN_GATEWAY_RESUME_PASSTHROUGH=false \
+            homedocker-trakt-bridge:ci
+
+          ready=0
+          for i in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:17041/health >/dev/null 2>&1 \
+                && curl -fsS http://127.0.0.1:17141/health >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = "1"
+          test "$(docker inspect "$name" --format '{{.State.Running}}')" = "true"
+
+          curl -fsS http://127.0.0.1:17141/health | grep -q '"adapter":"nextup-only"'
+          code=$(curl -sS -o /tmp/ci-gw-unknown.json -w '%{http_code}' \
+            http://127.0.0.1:17141/Users/Me)
+          test "$code" = "404"
+
+          key=abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
+          curl -fsS "http://127.0.0.1:17041/setup?key=$key" \
+            | grep -q 'AIO Identity Gateway'
+          curl -fsS "http://127.0.0.1:17041/status?key=$key" \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); g=x["gateway"]; assert g["enabled"] is True; assert g["listening"] is True; assert g["productionRoutingQualified"] is False; assert g["resumeMode"] == "off"'
+          echo "V140_SINGLE_BRIDGE_DASHBOARD_GATEWAY=PASS"
+
       - name: Enforce runtime image-size budget
         shell: bash
         run: |
