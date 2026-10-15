@@ -185,6 +185,39 @@ class R23B2LiveTests(unittest.TestCase):
         self.assertEqual(exc.exception.code, "SOURCE_AUDIT_REJECTED")
         self.assertNotIn(secret, str(exc.exception))
 
+    def test_username_login_is_default_path_without_token_prompt(self):
+        with mock.patch.object(app, "login_from_existing_aio_helper",
+                               return_value="T" * 40) as login, \
+             mock.patch.object(app, "get_existing_session") as token:
+            session = app.obtain_authenticated_session("login")
+        self.assertEqual(session, "T" * 40)
+        login.assert_called_once_with()
+        token.assert_not_called()
+
+    def test_existing_session_mode_still_works(self):
+        with mock.patch.object(app, "get_existing_session",
+                               return_value="T" * 40) as prompt, \
+             mock.patch.object(app, "login_from_existing_aio_helper") as login:
+            session = app.obtain_authenticated_session("token")
+        self.assertEqual(session, "T" * 40)
+        prompt.assert_called_once_with()
+        login.assert_not_called()
+
+    def test_login_error_redaction_with_401_phase(self):
+        with mock.patch.object(app, "login_from_existing_aio_helper",
+                               side_effect=app.Stop("AIO_LOGIN_HTTP_401")):
+            with self.assertRaises(app.StageStop) as exc:
+                app.obtain_authenticated_session("login")
+        self.assertEqual(exc.exception.phase, "AIO_JELLYFIN_LOGIN")
+        self.assertEqual(exc.exception.code, "AIO_LOGIN_HTTP_401")
+
+    def test_foreign_login_error_redaction(self):
+        with mock.patch.object(app, "login_from_existing_aio_helper",
+                               side_effect=app.Stop("AIO_LOGIN_CREDENTIALS_OR_RESPONSE_REJECTED")):
+            with self.assertRaises(app.StageStop) as exc:
+                app.obtain_authenticated_session("login")
+        self.assertEqual(exc.exception.code, "AIO_LOGIN_RESPONSE_OR_HELPER_REJECTED")
+
     def test_expired_legacy_source_rejected(self):
         with TemporaryDirectory() as root:
             path = make_db(root)
