@@ -229,7 +229,8 @@ def check_persistent_state(nft_doc,container_doc,network_doc,**expected):
     """Both state sources must match at the SAME observation cycle."""
     if not check_final_docker_scope(
         container_doc,network_doc,
-        **expected):
+        **{key:expected[key] for key in
+           ("bridge","subnet","host_gateway","canary","expected_image_id")}):
         raise Stop("DOCKER_FINAL_SCOPE_NOT_VERIFIED")
     return check_guard(nft_doc,**{
         key:expected[key] for key in
