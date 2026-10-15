@@ -224,3 +224,30 @@ test('existing admin and per-profile HTML pages render integrated gateway panel'
   assert.match(profileHtml, /Production client routing is not qualified/);
   assert.ok(!profileHtml.includes(USER));
 });
+
+test('listener telemetry is aggregate only and withheld from unrelated profiles', () => {
+  const { db, config } = context({
+    jellyfinGatewayEnabled: true,
+  });
+  const gateway = {
+    listening: true,
+    gatewayMetricsSnapshot: () => ({
+      nextUpRequests: 12,
+      nextUpNormalizedResponses: 2,
+      nextUpRemovedItems: 3,
+      resumePassthroughRequests: 5,
+      failOpenNormalizationErrors: 1,
+      upstreamTransportFailures: 0,
+      upstreamNon200Responses: 1,
+      responseFailures: 0,
+      privateMetadata: 'must-never-leak',
+    }),
+  };
+  const owned = buildGatewayDashboardStatus({ db, config, profileId: OWNER, gateway });
+  assert.equal(owned.telemetry.nextUpRequests, 12);
+  assert.equal(owned.telemetry.nextUpNormalizedResponses, 2);
+  assert.equal(owned.telemetry.scope, 'listener_wide_since_restart');
+  assert.ok(!JSON.stringify(owned).includes('must-never-leak'));
+  const other = buildGatewayDashboardStatus({ db, config, profileId: OTHER, gateway });
+  assert.equal(other.telemetry, null);
+});
