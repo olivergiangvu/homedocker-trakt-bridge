@@ -80,7 +80,7 @@ class R20OfflineMemoryTests(unittest.TestCase):
         import subprocess
         proof = subprocess.CompletedProcess(
             args=["docker", "inspect"], returncode=0,
-            stdout="sha256:" + ("f" * 64) + "|true\\n", stderr=""
+            stdout="sha256:" + ("f" * 64) + "|true\n", stderr=""
         )
         with mock.patch.object(mod.subprocess, "run", return_value=proof) as run:
             cmd = mod.docker_runner()
@@ -102,7 +102,7 @@ class R20OfflineMemoryTests(unittest.TestCase):
         import subprocess
         stopped = subprocess.CompletedProcess(
             args=["docker", "inspect"], returncode=0,
-            stdout="sha256:" + ("f" * 64) + "|false\\n", stderr=""
+            stdout="sha256:" + ("f" * 64) + "|false\n", stderr=""
         )
         with mock.patch.object(mod.subprocess, "run", return_value=stopped):
             with self.assertRaisesRegex(
