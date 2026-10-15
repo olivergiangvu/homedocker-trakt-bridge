@@ -133,7 +133,7 @@ class GuardedEgressTests(unittest.TestCase):
                 names["network"]=False
             return b""
         snapshot=b'{"nftables":[{"table":{"name":"homedocker_r23d_guard"}}]}'
-        nft=[snapshot,snapshot,None]
+        nft=[snapshot,None]
         with mock.patch.object(m,"absence",side_effect=absent), \
              mock.patch.object(m,"owned_container",return_value=valid_container()[0]), \
              mock.patch.object(m,"owned_network",return_value=valid_network()[0]), \
