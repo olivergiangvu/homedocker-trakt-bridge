@@ -86,6 +86,7 @@ STAGES = {
     "PROBE_OUTPUT_REJECTED": "RESULT_VALIDATION",
     "PROBE_CLEANUP_FAILED": "CLEANUP",
     "PROBE_TERMINATED_UNEXPECTEDLY": "RUNTIME",
+    "EXPLICIT_APPLY_CONFIRMATION_REQUIRED": "AUTHORIZATION",
 }
 
 def docker(*args, timeout=20):
@@ -289,7 +290,7 @@ def main():
             print("R23D1B_DRY_RUN_PASS")
             return
         if args.confirm != CONFIRM:
-            raise Stop("R23D0_PREFLIGHT_FAILED")
+            raise Stop("EXPLICIT_APPLY_CONFIRMATION_REQUIRED")
         print(json.dumps(apply(image_id), indent=2))
         print("R23D1B_SYNTHETIC_OBSERVATION_COMPLETE")
     except Exception as exc:
