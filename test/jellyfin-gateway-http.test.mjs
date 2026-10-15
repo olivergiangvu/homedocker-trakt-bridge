@@ -53,7 +53,8 @@ function response(res, code, body, headers = {}) {
 async function fixture(t, {
   enabled = true, expectedUser = USER, metadataFails = false,
   nextUp = reply, graph = true, upstreamError = false,
-  upstreamPrefix = '',
+  upstreamPrefix = '', resumeEnabled = false,
+  resumeUpstreamStatus = 200,
 } = {}) {
   const hits = [];
   const upstream = await serve((req, res) => {
@@ -65,6 +66,33 @@ async function fixture(t, {
     if (route?.startsWith('/Shows/NextUp')) {
       if (upstreamError) return response(res, 503, { error: 'aio_down' });
       return response(res, 200, nextUp);
+    }
+    const resumePath = route?.split('?', 1)[0];
+    if (resumePath === '/UserItems/Resume'
+        || /^\/Users\/[A-Za-z0-9_-]{8,128}\/Items\/Resume$/.test(resumePath ?? '')) {
+      if (req.headers['x-emby-token'] !== AIO_TOKEN) {
+        return response(res, 401, { error: 'unauthorized' });
+      }
+      if (resumeUpstreamStatus !== 200) {
+        return response(res, resumeUpstreamStatus, { error: 'upstream_status' });
+      }
+      const query = new URL(route, 'http://mock.invalid').searchParams;
+      const start = Number(query.get('StartIndex') ?? 0);
+      const limit = Number(query.get('Limit') ?? 12);
+      if (!Number.isSafeInteger(start) || start < 0 || limit !== 20) {
+        return response(res, 400, { error: 'unsupported_synthetic_page' });
+      }
+      const Items = Array.from({ length: limit }, (_, i) => {
+        const n = start + i;
+        return n % 3 === 0
+          ? { Id: 'movie' + n, Type: 'Movie',
+              UserData: { PlaybackPositionTicks: 100 + n } }
+          : { Id: 'episode' + n, SeriesId: 'seriesCanon', Type: 'Episode',
+              UserData: { PlaybackPositionTicks: 200 + n } };
+      });
+      return response(res, 200, {
+        Items, TotalRecordCount: start + Items.length, StartIndex: start,
+      }, { 'x-aio-resume-contract': 'prefix-count' });
     }
     if (route === '/Users/Me') {
       if (req.headers['x-emby-token'] !== AIO_TOKEN) {
@@ -96,6 +124,7 @@ async function fixture(t, {
     jellyfinGatewayUpstreamUrl: upstream.url + upstreamPrefix,
     jellyfinGatewayProfileId: PROFILE,
     jellyfinGatewayUserId: expectedUser,
+    jellyfinGatewayResumePassThrough: resumeEnabled,
   };
   const server = createJellyfinGateway({ config, db });
   t.after(() => server.close());
@@ -270,6 +299,79 @@ test('series-specific and paging requests are upstream passthrough', async t => 
   });
   assert.deepEqual(await b.json(), reply);
   assert.equal(hits.filter(x => x.path === '/Users/Me').length, 0);
+});
+
+test('Resume routes remain 404 unless explicitly opted in', async t => {
+  const { base, hits } = await fixture(t);
+  for (const route of [
+    '/UserItems/Resume?Limit=20&StartIndex=0',
+    '/Users/' + USER + '/Items/Resume?Limit=20&StartIndex=20',
+  ]) {
+    const r = await fetch(base + route, {
+      headers: { 'X-Emby-Token': AIO_TOKEN },
+    });
+    assert.equal(r.status, 404);
+  }
+  assert.equal(hits.length, 0);
+});
+
+test('opt-in Resume passthrough preserves modern/legacy, pages, movies and prefix totals', async t => {
+  const { base, hits } = await fixture(t, {
+    resumeEnabled: true, upstreamPrefix: '/jellyfin',
+  });
+  for (const index of [0, 20]) {
+    const suffix = '?Limit=20&StartIndex=' + index + '&MediaTypes=Video';
+    const modern = await fetch(base + '/UserItems/Resume' + suffix, {
+      headers: { 'X-Emby-Token': AIO_TOKEN },
+    });
+    const legacy = await fetch(base + '/Users/' + USER + '/Items/Resume' + suffix, {
+      headers: { 'X-Emby-Token': AIO_TOKEN },
+    });
+    assert.equal(modern.status, 200);
+    assert.equal(legacy.status, 200);
+    const a = await modern.json();
+    const b = await legacy.json();
+    assert.deepEqual(a, b);
+    assert.equal(a.Items.length, 20);
+    assert.equal(a.TotalRecordCount, index + 20);
+    assert.equal(a.StartIndex, index);
+    assert.ok(a.Items.some(x => x.Type === 'Movie'));
+    assert.ok(a.Items.some(x => x.Type === 'Episode'));
+    assert.ok(a.Items.every(x => x.UserData.PlaybackPositionTicks > 0));
+    assert.equal(modern.headers.get('x-aio-resume-contract'), 'prefix-count');
+  }
+  assert.equal(hits.length, 4);
+  assert.ok(hits.every(h => h.path.startsWith('/jellyfin/')));
+  assert.ok(hits.every(h => h.auth === 'present'));
+  assert.ok(hits.every(h => !h.path.includes('/Users/Me')
+    && !h.path.includes('/Items/series')));
+});
+
+test('Resume propagates upstream authorization and service statuses untouched', async t => {
+  const { base } = await fixture(t, { resumeEnabled: true });
+  const unauthorized = await fetch(
+    base + '/UserItems/Resume?Limit=20&StartIndex=0');
+  assert.equal(unauthorized.status, 401);
+  assert.deepEqual(await unauthorized.json(), { error: 'unauthorized' });
+  const wrongVerb = await fetch(base + '/UserItems/Resume', {
+    method: 'POST',
+  });
+  assert.equal(wrongVerb.status, 405);
+  const unrelated = await fetch(base + '/Items/Resume', {
+    headers: { 'X-Emby-Token': AIO_TOKEN },
+  });
+  assert.equal(unrelated.status, 404);
+});
+
+test('Resume upstream 503 is forwarded, not converted into success or empty list', async t => {
+  const { base } = await fixture(t, {
+    resumeEnabled: true, resumeUpstreamStatus: 503,
+  });
+  const r = await fetch(base + '/UserItems/Resume?Limit=20&StartIndex=20', {
+    headers: { 'X-Emby-Token': AIO_TOKEN },
+  });
+  assert.equal(r.status, 503);
+  assert.deepEqual(await r.json(), { error: 'upstream_status' });
 });
 
 test('other Jellyfin endpoints are not accidentally proxied', async t => {
