@@ -5,6 +5,8 @@ import {
 } from '../src/jellyfin-gateway.mjs';
 import { canaryGatewayConfig } from '../src/gateway-standalone.mjs';
 import { loadConfig } from '../src/config.mjs';
+import { createJellyfinGateway } from '../src/jellyfin-gateway.mjs';
+import { once } from 'node:events';
 
 const config = (nextUpTimeoutMs) => ({
   jellyfinGatewayEnabled: true,
@@ -85,4 +87,40 @@ test('Bridge env is strict and the default does not silently change', () => {
       else process.env[k] = previous.get(k);
     }
   }
+});
+
+test('actual local Gateway listener applies extended deadline only on NextUp', async (t) => {
+  const recorded = [];
+  const original = AbortSignal.timeout;
+  t.mock.method(AbortSignal, 'timeout', (ms) => {
+    recorded.push(ms);
+    return original(ms);
+  });
+  const calls = [];
+  const gateway = createJellyfinGateway({
+    config: { ...config(15000), jellyfinGatewayResumePassThrough: true },
+    db: { cacheGet: () => null },
+    fetchImpl: async (url, options) => {
+      calls.push({ route: new URL(url).pathname, method: options.method });
+      return new Response(JSON.stringify({ Items: [], TotalRecordCount: 0 }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+  gateway.listen(0, '127.0.0.1');
+  t.after(() => { if (gateway.listening) gateway.close(); });
+  await once(gateway, 'listening');
+  const base = 'http://127.0.0.1:' + gateway.address().port;
+  const next = await fetch(base + '/Shows/NextUp?Limit=20');
+  assert.equal(next.status, 200);
+  assert.deepEqual((await next.json()).Items, []);
+  const resume = await fetch(base + '/UserItems/Resume?Limit=20&StartIndex=0');
+  assert.equal(resume.status, 200);
+  assert.deepEqual((await resume.json()).Items, []);
+  assert.deepEqual(calls.map(x => x.route), [
+    '/jellyfin/Shows/NextUp', '/jellyfin/UserItems/Resume',
+  ]);
+  assert.ok(calls.every(x => x.method === 'GET'));
+  assert.deepEqual(recorded.filter(ms => ms === 15000 || ms === 8000),
+                   [15000, 8000]);
 });
