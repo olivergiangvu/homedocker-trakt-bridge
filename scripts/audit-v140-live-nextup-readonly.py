@@ -77,6 +77,12 @@ def safe_reason(error):
             if status in {"400", "401", "403", "404", "405", "429", "500", "502", "503"}:
                 return "AIO_HTTP_" + status
             return "AIO_HTTP_OTHER_STATUS"
+        if value.startswith("AIO_LOGIN_HTTP_") and value.removeprefix("AIO_LOGIN_HTTP_") in {"400", "401", "403", "404", "405", "429", "500", "502", "503"}:
+            return value
+        if value in {"AIO_LOGIN_CREDENTIALS_OR_RESPONSE_REJECTED",
+                     "AIO_LOGIN_SESSION_RESPONSE_INVALID",
+                     "local AIO login helper unavailable"}:
+            return "AIO_LOGIN_RESPONSE_OR_HELPER_REJECTED"
         return SAFE_REASONS.get(value, "SOURCE_AUDIT_REJECTED")
     if isinstance(error, sqlite3.Error):
         return "BRIDGE_SQLITE_READONLY_ERROR"
@@ -330,11 +336,20 @@ def main():
             return
         # Never ask for an existing user token until local read-only sources
         # and both canary health endpoints have been independently qualified.
-        session = run_phase("SESSION_INPUT", get_existing_session)
+        session = obtain_authenticated_session(args.auth)
         evidence = run_phase(
             "AIO_SOURCE_AUDIT",
             lambda: audit(session, args.bridge_db, args.max_series_details)
         )
+        evidence["authentication_method"] = (
+            "jellyfin_password_login" if args.auth == "login" else "existing_session"
+        )
+        evidence["aio_login_post_requests"] = int(args.auth == "login")
+        evidence["aio_api_calls"] += int(args.auth == "login")
+        evidence["aio_http_methods"] = (
+            ["POST_LOGIN", "GET"] if args.auth == "login" else ["GET"]
+        )
+        evidence["new_login_session_created"] = args.auth == "login"
         print(json.dumps(evidence, indent=2))
         print("R23B2A_READ_ONLY_AIO_NEXTUP_PROOF_COMPLETE")
     except StageStop as exc:
@@ -344,7 +359,8 @@ def main():
             "phase": exc.phase,
             "reason": exc.code,
             "token_or_media_ids_printed": False,
-            "api_write_requests": 0,
+            "aio_history_or_playback_write_requests": 0,
+            "login_session_creation_possible": args.auth == "login",
         }, indent=2), file=sys.stderr)
         sys.exit(1)
     except (Exception, KeyboardInterrupt, EOFError):
