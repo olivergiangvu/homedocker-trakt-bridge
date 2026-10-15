@@ -61,7 +61,10 @@ class RelaySecurityTests(unittest.TestCase):
             hs["X-Emby-Token"] = token
         if headers:
             hs.update(headers)
-        con.request(method, path, headers=hs, skip_host=True)
+        con.putrequest(method, path, skip_host=True)
+        for name, value in hs.items():
+            con.putheader(name, value)
+        con.endheaders()
         resp = con.getresponse()
         body = resp.read()
         status = resp.status
