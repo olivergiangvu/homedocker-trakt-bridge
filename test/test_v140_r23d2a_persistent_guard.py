@@ -161,7 +161,7 @@ def final_docker_fixture():
         },
         "NetworkSettings":{"Networks":{
             m.FINAL_NETWORK:{"IPAddress":SCOPE["canary"]}}},
-        "Mounts":[{"Type":"bind","Destination":"/app/identity-proof.json",
+        "Mounts":[{"Type":"bind","Destination":"/run/identity-proof.json",
                    "RW":False}],
     }]
     network=[{
