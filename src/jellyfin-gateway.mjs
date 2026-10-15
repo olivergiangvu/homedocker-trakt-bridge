@@ -324,7 +324,23 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
     responseFailures: 0,
     oversizedPassThroughResponses: 0,
     invalidJsonPassThroughResponses: 0,
+    // Anonymous aggregate latency only: no paths, user IDs or watch history.
+    // These measure local Gateway wall time, not client/network end-to-end p95.
+    nextUpCompletedResponses: 0,
+    nextUpResponseTotalMs: 0,
+    nextUpResponseMaxMs: 0,
+    nextUpUpstreamSamples: 0,
+    nextUpUpstreamTotalMs: 0,
+    nextUpUpstreamMaxMs: 0,
   };
+
+  function observeUpstreamLatency(started) {
+    const elapsed = Math.max(0, Math.round(performance.now() - started));
+    metrics.nextUpUpstreamSamples++;
+    metrics.nextUpUpstreamTotalMs += elapsed;
+    metrics.nextUpUpstreamMaxMs = Math.max(metrics.nextUpUpstreamMaxMs, elapsed);
+  }
+
 
   const server = http.createServer(async (req, res) => {
     // Health is for local nginx/docker probes. Do not leak config/credentials.
@@ -346,21 +362,32 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
       return sendJson(res, 405, { error: 'method_not_allowed' });
     }
 
-    if (nextUp) metrics.nextUpRequests++;
-    else metrics.resumePassthroughRequests++;
+    if (nextUp) {
+      metrics.nextUpRequests++;
+      const started = performance.now();
+      res.once('finish', () => {
+        const elapsed = Math.max(0, Math.round(performance.now() - started));
+        metrics.nextUpCompletedResponses++;
+        metrics.nextUpResponseTotalMs += elapsed;
+        metrics.nextUpResponseMaxMs = Math.max(metrics.nextUpResponseMaxMs, elapsed);
+      });
+    } else metrics.resumePassthroughRequests++;
 
     const headers = outboundHeaders(req);
     const destination = upstreamPath(options.base, requested.pathname, requested.search);
     let upstream;
+    const upstreamStarted = nextUp ? performance.now() : null;
     try {
       upstream = await fetchImpl(destination, {
         method: 'GET', headers, redirect: 'manual',
         signal: AbortSignal.timeout(upstreamTimeoutForRoute(options, nextUp)),
       });
     } catch {
+      if (nextUp) observeUpstreamLatency(upstreamStarted);
       metrics.upstreamTransportFailures++;
       return sendJson(res, 502, { error: 'upstream_unavailable' });
     }
+    if (nextUp) observeUpstreamLatency(upstreamStarted);
     try {
       const bytes = await readBounded(upstream, res);
       if (!bytes) {
