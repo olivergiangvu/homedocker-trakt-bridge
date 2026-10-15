@@ -39,6 +39,7 @@ jobs:
           python3 -m py_compile scripts/backup-v140-rc6-rollback.py
           python3 -m py_compile scripts/deploy-v140-integrated-canary.py
           python3 -m py_compile scripts/deploy-v140-r23b-hostcanary.py
+          python3 -m py_compile scripts/audit-v140-live-nextup-readonly.py
           node --check scripts/verify-v140-legacy-import-memory.mjs
           python3 -m py_compile scripts/audit-dangling-image-ownership.py
           python3 -m py_compile scripts/publish-v1.3.0-tag.py
