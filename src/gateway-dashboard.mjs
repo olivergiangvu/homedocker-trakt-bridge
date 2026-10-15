@@ -35,7 +35,7 @@ export function buildGatewayDashboardStatus({ db, config, profileId, gateway = n
     listening: Boolean(listening),
     // These are configuration indicators, NOT upstream connectivity checks.
     upstreamConfigured: Boolean(config.jellyfinGatewayUpstreamUrl),
-    userMappingVerifiedAtRuntime: Boolean(mappingReady && listening),
+    userMappingConfigured: Boolean(mappingReady),
     resumeMode: configured && config.jellyfinGatewayResumePassThrough === true
       ? 'raw_passthrough' : 'off',
     identity: {
