@@ -27,3 +27,13 @@ The R23D relay is **not yet runnable** on the current host because the expected 
 - `python3 -m py_compile` both scripts via `.github/workflows/ci.yml`, plus full Node/Python tests and isolated image smoke.
 
 **Remaining NOT DONE:** real Docker R23D canary creation; host firewall egress review; hosting temporary relay on the *new* dedicated Docker bridge; same-session AIO-to-Gateway response parity; gateway identity graph proof seeding on host; warm/cold NextUp latency and downstream nginx/client timeout measurement; user/client cutover and rollback rehearsal. No production service/network/firewall changes were made by source commits.
+
+## R23D-0 2026-10-15 operator initial generic STOP — diagnostic correction
+
+Operator ran R23D0 preflight at immutable SHA `03075b56dd172ba08c3b62d8bc143ecf51fe418f` and got only `STOP: R23D0 host topology not qualified; no changes attempted`. This is an **unclassified audit failure**: it does not imply an AIO authentication failure, Docker change, lost RC6 state or that a new canary started.
+
+Review identified one **probable script-only false positive**, not yet confirmed on the host: R23B was deployed by `deploy-v140-r23b-hostcanary.py` with the immutable Docker image ID (e.g. `sha256:...`) as `docker run` image argument, while the initial R23D0 script incorrectly required `R23B.Config.Image` to be the original **human-readable R23A tag**. Docker can legitimately store the image ID instead of the tag. The corrected preflight now requires **stopped R23A's original verified image tag**, a valid `sha256` image ID and **identical R23B/R23A immutable image IDs**. The R23B Config.Image must equal either this exact image ID or the verified R23A source tag; no arbitrary/updated tag is accepted. The protected preflight is strictly read-only and does not replace/retag/pull any image.
+
+The corrected script also prints **allowlisted stage/reason** codes for all deliberately raised `Stop` conditions in `R23D0_SAFE_DIAGNOSTIC` JSON; unknown runtime exceptions are redacted to `UNKNOWN_HOST_RUNTIME_FAILURE`. Raw Docker inspect JSON, stderr, actual image hashes, user names, secrets, host network IPs and logs are **never** printed. CI regression emulates actual image-ID R23B creation and refuses mismatched rollback image IDs.
+
+Operator should rerun **only** the corrected script at a new CI-qualified exact SHA and share JSON status, not inspect secret environment variables, edit Compose or change R23B/R23A to satisfy stale assumptions. The initial host failure reason is unproven until this new output is collected. The staging step remains R23D-0, NOT R23D canary creation or AIO relay activation.
