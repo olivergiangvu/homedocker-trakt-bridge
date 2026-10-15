@@ -72,6 +72,8 @@ class SyntheticEgressProbeTests(TestCase):
     def test_clean_up_never_prunes_or_removes_production(self):
         commands=[]
         with mock.patch.object(mod,"exists",return_value=True), \
+             mock.patch.object(mod,"owned_container",return_value=True), \
+             mock.patch.object(mod,"owned_network",return_value=True), \
              mock.patch.object(mod,"docker",side_effect=lambda *args,**kwargs:commands.append(args)):
             mod.cleanup(True,True)
         self.assertEqual(commands,[
@@ -80,6 +82,44 @@ class SyntheticEgressProbeTests(TestCase):
         ])
         self.assertNotIn("prune",str(commands))
         self.assertNotIn("trakt-bridge",str(commands))
+
+    def test_cleanup_refuses_unverified_name_collision_without_deleting(self):
+        actions=[]
+        with mock.patch.object(mod,"exists",return_value=True), \
+             mock.patch.object(mod,"owned_container",return_value=False), \
+             mock.patch.object(mod,"owned_network",return_value=False), \
+             mock.patch.object(mod,"docker",side_effect=lambda *args,**kwargs:actions.append(args)):
+            with self.assertRaisesRegex(mod.Stop, "PROBE_CLEANUP_FAILED"):
+                mod.cleanup(False,True)
+        self.assertEqual(actions,[])
+
+    def test_owned_container_and_network_require_exact_labels_and_isolation(self):
+        container = [{
+            "Name":"/" + mod.CONTAINER,
+            "Config":{"Labels":{"homedocker.phase":"r23d1b-temp"}},
+            "NetworkSettings":{"Networks":{mod.NETWORK:{}}},
+            "HostConfig":{"ReadonlyRootfs":True},
+            "Mounts":[],
+        }]
+        network = [{
+            "Name":mod.NETWORK,
+            "Driver":"bridge",
+            "Internal":False,
+            "Labels":{"homedocker.phase":"r23d1b-temp"},
+            "Options":{"com.docker.network.bridge.enable_ip_masquerade":"false"},
+        }]
+        def inspect(*args,**kwargs):
+            return json.dumps(container if args[0]=="container" else network)
+        with mock.patch.object(mod,"docker",side_effect=inspect):
+            self.assertTrue(mod.owned_container())
+            self.assertTrue(mod.owned_network())
+            container[0]["HostConfig"]["ReadonlyRootfs"]=False
+            self.assertFalse(mod.owned_container())
+            container[0]["HostConfig"]["ReadonlyRootfs"]=True
+            container[0]["Mounts"].append({"Type":"volume"})
+            self.assertFalse(mod.owned_container())
+            network[0]["Labels"]={}
+            self.assertFalse(mod.owned_network())
 
     def test_default_cli_is_dry_run_without_creating_resources(self):
         out=io.StringIO()
