@@ -97,6 +97,12 @@ def audit():
     old = container(R23A)
     if not current.get("State", {}).get("Running") or old.get("State", {}).get("Running"):
         raise Stop("R23B_active_or_R23A_rollback_state_changed")
+    if current.get("Config", {}).get("Image") != "homedocker-trakt-bridge:v140-r23a-e442ce461209":
+        raise Stop("R23B_immutable_canary_source_tag_changed")
+    if not re.fullmatch(r"sha256:[a-f0-9]{64}", str(current.get("Image"))):
+        raise Stop("R23B_immutable_container_image_id_invalid")
+    if old.get("Image") != current.get("Image"):
+        raise Stop("R23A_rollback_image_different_from_R23B")
     if not current.get("HostConfig", {}).get("ReadonlyRootfs"):
         raise Stop("R23B_readonly_rootfs_missing")
     if current.get("HostConfig", {}).get("NetworkMode") != R23B_NETWORK:
