@@ -6,7 +6,7 @@ health via tested R23B-2A helper. Authenticates using the existing official
 Jellyfin login helper: one user-session creating POST, subsequent requests GET.
 All interaction is on fixed AIO loopback 127.0.0.1:3240/jellyfin.
 
-Two Resume pages with StartIndex=0,20 and Limit=20 (40 rows maximum), /Users/Me,
+Two Resume pages with either offsets 0,20 (default) or 40,60 (opt-in),\nLimit=20 (40 rows maximum per independent run), /Users/Me,
 and bounded /Items/{opaque-series-id} metadata GETs. Never changes watch-state,
 Trakt, RC6 DB, Docker, nginx or canary. AIO GET handlers MAY refresh cache.
 No media, usernames, raw user IDs, token, history entries or SQLite values
@@ -34,7 +34,7 @@ PAGES = 2
 MAX_ROWS = PAGE_SIZE * PAGES
 
 def read_resume_page(token, start_index):
-    if start_index not in (0, PAGE_SIZE):
+    if start_index not in (0, PAGE_SIZE, 2 * PAGE_SIZE, 3 * PAGE_SIZE):
         raise support.Stop("invalid Resume page offset")
     route = f"/UserItems/Resume?StartIndex={start_index}&Limit={PAGE_SIZE}"
     data, duration_ms = support.fixed_get(route, token=token)
@@ -84,7 +84,9 @@ def summarize_resume_rows(rows, fetched_series):
                 counts[group + "_active"] += 1
     return episodes, movies, active, counts
 
-def inspect_session(token, bridge_db):
+def inspect_session(token, bridge_db, start_index=0):
+    if start_index not in (0, 2 * PAGE_SIZE):
+        raise support.Stop("Resume sample base offset not permitted")
     if not support.SESSION.fullmatch(token):
         raise support.Stop("invalid AIO session")
     # Read-only provenance, exactly same identity scope as NextUp audit.
@@ -100,10 +102,11 @@ def inspect_session(token, bridge_db):
     rows = []
     times = []
     page_sizes = []
-    for page in range(PAGES):
+    offsets = [start_index + PAGE_SIZE * page for page in range(PAGES)]
+    for page, offset in enumerate(offsets):
         new_rows, elapsed = support.run_phase(
             "AIO_RESUME_PAGE_" + str(page),
-            lambda page=page: read_resume_page(token, page * PAGE_SIZE),
+            lambda offset=offset: read_resume_page(token, offset),
         )
         rows.extend(new_rows)
         times.append(elapsed)
@@ -143,7 +146,8 @@ def inspect_session(token, bridge_db):
         "provenance_verified_alias_groups": 1,
         "resume_route": "UserItems/Resume",
         "resume_requested_page_size": PAGE_SIZE,
-        "resume_requested_offsets": [0, PAGE_SIZE][:len(page_sizes)],
+        "resume_requested_offsets": offsets[:len(page_sizes)],
+        "resume_sample_base_offset": start_index,
         "resume_response_page_lengths": page_sizes,
         "resume_page_duration_ms": times,
         "resume_returned_items": len(rows),
@@ -180,6 +184,8 @@ def main():
     parser.add_argument("--auth",choices=("login","token"),default="login")
     parser.add_argument("--bridge-db",default=support.preview_module().DEFAULT_DB)
     parser.add_argument("--preflight-only",action="store_true")
+    parser.add_argument("--start-index", type=int, choices=(0, 40), default=0,
+                        help="0: pages 0-1; 40: later pages 2-3 ONLY (one bounded continuation)")
     args=parser.parse_args()
     try:
         check = support.source_preflight(args.bridge_db)
@@ -190,7 +196,7 @@ def main():
         session = support.obtain_authenticated_session(args.auth)
         result = support.run_phase(
             "AIO_RESUME_SOURCE_AUDIT",
-            lambda: inspect_session(session,args.bridge_db)
+            lambda: inspect_session(session,args.bridge_db,args.start_index)
         )
         result["aio_login_post_requests"]=int(args.auth=="login")
         print(json.dumps(result,indent=2),flush=True)
