@@ -34,11 +34,11 @@ if (config.jellyfinGatewayLegacyImport !== 'off') {
   }
 }
 const trakt = new ManagedTraktClient(config, db);
-const server = createServer({ config, db, trakt });
-// Gateway is a separate optional listener inside our Bridge process.
-// Existing /health and Trakt endpoints remain untouched by default.
+// The Gateway remains an optional module of the ONE Trakt Bridge product.
+// It has a scoped listener, not a second dashboard or identity database.
 const gateway = config.jellyfinGatewayEnabled
   ? createJellyfinGateway({ config, db }) : null;
+const server = createServer({ config, db, trakt, gateway });
 const aioReconciler = startAioReconciler({ config, db, trakt });
 const aioHistoryEvidence = startAioHistoryEvidenceJournal({ config, db });
 
