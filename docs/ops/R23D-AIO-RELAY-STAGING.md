@@ -118,3 +118,20 @@ Operator executed exact pinned R23D-1D nft priority script at `fc470635904724ff9
 - An nft guard cannot compensate for a future container being granted host network, Docker socket, NET_ADMIN or additional networks; these must be prohibited by independently verified container hardening. A stopped/failed guard leaves token use blocked.
 
 **CURRENT GATE:** R23D-1D host observation PASS; **R23D-1E synthetic offline policy template is not applied; live isolation and an authenticated AIO Gateway remain BLOCKED**. Do not copy the generated synthetic nft fixture into production.
+
+## R23D-1F read-only host subnet planner and nft kernel --check (PRE-APPLY) — 2026-10-15
+
+**Grounded latest operator evidence:** R23D-1D READ ONLY on HomeDocker passed (pinned `fc470635904724ff9edd9bc20a5367b5c8e33146`) with 5 nft tables, 8 base chains, 14 regular chains, no INPUT base chain, IPv4 FORWARD priority 0 default DROP, IPv6 FORWARD priority 0 default ACCEPT. Prior synthetic R23D-1B guardless bridge could reach 2 of 5 host TCP services; R23D-1C confirmed R23D-1B's exact temporary network and probe container were removed. R23D-1E is only an offline plan. No authenticated Gateway relay is approved.
+
+R23D-1F begins with a separate **PRE-APPLY read-only host planner**, not a deployer: `scripts/audit-v140-r23d1f-firewall-plan-readonly.py`.
+
+It performs:
+1. Recheck the already qualified R23D-0 topology and verify previous transient R23D-1B network/container are still absent using the R23D-1C source guard.
+2. Read `ip -j -4 route show table all` and `ip -j -4 address show`, inspect Docker network subnet inventory and the Linux interface list (bounded data sizes, no raw output). Choose one hardcoded candidate RFC1918 /28 block not overlapping these **observed** routes/address/subnets. A planner-negative only says no known overlap in these read sources, NOT full policy-routing/VPN/future Docker collision freedom.
+3. Reject any reuse of test Linux interface `br-r23dtrial`, the planned temporary network `homedocker_v140_r23d1f_trial`, the planned synthetic container name, or the currently unused `inet homedocker_r23d_guard` table. It does not allocate those names.
+4. Render the R23D-1E strict INPUT+FORWARD proposal **in memory only**, substitute the planned gateway/canary IPv4 pair and call **`nft --check --file -`**. A kernel grammar/netlink syntax check does not install any table/rule and does not prove packet-filter behavior. The script discards the generated policy, prints only fixed status flags (never IPs/subnets, host firewall rules, actual Docker networks, tokens, names from the host or the policy body).
+5. Never calls Docker network create/run/connect, nft add/delete, iptables writes, nginx reload, AIO/Trakt APIs, or any user-session login. There is intentionally **no `--apply` or `--confirm` option**. It will fail safely with `R23D1F_SAFE_DIAGNOSTIC` JSON for inventory/grammar problems; unknown errors are redacted.
+
+Expected success is `R23D1F_READONLY_NFT_SYNTAX_PASS` and `SYNTAX_CHECK_PASS_NOT_ENFORCED`, **NOT** `network_egress_firewall_verified=true`. Even if the test bridge's planned address is free right now, Docker may choose a different address later; an actual scoped firewall transaction must pin/inspect the subnet+ifname and verify all namespaces/routes and ownership. Before any active apply, design and test strict table ownership, automatic fail-safe cleanup that leaves the guard in place if a probe container could still transmit, explicit nft preflight and mandatory zero-credential permitted/denied host, LAN and IPv6 TCP probes. Do not use a live Jellyfin token, start the R23D relay, expose any client route or modify existing RC6/R23B/R23A/AIO/nginx.
+
+**Operator next action after green CI:** only run exact pinned R23D-1F **read-only planner**, then share its redacted JSON output. The active firewall/network experiment is a separate future R23D-1G action, never implicit from planner success.
