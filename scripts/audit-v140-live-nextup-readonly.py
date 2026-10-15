@@ -87,7 +87,9 @@ def run_phase(name, function):
         return function()
     except StageStop:
         raise
-    except (Stop, sqlite3.Error, OSError, ValueError, TypeError) as exc:
+    except Exception as exc:
+        # Includes the R19 loader's PreviewFailure imported from a separate
+        # module; no exception text, path or database value ever escapes.
         raise StageStop(name, safe_reason(exc)) from None
 
 def source_preflight(db_path):
@@ -317,8 +319,7 @@ def main():
             "api_write_requests": 0,
         }, indent=2), file=sys.stderr)
         sys.exit(1)
-    except (Stop, sqlite3.Error, OSError, ValueError, TypeError,
-            KeyboardInterrupt):
+    except (Exception, KeyboardInterrupt, EOFError):
         print(json.dumps({
             "audit": "R23B2A_SAFE_DIAGNOSTIC",
             "status": "STOP",
