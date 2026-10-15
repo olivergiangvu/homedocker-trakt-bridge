@@ -173,8 +173,11 @@ def docker_env():
 def launch(root, state):
     # Docker may acquire build-only base layers if not already cached;
     # no production container/images or Compose references are modified.
+    print("R23A_IMAGE_BUILD_STARTED", flush=True)
     execute("docker", "build", "--pull=false", "--tag", state["tag"], str(root),
             timeout=1500)
+    print("R23A_IMAGE_BUILD_COMPLETED", flush=True)
+    print("R23A_CREATING_PRIVATE_INTERNAL_NETWORK", flush=True)
     execute("docker", "network", "create", "--driver", "bridge",
             "--internal", "--label", "homedocker.phase=r23a",
             NETWORK, timeout=30)
@@ -192,6 +195,7 @@ def launch(root, state):
     for key, value in sorted(env.items()):
         argv.extend(["--env", f"{key}={value}"])
     argv.append(state["tag"])
+    print("R23A_STARTING_SINGLE_INTEGRATED_CONTAINER", flush=True)
     execute(*argv, timeout=35)
 
     # Health check from *inside* container works even if Docker internal
