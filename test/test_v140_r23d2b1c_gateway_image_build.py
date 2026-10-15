@@ -209,7 +209,8 @@ class GatewayOnlyBuildTests(unittest.TestCase):
 
     def test_main_failure_redacts_raw_error_credentials_and_routes(self):
         out=io.StringIO()
-        with mock.patch.object(m,"preflight",
+        with mock.patch("sys.argv",["gateway-build"]), \
+             mock.patch.object(m,"preflight",
                  side_effect=RuntimeError("SECRET TOKEN 10.1.2.3")), \
              redirect_stderr(out),self.assertRaises(SystemExit):
             m.main()
