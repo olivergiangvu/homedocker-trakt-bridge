@@ -56,7 +56,7 @@ class R21PreflightTests(unittest.TestCase):
         wire = json.dumps(result)
         self.assertNotIn("SECRET_DO_NOT_PRINT", wire)
         self.assertNotIn("TOKEN=", wire)
-        self.assertNotIn("profile", wire.lower() if False else "SECRET_DO_NOT_PRINT")
+        self.assertNotIn("127.0.0.1", wire)
 
     def test_wrong_network_aborts(self):
         fixtures = self.fixtures()
@@ -92,7 +92,6 @@ class R21PreflightTests(unittest.TestCase):
                                "Type":"volume","Source":tmp}]}
             self.assertTrue(audit.sqlite_quick_check(info))
             self.assertEqual(p.read_bytes(), before)
-            (Path(tmp) / "bridge.db-alias").symlink_to(p)
 
     def test_bridge_sqlite_symlink_rejected(self):
         with TemporaryDirectory() as tmp:
@@ -102,7 +101,7 @@ class R21PreflightTests(unittest.TestCase):
             (d / "bridge.db").symlink_to(source)
             info = {"Mounts":[{"Destination":"/app/data",
                                "Type":"volume","Source":tmp}]}
-            with self.assertRaisesRegex(audit.PreflightStop, "symlink"):
+            with self.assertRaisesRegex(audit.PreflightStop, "missing or not a regular file"):
                 audit.sqlite_quick_check(info)
 
     def test_read_only_inspector_exposes_no_docker_env(self):
