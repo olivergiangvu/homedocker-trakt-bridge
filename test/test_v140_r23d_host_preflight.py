@@ -14,6 +14,7 @@ def entry(name, *, running=True, image=None, network=None, ports=None):
         "Name": "/" + name,
         "State": {"Running": running},
         "Config": {"Image": image},
+        "Image": "sha256:" + "a"*64,
         "HostConfig": {
             "ReadonlyRootfs": True,
             "NetworkMode": network,
@@ -36,7 +37,8 @@ class R23DPreflightTests(unittest.TestCase):
             "aiostreams": entry("aiostreams", image=mod.AIO_IMAGE,
                                 ports=[(3240, 3000)]),
             "homedocker-resume-contract-canary": entry("homedocker-resume-contract-canary"),
-            mod.R23B: entry(mod.R23B, network=mod.R23B_NETWORK,
+            mod.R23B: entry(mod.R23B, image="homedocker-trakt-bridge:v140-r23a-e442ce461209",
+                            network=mod.R23B_NETWORK,
                             ports=[(17041, 7000),(17141,7101)]),
             mod.R23A: entry(mod.R23A, running=False),
         }
