@@ -17,6 +17,7 @@ from pathlib import Path
 import sys
 import time
 
+sys.dont_write_bytecode = True  # never create __pycache__ in the host checkout
 SOURCE = Path(__file__).with_name("audit-v140-client-ingress.py")
 spec = importlib.util.spec_from_file_location("v140_ingress_classify", SOURCE)
 core = importlib.util.module_from_spec(spec)
@@ -54,6 +55,7 @@ def compare(directory, before):
     missing_or_rotated = []
     oversized = []
     unreadable = []
+    new_log_names = set(after) - set(before)
     for name, (dev, ino, offset) in sorted(before.items()):
         path = after.get(name)
         if not path:
@@ -71,6 +73,11 @@ def compare(directory, before):
             if delta == 0:
                 continue
             with path.open("rb") as source:
+                if offset > 0:
+                    source.seek(offset - 1)
+                    aligned = source.read(1) == b"\\n"
+                else:
+                    aligned = True
                 source.seek(offset)
                 raw = source.read(delta)
         except OSError:
@@ -79,6 +86,8 @@ def compare(directory, before):
         # If the byte range ends mid-line, do not count that partial record.
         if raw and not raw.endswith(b"\n"):
             raw = raw.rsplit(b"\n", 1)[0] + b"\n" if b"\n" in raw else b""
+        if raw and not aligned:
+            raw = raw.split(b"\\n", 1)[1] if b"\\n" in raw else b""
         for line in raw.decode("utf-8", errors="replace").splitlines():
             row = parse_new_line(line)
             if row is None:
@@ -90,7 +99,7 @@ def compare(directory, before):
             hints[hint] += 1
             methods[method] += 1
 
-    complete = not (missing_or_rotated or oversized or unreadable)
+    complete = not (missing_or_rotated or oversized or unreadable or new_log_names)
     return {
         "audit": "V140_CLIENT_EXACT_APPEND_DELTA",
         "observation_complete": complete,
@@ -98,6 +107,7 @@ def compare(directory, before):
         "files_unchanged_or_appended": len(before)
             - len(missing_or_rotated) - len(oversized) - len(unreadable),
         "files_changed_or_rotated": len(missing_or_rotated),
+        "files_created_since_snapshot": len(new_log_names),
         "files_over_capacity": len(oversized),
         "files_unreadable": len(unreadable),
         "new_jellyfin_candidate_requests": sum(groups.values()),
