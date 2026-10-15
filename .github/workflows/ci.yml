@@ -141,6 +141,36 @@ jobs:
             | python3 -c 'import json,sys; x=json.load(sys.stdin); g=x["gateway"]; assert g["enabled"] is True; assert g["listening"] is True; assert g["productionRoutingQualified"] is False; assert g["resumeMode"] == "off"'
           echo "V140_SINGLE_BRIDGE_DASHBOARD_GATEWAY=PASS"
 
+      - name: Smoke-test R20 memory-only importer in sealed runtime container
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | docker run --rm -i \
+            --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --user 1000:1000 --pids-limit 32 --memory 128m \
+            --mount "type=bind,source=$PWD,target=/audit,readonly" \
+            --mount "type=tmpfs,destination=/app/data,tmpfs-size=1048576" \
+            --entrypoint /usr/local/bin/node \
+            homedocker-trakt-bridge:ci \
+            /audit/scripts/verify-v140-legacy-import-memory.mjs \
+          | python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["status"] == "OFFLINE_MEMORY_IMPORT_PASS"; assert r["imported_show_mappings"] == 15; assert r["alias_groups"] == 1; assert r["migration_persisted_to_production"] is False; assert r["sqlite_writes"] == 0; print("R20_OFFLINE_MEMORY_DOCKER=PASS")'
+          import json
+          import time
+          now = int(time.time())
+          rows = {str(i+1): {"traktImdb":"tt" + str(i+10000000),
+                             "preferredMetaId":"tt" + str(i+10000000),
+                             "updatedAt":now - 300}
+                  for i in range(14)}
+          rows["263102"] = {"traktImdb":"tt44051354",
+                            "preferredMetaId":"tt44094505", "updatedAt":now - 300}
+          print(json.dumps({
+              "profileId":"a"*24,
+              "legacy":{"shows":rows},
+              "expected":{"shows":15, "aliases":1}
+          }))
+          PY
+
       - name: Enforce runtime image-size budget
         shell: bash
         run: |
