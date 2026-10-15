@@ -26,6 +26,7 @@ import json
 from pathlib import Path
 import re
 import sys
+import threading
 from urllib import error, parse, request
 
 HERE = Path(__file__).resolve().parent
@@ -157,6 +158,8 @@ def fetch_aio(path, token, agent, max_bytes, timeout):
         return 502, b'{"error":"upstream_unavailable"}'
 
 def handler_factory(allowed_ip, expected_host, upstream_get=fetch_aio):
+    # Protect AIO from concurrent gateway bursts or a buggy client.
+    slots = threading.BoundedSemaphore(6)
     class Handler(BaseHTTPRequestHandler):
         server_version = "R23DGetRelay"
         sys_version = ""
@@ -199,14 +202,23 @@ def handler_factory(allowed_ip, expected_host, upstream_get=fetch_aio):
             authorization = self.headers.get_all("X-Emby-Authorization", [])
             if len(authorization) > 1:
                 return self.deny(400)
-            agent = authorization[0] if authorization else AGENT
-            if len(agent) > 512 or any(ord(c) < 32 or ord(c) == 127 for c in agent):
+            if authorization and (
+                len(authorization[0]) > 512
+                or any(ord(c) < 32 or ord(c) == 127 for c in authorization[0])
+            ):
                 return self.deny(400)
+            # Session token is the ONLY user-supplied upstream credential.
+            # Discard caller-controlled X-Emby-Authorization; use fixed agent.
             path, cap, deadline = scope
+            if not slots.acquire(blocking=False):
+                return self.reply(429, b'{"error":"relay_capacity"}')
             try:
-                status, body = upstream_get(path, tokens[0], agent, cap, deadline)
-            except Exception:
-                return self.reply(502, b'{"error":"upstream_unavailable"}')
+                try:
+                    status, body = upstream_get(path, tokens[0], AGENT, cap, deadline)
+                except Exception:
+                    return self.reply(502, b'{"error":"upstream_unavailable"}')
+            finally:
+                slots.release()
             if status not in (200, 400, 401, 403, 404, 405, 429, 500, 502, 503):
                 return self.deny(502)
             if not isinstance(body, bytes) or len(body) > cap:
