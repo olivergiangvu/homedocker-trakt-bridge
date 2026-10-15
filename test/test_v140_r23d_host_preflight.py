@@ -67,6 +67,41 @@ class R23DPreflightTests(unittest.TestCase):
         self.assertFalse(out["gateway_authenticated_live_normalization_proven"])
         self.assertFalse(out["host_relay_running"])
 
+    def test_redacted_stop_reveals_only_approved_fixed_stage_and_reason(self):
+        diag = mod.sanitized_diagnostic(mod.Stop(
+            "R23B_image_reference_not_immutable_parent"))
+        self.assertEqual(diag["status"], "STOP")
+        self.assertEqual(diag["stage"], "CANARY_IMAGE_PROVENANCE")
+        self.assertEqual(diag["reason"], "R23B_image_reference_not_immutable_parent")
+        self.assertEqual(diag["production_modifications"], 0)
+        self.assertFalse(diag["aio_get_or_login_attempted"])
+        self.assertEqual(
+            diag["next_action"], "DO_NOT_DEPLOY_R23D_CANARY_OR_RELAY")
+
+    def test_never_echoes_raw_runtime_errors_or_potential_secrets(self):
+        secret = "username=confidential_token=hidden"
+        for failure in (mod.Stop(secret), RuntimeError(secret),
+                        OSError(secret), ValueError(secret)):
+            diag = mod.sanitized_diagnostic(failure)
+            self.assertEqual(diag["reason"], "UNKNOWN_HOST_RUNTIME_FAILURE")
+            self.assertEqual(diag["stage"], "UNCLASSIFIED")
+            self.assertNotIn(secret, str(diag))
+        self.assertTrue(all(
+            key and key.replace("_", "").isalnum()
+            for key in mod.SAFE_DIAGNOSTIC_STAGES
+        ))
+
+    def test_each_known_readonly_stop_has_allowed_stage(self):
+        with mock.patch.object(mod, "health", return_value=None):
+            try:
+                mod.audit()
+            except mod.Stop as exc:
+                diag = mod.sanitized_diagnostic(exc)
+                self.assertEqual(diag["stage"], "CANARY_HEALTH")
+                self.assertEqual(diag["reason"], "R23B_localhost_health_unavailable")
+            else:
+                self.fail("R23D0 must stop on failed local health")
+
     def test_rejects_media_network_or_unread_only_canary(self):
         self.fixture[mod.R23B]["NetworkSettings"]["Networks"]["media_core_net"] = {}
         with self.assertRaises(mod.Stop):
