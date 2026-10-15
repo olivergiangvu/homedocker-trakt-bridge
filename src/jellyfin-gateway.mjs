@@ -240,8 +240,23 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
   // only sees /Items/{SeriesId} after /Users/Me matches that user, and never
   // contains tokens or source watch-state rows.
   const seriesCache = new Map();
+  // Transient listener-level counters only. No request paths, usernames,
+  // auth headers, tokens, item IDs, titles or watch positions are retained.
+  const metrics = {
+    nextUpRequests: 0,
+    resumePassthroughRequests: 0,
+    nextUpNormalizedResponses: 0,
+    nextUpUnchangedResponses: 0,
+    nextUpRemovedItems: 0,
+    failOpenNormalizationErrors: 0,
+    upstreamTransportFailures: 0,
+    upstreamNon200Responses: 0,
+    responseFailures: 0,
+    oversizedPassThroughResponses: 0,
+    invalidJsonPassThroughResponses: 0,
+  };
 
-  return http.createServer(async (req, res) => {
+  const server = http.createServer(async (req, res) => {
     // Health is for local nginx/docker probes. Do not leak config/credentials.
     if (req.method === 'GET' && req.url === '/health') {
       return sendJson(res, 200, { status: 'ok', adapter: 'nextup-only' });
@@ -261,6 +276,9 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
       return sendJson(res, 405, { error: 'method_not_allowed' });
     }
 
+    if (nextUp) metrics.nextUpRequests++;
+    else metrics.resumePassthroughRequests++;
+
     const headers = outboundHeaders(req);
     const destination = upstreamPath(options.base, requested.pathname, requested.search);
     let upstream;
@@ -270,12 +288,17 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
         signal: AbortSignal.timeout(NETWORK_TIMEOUT_MS),
       });
     } catch {
+      metrics.upstreamTransportFailures++;
       return sendJson(res, 502, { error: 'upstream_unavailable' });
     }
     try {
       const bytes = await readBounded(upstream, res);
-      if (!bytes) return; // large response streamed as-is
+      if (!bytes) {
+        metrics.oversizedPassThroughResponses++;
+        return; // large response streamed as-is
+      }
       if (upstream.status !== 200 || resumePassthrough) {
+        if (upstream.status !== 200) metrics.upstreamNon200Responses++;
         // Resume is ALWAYS a byte-for-byte representation passthrough:
         // preserve Items, pagination, TotalRecordCount and every movie/resume.
         // AIO's reported TotalRecordCount may be a fetched-prefix count.
@@ -285,6 +308,7 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
       let json;
       try { json = JSON.parse(bytes.toString('utf8')); }
       catch {
+        metrics.invalidJsonPassThroughResponses++;
         responseHeaders(res, upstream, false);
         return res.end(bytes);
       }
@@ -298,15 +322,30 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
           const graph = loadVerifiedIdentityGraph(db, options.profileId);
           filtered = await normalizeForUser(json, req, graph, options, fetchImpl, seriesCache, now);
         } catch {
+          metrics.failOpenNormalizationErrors++;
           filtered = json; // Fail open; never hide an ambiguous episode.
         }
+      }
+      if (filtered !== json) {
+        metrics.nextUpNormalizedResponses++;
+        metrics.nextUpRemovedItems += Math.max(
+          0, (json.Items?.length ?? 0) - (filtered.Items?.length ?? 0)
+        );
+      } else {
+        metrics.nextUpUnchangedResponses++;
       }
       responseHeaders(res, upstream, filtered !== json);
       const output = filtered === json ? bytes : Buffer.from(JSON.stringify(filtered));
       return res.end(output);
     } catch {
+      metrics.responseFailures++;
       if (res.headersSent) return res.destroy();
       return sendJson(res, 502, { error: 'upstream_response_failure' });
     }
   });
+
+  // Admin/profile dashboard accesses this method from the owning Bridge
+  // process only; it is NOT a public HTTP endpoint on the gateway.
+  server.gatewayMetricsSnapshot = () => ({ ...metrics });
+  return server;
 }
