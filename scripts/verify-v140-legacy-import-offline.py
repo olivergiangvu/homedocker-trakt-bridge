@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Read-only live Bridge legacy snapshot → actual v1.4 JS importer IN MEMORY.
 
-Requires Node.js >= 20 available on the HomeDocker host (never downloads it).
+Uses host Node.js >= 20 by default; explicit --runtime isolated-docker\nuses the already pinned, locally running RC6 image in an ephemeral offline container (no image pulls).
 Reads only ONE connected profile's legacy identity mapping through SQLite
 mode=ro+query_only, verifies expiry and absence of an existing graph. Pipes
 legacy mappings directly to the JS importer via stdin (never command-line
 arguments, tempfile or stdout). JS fake cache uses only RAM. Does not expose
 OAuth token values, names, credentials, IMDb IDs or raw identity rows.
 
-No database/other file writes, no Docker/API calls, no Trakt/AIO network.
+No database/other file writes or Trakt/AIO network. The optional Docker\nrunner transiently creates a tightly isolated --rm container, then removes it.
 Success does NOT authorize future production migration, Gateway activation
 or media history changes.
 """
@@ -16,6 +16,7 @@ import argparse
 from contextlib import closing
 import importlib.util
 import json
+import re
 from pathlib import Path
 import shutil
 import sqlite3
@@ -82,16 +83,52 @@ def load_snapshot(db_path):
             raise ValueError("legacy_evidence_exceeds_limit")
         return result
 
-def audit(db_path, node=None):
-    node = node or shutil.which("node")
-    if not node:
-        raise RuntimeError("node_runtime_missing_no_docker_action_taken")
+def docker_runner():
+    # Explicit opt-in, ephemeral offline container, using the image ID of
+    # the ALREADY running RC6 container. No pulls, production bind mounts,
+    # secrets, ports, network or persistent storage.
+    inspected = subprocess.run(
+        ["docker", "inspect", "--format",
+         "{{.Image}}|{{.State.Running}}", "trakt-bridge"],
+        text=True, capture_output=True, timeout=15, check=False,
+    )
+    if inspected.returncode != 0:
+        raise RuntimeError("production_image_inspection_unavailable")
+    line = inspected.stdout.strip().split("|")
+    if len(line) != 2 or not re.fullmatch(r"sha256:[0-9a-f]{64}", line[0]) \
+            or line[1] != "true":
+        raise RuntimeError("production_runtime_not_qualified")
+    image_id = line[0]
+    return [
+        "docker", "run", "--rm", "-i",
+        "--name", "trakt-bridge-r20-offline-check",
+        "--network", "none", "--read-only",
+        "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+        "--user", "1000:1000", "--pids-limit", "32", "--memory", "128m",
+        "--cpus", "1",
+        "--mount", "type=bind,source=" + str(ROOT.parent)
+                   + ",target=/audit,readonly",
+        "--mount", "type=tmpfs,destination=/app/data,tmpfs-size=1048576",
+        "--entrypoint", "/usr/local/bin/node",
+        image_id, "/audit/scripts/verify-v140-legacy-import-memory.mjs",
+    ]
+
+def audit(db_path, node=None, runtime="host-node"):
+    if runtime not in ("host-node", "isolated-docker"):
+        raise ValueError("unsupported_offline_runtime")
     if not RUNNER.is_file() or RUNNER.is_symlink():
         raise RuntimeError("missing_offline_js_runner")
+    if runtime == "host-node":
+        node = node or shutil.which("node")
+        if not node:
+            raise RuntimeError("node_runtime_missing_use_explicit_docker_runtime")
+        cmd = [node, str(RUNNER)]
+    else:
+        cmd = docker_runner()
     evidence = load_snapshot(db_path)
     process = subprocess.run(
-        [node, str(RUNNER)], input=json.dumps(evidence),
-        text=True, capture_output=True, timeout=30, check=False
+        cmd, input=json.dumps(evidence),
+        text=True, capture_output=True, timeout=45, check=False
     )
     if process.returncode != 0:
         # Do not echo stderr because any third-party diagnostic may carry IDs.
@@ -127,9 +164,14 @@ def main():
         "/var/lib/docker/volumes/"
         "homedocker-trakt-bridge_trakt_bridge_data/_data/bridge.db"
     ))
+    parser.add_argument("--runtime", choices=("host-node", "isolated-docker"),
+                        default="host-node",
+                        help="isolated-docker starts a temporary --rm --network none "
+                             "container from the already running RC6 image; "
+                             "no other Docker changes")
     args = parser.parse_args()
     try:
-        print(json.dumps(audit(args.bridge_db), indent=2))
+        print(json.dumps(audit(args.bridge_db, runtime=args.runtime), indent=2))
     except (sqlite3.Error, OSError, ValueError, RuntimeError,
             subprocess.TimeoutExpired, json.JSONDecodeError):
         print("STOP: R20 offline memory audit unavailable; no production changes",
