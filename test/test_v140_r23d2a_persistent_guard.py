@@ -133,6 +133,128 @@ class NFTGuardAttestationTests(unittest.TestCase):
                           "from urllib", "import socket", "aio_get_token"):
             self.assertNotIn(forbidden,source)
 
+FINAL_IMAGE="sha256:"+"a"*64
+FINAL_ID="b"*64
+FINAL_EXPECTED={**SCOPE,"expected_image_id":FINAL_IMAGE}
+
+def final_docker_fixture():
+    container=[{
+        "Id":FINAL_ID,
+        "Name":"/"+m.FINAL_CONTAINER,
+        "Image":FINAL_IMAGE,
+        "State":{"Running":True},
+        "Config":{
+            "Image":"homedocker-trakt-bridge:v140-r23d-123456abcdef",
+            "User":"node",
+            "Labels":{"homedocker.phase":m.FINAL_PHASE},
+        },
+        "HostConfig":{
+            "NetworkMode":m.FINAL_NETWORK,
+            "ReadonlyRootfs":True,
+            "Privileged":False,
+            "CapAdd":None,
+            "CapDrop":["ALL"],
+            "SecurityOpt":["no-new-privileges"],
+            "PortBindings":{
+                "7101/tcp":[{"HostIp":"127.0.0.1","HostPort":"17145"}]
+            },
+        },
+        "NetworkSettings":{"Networks":{
+            m.FINAL_NETWORK:{"IPAddress":SCOPE["canary"]}}},
+        "Mounts":[{"Type":"bind","Destination":"/app/identity-proof.json",
+                   "RW":False}],
+    }]
+    network=[{
+        "Name":m.FINAL_NETWORK,
+        "Driver":"bridge",
+        "Internal":False,
+        "EnableIPv6":False,
+        "Options":{
+            "com.docker.network.bridge.name":SCOPE["bridge"],
+            "com.docker.network.bridge.enable_ip_masquerade":"false",
+        },
+        "Labels":{"homedocker.phase":m.FINAL_PHASE},
+        "IPAM":{"Config":[{
+            "Subnet":SCOPE["subnet"],"Gateway":SCOPE["host_gateway"]
+        }]},
+        "Containers":{
+            FINAL_ID:{"Name":m.FINAL_CONTAINER,
+                      "IPv4Address":SCOPE["canary"]+"/28"}
+        },
+    }]
+    return container,network
+
+class FinalDockerScopeTests(unittest.TestCase):
+    def test_exact_single_peer_final_bridge_plus_nft_state_accepted(self):
+        c,n=final_docker_fixture()
+        self.assertTrue(m.check_final_docker_scope(c,n,**{
+            k:FINAL_EXPECTED[k] for k in
+            ("bridge","subnet","host_gateway","canary","expected_image_id")
+        }))
+        self.assertTrue(m.check_persistent_state(nft_fixture(),c,n,**FINAL_EXPECTED))
+
+    def test_refuses_any_more_privileged_or_extra_network_container(self):
+        changes=(
+            lambda c,n:c[0]["State"].update({"Running":False}),
+            lambda c,n:c[0]["Config"].update({"User":"root"}),
+            lambda c,n:c[0]["HostConfig"].update({"ReadonlyRootfs":False}),
+            lambda c,n:c[0]["HostConfig"].update({"Privileged":True}),
+            lambda c,n:c[0]["HostConfig"].update({"CapDrop":[]}),
+            lambda c,n:c[0]["HostConfig"].update({"CapAdd":["NET_ADMIN"]}),
+            lambda c,n:c[0]["HostConfig"].update({"SecurityOpt":[]}),
+            lambda c,n:c[0]["HostConfig"].update({"NetworkMode":"host"}),
+            lambda c,n:c[0]["HostConfig"]["PortBindings"].update({
+                "7000/tcp":[{"HostIp":"0.0.0.0","HostPort":"7000"}]}),
+            lambda c,n:c[0]["HostConfig"]["PortBindings"]["7101/tcp"][0].update({
+                "HostIp":"0.0.0.0"}),
+            lambda c,n:c[0]["Mounts"].append({"Type":"volume","RW":True}),
+            lambda c,n:c[0]["Mounts"][0].update({"RW":True}),
+            lambda c,n:c[0]["NetworkSettings"]["Networks"].update({
+                "media_core_net":{"IPAddress":"172.17.0.2"}}),
+            lambda c,n:c[0].update({"Image":"sha256:"+"c"*64}),
+            lambda c,n:c[0]["Config"].update({"Image":"unverified:latest"}),
+            lambda c,n:c[0]["Config"]["Labels"].update({"homedocker.phase":"production"}),
+        )
+        for i,change in enumerate(changes):
+            c,n=final_docker_fixture()
+            change(c,n)
+            with self.subTest(i=i),self.assertRaises(m.Stop):
+                m.check_persistent_state(nft_fixture(),c,n,**FINAL_EXPECTED)
+
+    def test_network_label_peer_subnet_bridge_or_ipv6_change_denied(self):
+        changes=(
+            lambda c,n:n[0].update({"Name":"media_core_net"}),
+            lambda c,n:n[0].update({"Driver":"macvlan"}),
+            lambda c,n:n[0].update({"Internal":True}),
+            lambda c,n:n[0].update({"EnableIPv6":True}),
+            lambda c,n:n[0]["Options"].update({
+                "com.docker.network.bridge.name":"docker0"}),
+            lambda c,n:n[0]["Options"].update({
+                "com.docker.network.bridge.enable_ip_masquerade":"true"}),
+            lambda c,n:n[0]["Labels"].update({"homedocker.phase":"untrusted"}),
+            lambda c,n:n[0]["IPAM"]["Config"][0].update({
+                "Gateway":"172.31.254.3"}),
+            lambda c,n:n[0]["Containers"].update({
+                "c"*64:{"Name":"foreign_canary","IPv4Address":"172.31.254.3/28"}}),
+            lambda c,n:n[0]["Containers"][FINAL_ID].update({
+                "IPv4Address":"172.31.254.3/28"}),
+        )
+        for i,change in enumerate(changes):
+            c,n=final_docker_fixture()
+            change(c,n)
+            with self.subTest(i=i),self.assertRaises(m.Stop):
+                m.check_persistent_state(nft_fixture(),c,n,**FINAL_EXPECTED)
+
+    def test_nft_rules_change_denied_even_with_valid_docker_identity(self):
+        c,n=final_docker_fixture()
+        nft=nft_fixture()
+        nft["nftables"][4]["rule"]["expr"][3]["match"]["right"]=22
+        with self.assertRaises(m.Stop):
+            m.check_persistent_state(nft,c,n,**FINAL_EXPECTED)
+        with self.assertRaises(m.Stop):
+            m.check_persistent_state(nft_fixture(),c,n,
+                **{**FINAL_EXPECTED,"expected_image_id":"untrusted:latest"})
+
 class GuardLifetimeGateTests(unittest.TestCase):
     def test_gate_is_closed_before_start_and_accepts_fresh_checks_only(self):
         calls=[]
