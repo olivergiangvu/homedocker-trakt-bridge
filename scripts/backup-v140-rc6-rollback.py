@@ -143,6 +143,17 @@ def digest(path):
             h.update(chunk)
     return h.hexdigest()
 
+def logical_fingerprint(path):
+    """SHA-256 of the complete SQLite logical dump; never print/return rows."""
+    with closing(sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro",
+                                 uri=True, timeout=8)) as conn:
+        conn.execute("PRAGMA query_only=ON")
+        result = hashlib.sha256()
+        for statement in conn.iterdump():
+            result.update(statement.encode("utf-8"))
+            result.update(b"\n")
+        return result.hexdigest()
+
 def check_integrity(path):
     with closing(sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro",
                                  uri=True, timeout=8)) as conn:
@@ -211,10 +222,8 @@ def snapshot(src, root=BACKUP_ROOT, stamp=None):
     os.chmod(rehearsal, 0o600)
     if check_integrity(rehearsal) != original_counts:
         raise Stop("restore rehearsal row-count mismatch")
-    if digest(db_copy) != digest(rehearsal):
-        # SQLite file bytes can vary after an online restore; database equality
-        # is established by integrity/schema/data count, not byte comparison.
-        pass
+    if logical_fingerprint(db_copy) != logical_fingerprint(rehearsal):
+        raise Stop("restore rehearsal logical content differs from snapshot")
     rehearsal.unlink()
     manifest = {
         "schema_version": 1,
@@ -246,6 +255,7 @@ def snapshot(src, root=BACKUP_ROOT, stamp=None):
         "snapshot_contains_private_secrets": True,
         "bridge_sqlite_integrity": "ok",
         "rehearsal_integrity": "ok",
+        "rehearsal_logical_content_match": True,
         "compose_files_copied": len(src["compose"]),
         "env_copied": True,
         "rollback_image_recorded": True,
