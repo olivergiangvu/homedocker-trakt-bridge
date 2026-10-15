@@ -161,3 +161,66 @@ test('profile-only JSON status API requires existing setup key and is non-mutati
   assert.equal((await secondary.json()).identity.aliasGroups, 0);
   assert.equal(calls.peek, 1);
 });
+
+test('existing admin and per-profile HTML pages render integrated gateway panel', async t => {
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { BridgeDb } = await import('../src/db.mjs');
+
+  const directory = mkdtempSync(join(tmpdir(), 'trakt-gateway-dashboard-'));
+  const { config } = context({
+    dataDir: directory,
+    dbPath: join(directory, 'bridge.db'),
+    displayTimeZone: 'Asia/Ho_Chi_Minh',
+    pullIdentityMode: 'trakt',
+    bulkSingleDedupeSeconds: 300,
+    pullCacheTtlSeconds: 60,
+    pullHintSeconds: 60,
+  });
+  const db = new BridgeDb(config);
+  t.after(() => {
+    db.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
+  db.createProfile(OWNER, 'Main Trakt Profile');
+  db.cacheSet('identity-graph:v1:' + OWNER, {
+    revision: 1,
+    shows: {
+      '263102': {
+        canonicalImdb: CANONICAL, aliases: [ALIAS],
+        tmdb: 276470,
+      },
+    },
+    conflicts: [],
+  }, 86400);
+
+  const server = createServer({ config, db, trakt: null });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => server.close());
+  const base = 'http://127.0.0.1:' + server.address().port;
+
+  const adminMissing = await fetch(base + '/setup');
+  assert.equal(adminMissing.status, 404);
+  const admin = await fetch(base + '/setup?key='
+    + encodeURIComponent(config.adminKey));
+  assert.equal(admin.status, 200);
+  const adminHtml = await admin.text();
+  assert.match(adminHtml, /AIO Identity Gateway/);
+  assert.match(adminHtml, /v1\.4 target/);
+  assert.match(adminHtml, /Verified alias groups/);
+
+  const key = deriveProfileKey(config.bridgeSecret, 'setup', OWNER);
+  const unauthorized = await fetch(base + '/u/' + OWNER + '/setup');
+  assert.equal(unauthorized.status, 404);
+  const profile = await fetch(base + '/u/' + OWNER + '/setup?key='
+    + encodeURIComponent(key));
+  assert.equal(profile.status, 200);
+  const profileHtml = await profile.text();
+  assert.match(profileHtml, /AIO Identity Gateway/);
+  assert.match(profileHtml, /Verified aliases/);
+  assert.match(profileHtml, /Read-only JSON diagnostics/);
+  assert.match(profileHtml, /Production client routing is not qualified/);
+  assert.ok(!profileHtml.includes(USER));
+});
