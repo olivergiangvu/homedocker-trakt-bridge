@@ -77,7 +77,7 @@ def canary_topology():
     mounts = original.get("Mounts") or []
     # Only one nonsecret identity proof file can be mounted read-only; reject
     # production DB, AIO volumes and arbitrary bind/volume mounts.
-    if len(mounts) != 1 or mounts[0].get("Destination") != "/app/identity-proof.json":
+    if len(mounts) != 1 or mounts[0].get("Destination") != "/run/identity-proof.json":
         raise Stop("r23d_proof_mount_unexpected")
     if mounts[0].get("RW") or mounts[0].get("Type") != "bind":
         raise Stop("r23d_proof_mount_not_readonly")
