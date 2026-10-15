@@ -71,6 +71,19 @@ class RelaySecurityTests(unittest.TestCase):
         con.close()
         return status, body
 
+    def test_relay_startup_unconditionally_refuses_unaudited_persistent_nft_guard(self):
+        # A short-lived synthetic nft PASS cannot authorize a real AIO token.
+        with self.assertRaisesRegex(
+                relay.Stop, "R23D_PERSISTENT_NFT_GUARD_NOT_YET_ATTESTED"):
+            relay.require_persistent_guard_attestation()
+        with mock.patch("sys.argv", [
+            "relay", "--confirm", "R23D_TEMPORARY_AIO_GET_ONLY_RELAY"
+        ]), mock.patch.object(relay, "canary_topology",
+                             side_effect=AssertionError("NEVER INSPECT/START")), \
+             self.assertRaisesRegex(relay.Stop,
+                "R23D_PERSISTENT_NFT_GUARD_NOT_YET_ATTESTED"):
+            relay.main()
+
     def test_only_get_allowed_paths_and_bound_request_size(self):
         for path in [
             "/jellyfin/Users/Me",
