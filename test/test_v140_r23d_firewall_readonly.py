@@ -56,14 +56,19 @@ class FirewallReadOnlyTests(unittest.TestCase):
                 module.verify_precheck()
         self.assertEqual(module.PRECHECK.name, "audit-v140-r23d-host-preflight.py")
 
-    def test_generic_capability_failure_must_not_print_rules_or_token(self):
+    def test_unexpected_tool_failure_is_sanitized_by_cli(self):
+        import io
+        from contextlib import redirect_stderr
         hostile = "X-Emby-Token=untrusted auth 10.0.0.1"
-        with mock.patch.object(module,"probe",side_effect=RuntimeError(hostile)):
-            with self.assertRaises(RuntimeError):
-                module.firewall_capabilities()
-        # The CLI catches exceptions only when explicitly classified; never
-        # print an uncaught exception with embedded external tool text.
-        self.assertFalse(module.firewall_capabilities.__doc__ is None)
+        err = io.StringIO()
+        with mock.patch.object(module, "verify_precheck", return_value=True), \
+             mock.patch.object(module, "probe", side_effect=RuntimeError(hostile)), \
+             redirect_stderr(err), self.assertRaises(SystemExit) as exited:
+            module.main()
+        self.assertEqual(exited.exception.code, 1)
+        self.assertNotIn(hostile, err.getvalue())
+        self.assertIn("R23D1A_SAFE_DIAGNOSTIC", err.getvalue())
+        self.assertIn("production_modifications", err.getvalue())
 
 if __name__ == "__main__":
     unittest.main()
