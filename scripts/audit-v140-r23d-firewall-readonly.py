@@ -100,7 +100,8 @@ def main():
         result = firewall_capabilities()
         print(json.dumps(result, indent=2))
         print("R23D1A_CAPABILITY_SURVEY_COMPLETE")
-    except (Stop, OSError, ValueError, TypeError, KeyError):
+    except Exception:
+        # Diagnostics are a fixed envelope; never copy raw command/system text.
         print(json.dumps({
             "audit": "R23D1A_SAFE_DIAGNOSTIC",
             "status": "STOP",
