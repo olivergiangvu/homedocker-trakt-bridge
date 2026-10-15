@@ -36,6 +36,7 @@ jobs:
           python3 -m py_compile scripts/preview-v140-legacy-import.py
           python3 -m py_compile scripts/verify-v140-legacy-import-offline.py
           python3 -m py_compile scripts/audit-v140-pilot-readiness.py
+          python3 -m py_compile scripts/backup-v140-rc6-rollback.py
           node --check scripts/verify-v140-legacy-import-memory.mjs
           python3 -m py_compile scripts/audit-dangling-image-ownership.py
           python3 -m py_compile scripts/publish-v1.3.0-tag.py
