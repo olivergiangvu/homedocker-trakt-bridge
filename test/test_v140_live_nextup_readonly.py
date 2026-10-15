@@ -124,6 +124,11 @@ class R23B2LiveTests(unittest.TestCase):
         self.assertEqual(app.item_imdb("../injection", "X"*40),
                          ("invalid_id", None))
 
+    def test_missing_stale_series_metadata_is_reported_not_claimed(self):
+        with mock.patch.object(app, "fixed_get", return_value=(None, 2)):
+            status, imdb = app.item_imdb("f" * 32, "X" * 40)
+        self.assertEqual((status, imdb), ("metadata_404", None))
+
     def test_expired_legacy_source_rejected(self):
         with TemporaryDirectory() as root:
             path = make_db(root)
