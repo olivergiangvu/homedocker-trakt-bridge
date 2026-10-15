@@ -58,6 +58,21 @@ export function createMetadataLimiter(maxActive = MAX_METADATA_CONCURRENCY, maxW
   };
 }
 const NETWORK_TIMEOUT_MS = 8000;
+const NEXTUP_TIMEOUT_MAX_MS = 20000;
+
+export function validatedNextUpTimeoutMs(value = NETWORK_TIMEOUT_MS) {
+  if (!Number.isSafeInteger(value) || value < NETWORK_TIMEOUT_MS
+      || value > NEXTUP_TIMEOUT_MAX_MS) {
+    throw new Error('NextUp timeout must be an integer between 8000 and 20000 ms');
+  }
+  return value;
+}
+
+// The opt-in extension applies ONLY to the initial /Shows/NextUp GET.
+// Authenticated /Users/Me, per-series metadata and Resume stay at 8000ms.
+export function upstreamTimeoutForRoute(options, isNextUp) {
+  return isNextUp ? options.nextUpTimeoutMs : NETWORK_TIMEOUT_MS;
+}
 const SERIES_METADATA_TTL_MS = 5 * 60 * 1000;
 const MAX_SERIES_CACHE = 128;
 const LEGACY_RESUME = /^\/Users\/[A-Za-z0-9_-]{8,128}\/Items\/Resume$/;
@@ -95,6 +110,9 @@ export function validateGatewayConfig(config) {
     userId: config.jellyfinGatewayUserId,
     profileId: config.jellyfinGatewayProfileId,
     resumePassThrough: config.jellyfinGatewayResumePassThrough === true,
+    nextUpTimeoutMs: validatedNextUpTimeoutMs(
+      config.jellyfinGatewayNextUpTimeoutMs ?? NETWORK_TIMEOUT_MS
+    ),
   };
 }
 
@@ -336,7 +354,7 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
     try {
       upstream = await fetchImpl(destination, {
         method: 'GET', headers, redirect: 'manual',
-        signal: AbortSignal.timeout(NETWORK_TIMEOUT_MS),
+        signal: AbortSignal.timeout(upstreamTimeoutForRoute(options, nextUp)),
       });
     } catch {
       metrics.upstreamTransportFailures++;
