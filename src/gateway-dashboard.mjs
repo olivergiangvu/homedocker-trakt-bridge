@@ -21,6 +21,23 @@ export function buildGatewayDashboardStatus({ db, config, profileId, gateway = n
   const listening = mapped && configured && gateway?.listening === true;
   const mappingReady = mapped
     && /^[A-Za-z0-9_-]{8,128}$/.test(config.jellyfinGatewayUserId || '');
+  const telemetry = mapped && listening
+    && typeof gateway?.gatewayMetricsSnapshot === 'function'
+    ? gateway.gatewayMetricsSnapshot() : null;
+  const safeCount = (name) => Number.isSafeInteger(telemetry?.[name])
+    && telemetry[name] >= 0 ? telemetry[name] : 0;
+  const metrics = telemetry ? {
+    scope: 'listener_wide_since_restart',
+    nextUpRequests: safeCount('nextUpRequests'),
+    resumePassthroughRequests: safeCount('resumePassthroughRequests'),
+    nextUpNormalizedResponses: safeCount('nextUpNormalizedResponses'),
+    nextUpUnchangedResponses: safeCount('nextUpUnchangedResponses'),
+    nextUpRemovedItems: safeCount('nextUpRemovedItems'),
+    failOpenNormalizationErrors: safeCount('failOpenNormalizationErrors'),
+    upstreamTransportFailures: safeCount('upstreamTransportFailures'),
+    upstreamNon200Responses: safeCount('upstreamNon200Responses'),
+    responseFailures: safeCount('responseFailures'),
+  } : null;
   const state = !configured ? 'disabled'
     : !mapped ? 'not_mapped_to_this_profile'
       : !mappingReady ? 'mapping_incomplete'
@@ -47,7 +64,8 @@ export function buildGatewayDashboardStatus({ db, config, profileId, gateway = n
       quarantinedConflicts: graph.conflicts.length,
     },
     productionRoutingQualified: false,
+    telemetry: metrics,
     viewOnly: true,
-    upstreamWatchHistoryWrites: 0,
+    dashboardMutatesWatchHistory: false,
   };
 }
