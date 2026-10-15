@@ -54,7 +54,7 @@ async function fixture(t, {
   enabled = true, expectedUser = USER, metadataFails = false,
   nextUp = reply, graph = true, upstreamError = false,
   upstreamPrefix = '', resumeEnabled = false,
-  resumeUpstreamStatus = 200,
+  resumeUpstreamStatus = 200, metadataDelayMs = 0,
 } = {}) {
   const hits = [];
   const upstream = await serve((req, res) => {
@@ -103,10 +103,16 @@ async function fixture(t, {
     const match = route?.match(/^\/Items\/(seriesCanon|seriesOld)$/);
     if (match) {
       if (metadataFails) return response(res, 500, { error: 'metadata_down' });
-      return response(res, 200, {
+      const payload = {
         Type: 'Series', Id: match[1],
         ProviderIds: { Imdb: match[1] === 'seriesOld' ? 'tt44094505' : 'tt44051354' },
-      });
+      };
+      if (metadataDelayMs > 0) {
+        setTimeout(() => response(res, 200, payload), metadataDelayMs);
+      } else {
+        response(res, 200, payload);
+      }
+      return;
     }
     return response(res, 404, { error: 'no_mock_route' });
   });
@@ -427,4 +433,36 @@ test('Gateway metrics are in-memory, aggregate-only, and not public HTTP routes'
   }
   const endpoint = await fetch(base + '/gateway/metrics');
   assert.equal(endpoint.status, 404);
+});
+
+test('concurrent NextUp requests share only verified same-user metadata lookups', async t => {
+  const { base, hits } = await fixture(t, { metadataDelayMs: 60 });
+  const auth = { headers: { 'X-Emby-Token': AIO_TOKEN } };
+  const replies = await Promise.all(Array.from({ length: 5 }, () =>
+    fetch(base + '/Shows/NextUp?Limit=20', auth)
+      .then(async r => ({ code: r.status, json: await r.json() }))
+  ));
+  for (const reply of replies) {
+    assert.equal(reply.code, 200);
+    assert.deepEqual(reply.json.Items, [mockRows[1]]);
+  }
+  // Each request independently proves the AIO user identity. ONLY series
+  // metadata is coalesced; never share a completed Jellyfin auth session.
+  assert.equal(hits.filter(x => x.path === '/Users/Me').length, 5);
+  assert.equal(hits.filter(x => x.path === '/Items/seriesOld').length, 1);
+  assert.equal(hits.filter(x => x.path === '/Items/seriesCanon').length, 1);
+  assert.ok(hits.every(x => x.auth === 'present'));
+});
+
+test('single-flight metadata error fails open for each client without poisoning cache', async t => {
+  const { base, hits } = await fixture(t, {
+    metadataDelayMs: 45, metadataFails: true,
+  });
+  const auth = { headers: { 'X-Emby-Token': AIO_TOKEN } };
+  const replies = await Promise.all(Array.from({ length: 3 }, () =>
+    fetch(base + '/Shows/NextUp?Limit=20', auth).then(r => r.json())
+  ));
+  assert.ok(replies.every(x => JSON.stringify(x) === JSON.stringify(reply)));
+  // No failed metadata lookup may hide NextUp progress.
+  assert.ok(hits.filter(x => x.path.startsWith('/Items/series')).length >= 2);
 });
