@@ -89,7 +89,40 @@ class R23B2ResumeProofTests(unittest.TestCase):
 
     def test_page_offset_explicit_allowlist(self):
         with self.assertRaisesRegex(mod.support.Stop, "invalid Resume page offset"):
-            mod.read_resume_page(TOKEN, 40)
+            mod.read_resume_page(TOKEN, 80)
+        with self.assertRaisesRegex(mod.support.Stop, "Resume sample base offset not permitted"):
+            mod.inspect_session(TOKEN, "ignored", 20)
+
+    def test_continuation_requests_only_offsets_40_and_60(self):
+        routes = []
+        def source(path, *, token, limit=mod.support.MAX_HTTP):
+            routes.append(path)
+            self.assertEqual(token, TOKEN)
+            if path == "/Users/Me":
+                return {"Id": "Q"*16}, 1
+            if path == "/UserItems/Resume?StartIndex=40&Limit=20":
+                return {"Items":[epi(i, ONE) for i in range(40,59)] + [movie(40)]}, 17
+            if path == "/UserItems/Resume?StartIndex=60&Limit=20":
+                return {"Items":[epi(i, TWO) for i in range(60,79)] + [movie(60)]}, 23
+            if path == "/Items/" + ONE:
+                return {"Type":"Series","Id":ONE,"ProviderIds":{"Imdb":CANON}},1
+            if path == "/Items/" + TWO:
+                return {"Type":"Series","Id":TWO,"ProviderIds":{"Imdb":ALIAS}},1
+            raise AssertionError("Unexpected or out of scope request")
+        with mock.patch.object(mod.support,"source_preflight"), \
+             mock.patch.object(mod.support,"fixed_get",side_effect=source):
+            result=mod.inspect_session(TOKEN, "ignored", 40)
+        self.assertEqual(result["resume_requested_offsets"],[40,60])
+        self.assertEqual(result["resume_sample_base_offset"],40)
+        self.assertEqual(result["resume_returned_items"],40)
+        self.assertEqual(result["verified_canonical_resume_cards"],19)
+        self.assertEqual(result["verified_alias_resume_cards"],19)
+        self.assertTrue(result["both_verified_spellings_present"])
+        self.assertFalse(result["safe_to_deduplicate_active_resume"])
+        self.assertEqual(result["aio_get_requests"],5)
+        self.assertFalse(any("StartIndex=0" in x or "StartIndex=20" in x for x in routes))
+        for raw in (CANON,ALIAS,TOKEN,ONE,TWO):
+            self.assertNotIn(raw,json.dumps(result))
 
     def test_page_shape_fail_closed(self):
         with mock.patch.object(mod.support,"fixed_get",
