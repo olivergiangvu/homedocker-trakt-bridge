@@ -38,6 +38,7 @@ jobs:
           python3 -m py_compile scripts/audit-v140-pilot-readiness.py
           python3 -m py_compile scripts/backup-v140-rc6-rollback.py
           python3 -m py_compile scripts/deploy-v140-integrated-canary.py
+          python3 -m py_compile scripts/deploy-v140-r23b-hostcanary.py
           node --check scripts/verify-v140-legacy-import-memory.mjs
           python3 -m py_compile scripts/audit-dangling-image-ownership.py
           python3 -m py_compile scripts/publish-v1.3.0-tag.py
@@ -104,6 +105,57 @@ jobs:
           docker inspect --format '{{json .NetworkSettings.Networks}}' v140-r23a-ci \
             | python3 -c 'import sys,json; n=json.load(sys.stdin); assert list(n)==["v140-r23a-ci-net"], n'
           echo "R23A_INTEGRATED_RUNTIME_ISOLATED_HEALTH=PASS"
+
+      - name: R23B1 dedicated non-internal bridge host-loopback smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          cleanup() {
+            docker rm -f v140-r23b-ci >/dev/null 2>&1 || true
+            docker network rm v140-r23b-ci-bridge >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker network create --driver bridge \
+            --opt com.docker.network.bridge.enable_ip_masquerade=false \
+            v140-r23b-ci-bridge
+          docker network inspect v140-r23b-ci-bridge \
+            --format '{{json .}}' \
+            | python3 -c 'import json,sys; n=json.load(sys.stdin); assert n["Internal"] is False; assert n["Options"]["com.docker.network.bridge.enable_ip_masquerade"] == "false"'
+          docker run -d --name v140-r23b-ci --restart no \
+            --network v140-r23b-ci-bridge --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --pids-limit 64 \
+            --memory 192m --cpus 1 \
+            --tmpfs /app/data:rw,size=33554432,uid=1000,gid=1000,mode=0700 \
+            -p 127.0.0.1:17042:7000 -p 127.0.0.1:17142:7101 \
+            -e PUBLIC_BASE_URL=http://127.0.0.1:17042 \
+            -e TRAKT_CLIENT_ID=r23b-ci-not-real \
+            -e TRAKT_CLIENT_SECRET=ci-fake-secret \
+            -e BRIDGE_SECRET_KEY=ci-fake-bridge-secret \
+            -e ADMIN_KEY=ci-fake-admin \
+            -e JELLYFIN_GATEWAY_ENABLED=true \
+            -e JELLYFIN_GATEWAY_PORT=7101 \
+            -e JELLYFIN_GATEWAY_UPSTREAM_URL=http://127.0.0.1:9999/jellyfin \
+            -e JELLYFIN_GATEWAY_AIO_USER_ID=CANARY_PREVIEW_NO_MATCH_USER \
+            -e JELLYFIN_GATEWAY_PROFILE_ID=cccccccccccccccccccccccc \
+            -e JELLYFIN_GATEWAY_LEGACY_IMPORT=off \
+            -e AIO_RECONCILER_MODE=off \
+            -e AIO_HISTORY_ECHO_GUARD=false \
+            homedocker-trakt-bridge:ci
+          ok=0
+          for i in $(seq 1 30); do
+            if curl --noproxy '*' --max-time 3 -fsS http://127.0.0.1:17042/health >/dev/null 2>&1 \
+              && curl --noproxy '*' --max-time 3 -fsS http://127.0.0.1:17142/health >/dev/null 2>&1; then
+              ok=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ok" = 1
+          docker inspect v140-r23b-ci --format '{{json .Mounts}}' \
+            | python3 -c 'import sys,json; m=json.load(sys.stdin); assert not any(x["Type"] in ("volume","bind") for x in m)'
+          docker inspect v140-r23b-ci --format '{{json .NetworkSettings.Networks}}' \
+            | python3 -c 'import sys,json; n=json.load(sys.stdin); assert set(n)=={"v140-r23b-ci-bridge"}'
+          echo "R23B1_HOST_LOCAL_INTEGRATED_GATEWAY=PASS"
 
       - name: Build and smoke-test isolated gateway-only canary
         shell: bash
