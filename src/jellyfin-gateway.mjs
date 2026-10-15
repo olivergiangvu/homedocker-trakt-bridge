@@ -18,6 +18,45 @@ import { filterNextUpForVerifiedAliases } from './jellyfin-nextup-filter.mjs';
 const MAX_NEXTUP_BYTES = 2 * 1024 * 1024;
 const MAX_METADATA_SERIES = 50;
 const MAX_METADATA_CONCURRENCY = 6;
+// Global active bound across concurrent NextUp requests; per-request batching
+// alone could otherwise multiply metadata traffic without an upper bound.
+const MAX_METADATA_WAITERS = 96;
+
+export function createMetadataLimiter(maxActive = MAX_METADATA_CONCURRENCY, maxWaiters = MAX_METADATA_WAITERS) {
+  if (!Number.isSafeInteger(maxActive) || maxActive < 1
+      || !Number.isSafeInteger(maxWaiters) || maxWaiters < 0) {
+    throw new TypeError('invalid metadata concurrency limit');
+  }
+  let active = 0;
+  let peakActive = 0;
+  const waiters = [];
+  const snapshot = () => ({ active, queued: waiters.length, peakActive });
+  return {
+    snapshot,
+    async run(task) {
+      if (typeof task !== 'function') throw new TypeError('metadata task required');
+      if (active < maxActive) {
+        active++;
+        peakActive = Math.max(peakActive, active);
+      } else {
+        if (waiters.length >= maxWaiters) {
+          const error = new Error('metadata_concurrency_capacity_exceeded');
+          error.code = 'METADATA_QUEUE_FULL';
+          throw error;
+        }
+        // A waiter receives the vacated active slot; release does not first
+        // decrement the count (avoids a race with new arriving requests).
+        await new Promise(resolve => waiters.push(resolve));
+      }
+      try { return await task(); }
+      finally {
+        const next = waiters.shift();
+        if (next) next();
+        else active--;
+      }
+    },
+  };
+}
 const NETWORK_TIMEOUT_MS = 8000;
 const SERIES_METADATA_TTL_MS = 5 * 60 * 1000;
 const MAX_SERIES_CACHE = 128;
@@ -162,7 +201,7 @@ function hasVerifiedAliases(graph) {
     Array.isArray(row.aliases) && row.aliases.length > 0);
 }
 
-async function normalizeForUser(body, req, graph, options, fetchImpl, seriesCache, metadataInFlight, now) {
+async function normalizeForUser(body, req, graph, options, fetchImpl, seriesCache, metadataInFlight, limiter, now) {
   if (!hasToken(req) || !hasVerifiedAliases(graph)
       || !Array.isArray(body?.Items) || body.Items.length < 2
       || body.Items.length > MAX_METADATA_SERIES) return body;
@@ -201,19 +240,15 @@ async function normalizeForUser(body, req, graph, options, fetchImpl, seriesCach
         // verified for every request before consulting this per-listener map.
         let pending = metadataInFlight.get(id);
         if (!pending) {
-          pending = (async () => {
-            try {
-              const item = await upstreamJson(upstreamPath(options.base,
-                '/Items/' + encodeURIComponent(id)), incoming, fetchImpl);
-              if (item?.Type !== 'Series' || item.Id !== id) {
-                throw new Error('Jellyfin returned mismatched series identity');
-              }
-              const imdb = item.ProviderIds?.Imdb;
-              return typeof imdb === 'string' ? imdb.toLowerCase() : null;
-            } finally {
-              metadataInFlight.delete(id);
+          pending = limiter.run(async () => {
+            const item = await upstreamJson(upstreamPath(options.base,
+              '/Items/' + encodeURIComponent(id)), incoming, fetchImpl);
+            if (item?.Type !== 'Series' || item.Id !== id) {
+              throw new Error('Jellyfin returned mismatched series identity');
             }
-          })();
+            const imdb = item.ProviderIds?.Imdb;
+            return typeof imdb === 'string' ? imdb.toLowerCase() : null;
+          }).finally(() => metadataInFlight.delete(id));
           metadataInFlight.set(id, pending);
         }
         completed.set(id, await pending);
@@ -255,6 +290,7 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
   // contains tokens or source watch-state rows.
   const seriesCache = new Map();
   const metadataInFlight = new Map();
+  const limiter = createMetadataLimiter();
   // Transient listener-level counters only. No request paths, usernames,
   // auth headers, tokens, item IDs, titles or watch positions are retained.
   const metrics = {
@@ -335,7 +371,7 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
           && !requested.searchParams.has('StartIndex')) {
         try {
           const graph = loadVerifiedIdentityGraph(db, options.profileId);
-          filtered = await normalizeForUser(json, req, graph, options, fetchImpl, seriesCache, metadataInFlight, now);
+          filtered = await normalizeForUser(json, req, graph, options, fetchImpl, seriesCache, metadataInFlight, limiter, now);
         } catch {
           metrics.failOpenNormalizationErrors++;
           filtered = json; // Fail open; never hide an ambiguous episode.
@@ -361,6 +397,12 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
 
   // Admin/profile dashboard accesses this method from the owning Bridge
   // process only; it is NOT a public HTTP endpoint on the gateway.
-  server.gatewayMetricsSnapshot = () => ({ ...metrics });
+  server.gatewayMetricsSnapshot = () => ({
+    ...metrics,
+    metadataActive: limiter.snapshot().active,
+    metadataQueued: limiter.snapshot().queued,
+    metadataPeakActive: limiter.snapshot().peakActive,
+    metadataCacheEntries: seriesCache.size,
+  });
   return server;
 }
