@@ -407,6 +407,12 @@ test('Gateway metrics are in-memory, aggregate-only, and not public HTTP routes'
     responseFailures: 0,
     oversizedPassThroughResponses: 0,
     invalidJsonPassThroughResponses: 0,
+    nextUpCompletedResponses: 0,
+    nextUpResponseTotalMs: 0,
+    nextUpResponseMaxMs: 0,
+    nextUpUpstreamSamples: 0,
+    nextUpUpstreamTotalMs: 0,
+    nextUpUpstreamMaxMs: 0,
     metadataActive: 0,
     metadataQueued: 0,
     metadataPeakActive: 0,
@@ -426,6 +432,11 @@ test('Gateway metrics are in-memory, aggregate-only, and not public HTTP routes'
   assert.equal(unauth.status, 401);
   const stats = gateway.gatewayMetricsSnapshot();
   assert.equal(stats.nextUpRequests, 1);
+  assert.equal(stats.nextUpUpstreamSamples, 1);
+  assert.equal(stats.nextUpCompletedResponses, 1);
+  assert.ok(stats.nextUpUpstreamTotalMs >= 0);
+  assert.ok(stats.nextUpResponseTotalMs >= stats.nextUpUpstreamTotalMs);
+  assert.ok(stats.nextUpResponseMaxMs <= stats.nextUpResponseTotalMs);
   assert.equal(stats.resumePassthroughRequests, 2);
   assert.equal(stats.nextUpNormalizedResponses, 1);
   assert.equal(stats.nextUpRemovedItems, 1);
