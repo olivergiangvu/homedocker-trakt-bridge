@@ -46,8 +46,11 @@ def validate(bridge, subnet, host_gateway, canary, relay_port):
         target = ipaddress.ip_address(canary)
     except ValueError:
         raise Stop("INVALID_IPV4_NETWORK") from None
-    if (net.version!=4 or not net.is_private or net.prefixlen<24
-        or net.prefixlen>29 or gw.version!=4 or target.version!=4
+    rfc1918 = (ipaddress.ip_network("10.0.0.0/8"),
+               ipaddress.ip_network("172.16.0.0/12"),
+               ipaddress.ip_network("192.168.0.0/16"))
+    if (net.version!=4 or not any(net.subnet_of(parent) for parent in rfc1918)
+        or net.prefixlen<24 or net.prefixlen>29 or gw.version!=4 or target.version!=4
         or gw not in net.hosts() or target not in net.hosts() or gw==target):
         raise Stop("INVALID_IPV4_NETWORK")
     if not isinstance(host_gateway,str) or str(gw)!=host_gateway or \
