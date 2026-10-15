@@ -54,7 +54,7 @@ class R23B2ResumeProofTests(unittest.TestCase):
         self.assertEqual(r["resume_episode_items"], 38)
         self.assertEqual(r["resume_movie_items"], 2)
         self.assertEqual(r["resume_active_position_items"], 40)
-        self.assertEqual(r["resume_duplicate_opaque_item_ids_across_pages"], 0)
+        self.assertEqual(r["resume_repeated_opaque_item_ids_in_sample"], 0)
         self.assertEqual(r["resume_distinct_episode_series_references"], 2)
         self.assertEqual(r["verified_canonical_resume_cards"], 19)
         self.assertEqual(r["verified_alias_resume_cards"], 19)
