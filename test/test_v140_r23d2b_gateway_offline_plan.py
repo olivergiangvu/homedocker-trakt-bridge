@@ -111,25 +111,39 @@ class OfflineGatewayPlanTests(unittest.TestCase):
         self.assertIn('"actual_final_network_or_firewall_created": false',s)
         self.assertIn('"real_jellyfin_session_allowed": false',s)
 
-    def test_host_preflight_rejects_collided_final_network_and_checks_nft_only(self):
+    def test_host_preflight_reads_only_and_enforces_final_resource_collisions(self):
         planner=mock.Mock()
+        planner.TEST_BRIDGE="br-r23dtrial"
         planner.inspect_candidates.return_value=(NET,None)
         planner.parsed.return_value=[{"ifname":"eth0"},{"ifname":"lo"}]
-        planner.run.side_effect=[
-            b"old_net\n",b"old_container\n",b"",
-        ]
         renderer=m.load(m.RENDER,"r23d2b_test_renderer")
-        def source_module(path,name):
+        verified=m.load(m.NFT,"r23d2b_test_guard")
+        real_load=m.load
+        def fake_load(path,name):
             if path==m.PLANNER: return planner
-            return m.load(path,name)
-        with mock.patch.object(m,"source_identity",return_value=SHA), \
-             mock.patch.object(m,"check_gateway_source",return_value=True), \
-             mock.patch.object(m,"load",side_effect=source_module) as loader:
-            # Avoid recursive load by patching only planner in next test;
-            # this path guarantees that even a malformed module importer STOPs.
-            with self.assertRaisesRegex(m.Stop|Exception if False else Exception,
-                                        ".*"):
-                pass
+            if path==m.RENDER: return renderer
+            if path==m.NFT: return verified
+            return real_load(path,name)
+        with mock.patch.object(m,"source_identity",return_value=SHA), \\
+             mock.patch.object(m,"check_gateway_source",return_value=True), \\
+             mock.patch.object(m,"load",side_effect=fake_load):
+            planner.run.side_effect=[b"old_net\\n",b"old_container\\n",b""]
+            plan=m.preflight()
+            self.assertEqual(plan["net"],str(NET))
+            self.assertEqual(planner.run.call_count,3)
+            args,kwargs=planner.run.call_args
+            self.assertEqual(args[0],["nft","--check","--file","-"])
+            self.assertIn(b"table inet",kwargs["stdin"])
+            planner.parsed.return_value=[{"ifname":"br-r23dgate"}]
+            planner.run.reset_mock()
+            planner.run.side_effect=[b"",b""]
+            with self.assertRaisesRegex(m.Stop,"FINAL_R23D_DOCKER_RESOURCES_ALREADY_EXIST"):
+                m.preflight()
+            planner.parsed.return_value=[{"ifname":"eth0"}]
+            planner.run.reset_mock()
+            planner.run.side_effect=[b"homedocker_v140_r23d_local\\n",b""]
+            with self.assertRaisesRegex(m.Stop,"FINAL_R23D_DOCKER_RESOURCES_ALREADY_EXIST"):
+                m.preflight()
 
     def test_no_host_mutation_commands_or_session_unlock_paths(self):
         source=SRC.read_text()
