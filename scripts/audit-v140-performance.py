@@ -51,8 +51,8 @@ def main():
             }
     images = {}
     for name in selected:
-        raw = docker("inspect", name, "--format",
-                     "{{json .Config.Image}}|{{json .Image}}")
+        raw = docker("inspect", "--format",
+                     "{{json .Config.Image}}|{{json .Image}}", name)
         parts = raw.strip().split("|")
         if len(parts) != 2:
             continue
