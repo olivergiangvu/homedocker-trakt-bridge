@@ -150,7 +150,7 @@ def inspect_session(token, bridge_db):
         "resume_episode_items": len(episodes),
         "resume_movie_items": len(movies),
         "resume_active_position_items": active,
-        "resume_duplicate_opaque_item_ids_across_pages": repeated_item_ids,
+        "resume_repeated_opaque_item_ids_in_sample": repeated_item_ids,
         "resume_series_missing_reference": counts["episode_series_missing"],
         "resume_distinct_episode_series_references": len(series),
         "resume_series_metadata_valid": sum(kind == "series" for kind, _ in metadata),
