@@ -229,6 +229,14 @@ def apply(preflight):
         }
     except (Stop, OSError, ValueError, KeyError, subprocess.TimeoutExpired):
         print("R23B1_ROLLBACK_ATTEMPTED_ON_ISOLATED_CANARY_ONLY",flush=True)
+        # docker run can create a stopped container before returning nonzero.
+        # Never leave that partial artifact to reserve the original ports.
+        if old_stopped and not container_created:
+            probe = subprocess.run(
+                ["docker", "container", "inspect", NEW],
+                capture_output=True, timeout=10, check=False
+            )
+            container_created = probe.returncode == 0
         rollback(container_created,network_created,old_stopped)
         raise
 
