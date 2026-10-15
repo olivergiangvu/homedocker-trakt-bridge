@@ -131,7 +131,7 @@ async function fixture(t, {
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const base = 'http://127.0.0.1:' + server.address().port;
-  return { base, hits, db };
+  return { base, hits, db, gateway: server };
 }
 
 test('unconfigured gateway is disabled and rejects unexpected upstream URL', () => {
@@ -385,4 +385,46 @@ test('other Jellyfin endpoints are not accidentally proxied', async t => {
   assert.equal(h.status, 200);
   assert.equal((await h.json()).status, 'ok');
   assert.equal(hits.length, 0);
+});
+
+test('Gateway metrics are in-memory, aggregate-only, and not public HTTP routes', async t => {
+  const { base, gateway } = await fixture(t, { resumeEnabled: true });
+  assert.deepEqual(gateway.gatewayMetricsSnapshot(), {
+    nextUpRequests: 0,
+    resumePassthroughRequests: 0,
+    nextUpNormalizedResponses: 0,
+    nextUpUnchangedResponses: 0,
+    nextUpRemovedItems: 0,
+    failOpenNormalizationErrors: 0,
+    upstreamTransportFailures: 0,
+    upstreamNon200Responses: 0,
+    responseFailures: 0,
+    oversizedPassThroughResponses: 0,
+    invalidJsonPassThroughResponses: 0,
+  });
+  const next = await fetch(base + '/Shows/NextUp?Limit=20', {
+    headers: { 'X-Emby-Token': AIO_TOKEN },
+  });
+  assert.equal(next.status, 200);
+  assert.equal((await next.json()).Items.length, 1);
+  const resume = await fetch(base + '/UserItems/Resume?Limit=20&StartIndex=20', {
+    headers: { 'X-Emby-Token': AIO_TOKEN },
+  });
+  assert.equal(resume.status, 200);
+  assert.equal((await resume.json()).TotalRecordCount, 40);
+  const unauth = await fetch(base + '/UserItems/Resume?Limit=20');
+  assert.equal(unauth.status, 401);
+  const stats = gateway.gatewayMetricsSnapshot();
+  assert.equal(stats.nextUpRequests, 1);
+  assert.equal(stats.resumePassthroughRequests, 2);
+  assert.equal(stats.nextUpNormalizedResponses, 1);
+  assert.equal(stats.nextUpRemovedItems, 1);
+  assert.equal(stats.upstreamNon200Responses, 1);
+  assert.equal(stats.failOpenNormalizationErrors, 0);
+  const raw = JSON.stringify(stats);
+  for (const secret of [AIO_TOKEN, USER, 'tt44094505']) {
+    assert.ok(!raw.includes(secret));
+  }
+  const endpoint = await fetch(base + '/gateway/metrics');
+  assert.equal(endpoint.status, 404);
 });
