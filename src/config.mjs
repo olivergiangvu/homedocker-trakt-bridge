@@ -81,6 +81,8 @@ export function loadConfig() {
     // Disabled until explicit nginx location-level canary and user mapping.
     jellyfinGatewayEnabled: boolEnv('JELLYFIN_GATEWAY_ENABLED', false),
     jellyfinGatewayPort: intEnv('JELLYFIN_GATEWAY_PORT', 7101, 1024, 65535),
+    // Conservative default; canary-only opt-in after upstream latency measurements.
+    jellyfinGatewayNextUpTimeoutMs: intEnv('JELLYFIN_GATEWAY_NEXTUP_TIMEOUT_MS', 8000, 8000, 20000),
     jellyfinGatewayUpstreamUrl: (process.env.JELLYFIN_GATEWAY_UPSTREAM_URL || '').trim(),
     jellyfinGatewayUserId: (process.env.JELLYFIN_GATEWAY_AIO_USER_ID || '').trim(),
     jellyfinGatewayProfileId: (process.env.JELLYFIN_GATEWAY_PROFILE_ID || '').trim(),
