@@ -726,3 +726,31 @@ jobs:
           set -euo pipefail
           sudo --preserve-env=CI,GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT \
             bash scripts/probe-r23b2-real-docker-netns-unix-ci.sh --ci-ephemeral-only
+
+  # R23B2-v3: dedicated GitHub-hosted Ubuntu Docker test only.
+  # Creates fake canary, fake localhost AIO, runs launcher, SIGKILLs controller,
+  # then proves exact owner-bound recovery. Never connects to HomeDocker.
+  r23b2-real-controller-sigkill-recovery-lab:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate R23B2 v3 recovery source and mock-only test contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/probe-r23b2-host-trial-sigkill-ci.sh
+          python3 -B -m py_compile scripts/host-trial-r23b2.py
+          python3 -B -m unittest discover -s test             -p 'test_r23b2_host_trial_recovery.py' -v
+          command -v docker
+          command -v setpriv
+          command -v nsenter
+      - name: R23B2 v3 real Docker/AF_UNIX SIGKILL and exact-owner recovery
+        shell: bash
+        env:
+          RUNNER_ENVIRONMENT: github-hosted
+        run: |
+          set -euo pipefail
+          sudo --preserve-env=CI,GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT             bash scripts/probe-r23b2-host-trial-sigkill-ci.sh --ci-ephemeral-only
