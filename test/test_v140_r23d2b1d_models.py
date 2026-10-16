@@ -9,6 +9,7 @@ import unittest
 
 ROOT=Path(__file__).resolve().parents[1]
 CASES=(
+    ROOT/"tests"/"test_r23d2b1c_existing_entrypoint.py",
     ROOT/"tests"/"test_r23d2b1d_guarded_lifecycle.py",
     ROOT/"tests"/"test_r23d2b1d_supervisor_contract.py",
 )
