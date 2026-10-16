@@ -90,6 +90,26 @@ class Contract(unittest.TestCase):
             gateway,_=self.gate(view=view)
             with self.assertRaises(b1v.Stop):
                 b1v.safe_compare(source,gateway)
+    def test_nonitem_envelope_mutation_does_not_pass(self):
+        source,_=self.src()
+        for view in (
+            {**FILTERED,"Opaque":"different"},
+            {**ORIGINAL,"Opaque":"different"},
+            {**FILTERED,"TotalRecordCount":999},
+        ):
+            gateway,_=self.gate(view=view)
+            with self.assertRaises(b1v.Stop):
+                b1v.safe_compare(source,gateway)
+    def test_resume_unchanged_but_gateway_json_format_differs_aborts(self):
+        source,_=self.src()
+        gateway,_=self.gate()
+        original_gateway=gateway
+        def differently_formatted(path):
+            if path==b1v.RESUME:
+                return 200,json.dumps(RESUME,separators=(",",":")).encode()
+            return original_gateway(path)
+        with self.assertRaisesRegex(b1v.Stop,"RESUME_GATEWAY_BODY_NOT_PASSTHROUGH"):
+            b1v.safe_compare(source,differently_formatted,True)
     def test_duplicate_items_rejected(self):
         source,_=self.src(view={**ORIGINAL,"Items":[ALIAS,ALIAS]})
         gateway,_=self.gate(view=FILTERED)
