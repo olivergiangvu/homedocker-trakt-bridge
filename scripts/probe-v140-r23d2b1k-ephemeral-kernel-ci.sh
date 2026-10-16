@@ -40,8 +40,19 @@ cleanup() {
   for ((idx=${#OWNED[@]}-1;idx>=0;idx--)); do
     ip netns del "${OWNED[$idx]}" 2>/dev/null || true
   done
+  # Namespace ownership check: never claim cleanup if any owned registry
+  # entry remains. Never delete unrelated namespaces or host firewall rules.
+  for ns in "${OWNED[@]}"; do
+    if ip netns list | awk '{print $1}' | grep -Fxq "$ns"; then
+      rc=6
+    fi
+  done
   rm -rf -- "$TEMP"
-  if ((rc != 0)); then echo "R23D2B1K_ISOLATED_KERNEL_LAB_STOP" >&2; fi
+  if ((rc != 0)); then
+    echo "R23D2B1K_ISOLATED_KERNEL_LAB_STOP" >&2
+  else
+    echo "R23D2B1K_OWNED_NAMESPACE_CLEANUP_PASS"
+  fi
   exit "$rc"
 }
 trap cleanup EXIT
@@ -145,4 +156,13 @@ if probe "$NS_C" fd42:23d:1::1 17421; then
   echo "R23D2B1K_IPV6_INPUT_BYPASS_STOP" >&2; exit 5
 fi
 echo "R23D2B1K_KERNEL_INPUT_FORWARD_IPV6_TCP_CONTROLS_PASS"
+
+# Rollback is scoped to the namespace-owned table, never a host/global flush.
+# The two negative routes were positively reachable before the guard; their
+# connectivity must return when the exact owned table is removed in CI.
+ip netns exec "$NS_S" nft delete table inet homedocker_r23d_guard
+ready "$NS_C" 172.31.254.1 17421
+ready "$NS_C" 172.31.253.2 17420
+ready "$NS_C" fd42:23d:1::1 17421
+echo "R23D2B1K_OWNED_GUARD_ROLLBACK_TCP_RESTORED"
 echo "R23D2B1K_GITHUB_EPHEMERAL_NAMESPACE_LAB_PASS_NO_HOMEDOCKER_APPLY"
