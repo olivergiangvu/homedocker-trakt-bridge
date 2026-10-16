@@ -51,7 +51,8 @@ cleanup() {
     docker rm -f "$CLIENT" >/dev/null 2>&1 || true
     docker rm -f "$SERVER" >/dev/null 2>&1 || true
     docker network rm "$NETWORK" >/dev/null 2>&1 || true
-    if docker container inspect "$CLIENT" "$SERVER" >/dev/null 2>&1 ||
+    if docker container inspect "$CLIENT" >/dev/null 2>&1 ||
+       docker container inspect "$SERVER" >/dev/null 2>&1 ||
        docker network inspect "$NETWORK" >/dev/null 2>&1; then
       rc=6
     fi
@@ -180,7 +181,8 @@ ORIGINAL_PEER_IF="$(peer_veth)" || {
 }
 ORIGINAL_PEER_INDEX="$(cat "/sys/class/net/$ORIGINAL_PEER_IF/ifindex")"
 arm_tc "$ORIGINAL_PEER_IF"
-ready 17420 && deny 17421
+ready 17420 || { echo "R23D2B1N_ALLOWED_TCP_MISSING_STOP" >&2; exit 5; }
+deny 17421
 echo "R23D2B1N_REAL_DOCKER_VETH_TC_INGRESS_CONTROLS_PASS"
 
 # Restart the ACTUAL ephemeral runner's Docker daemon. No other containers
@@ -228,7 +230,8 @@ echo "R23D2B1N_DOCKER_RECREATED_VETH_LOST_OLD_TC_PROVEN"
 arm_tc "$NEW_PEER_IF"
 docker start "$SERVER" >/dev/null
 assert_owner "$SERVER" "$SERVER_IP"
-ready 17420 && deny 17421
+ready 17420 || { echo "R23D2B1N_ALLOWED_TCP_MISSING_STOP" >&2; exit 5; }
+deny 17421
 echo "R23D2B1N_TC_REARMED_BEFORE_FAKE_GATEWAY_START_PASS"
 
 # Proof of the bug if an unarmed veth were launched after Docker restart:
@@ -240,6 +243,7 @@ ready 17421 || {
 }
 echo "R23D2B1N_REMOVING_TC_EXPOSES_INTERNAL_DOCKER_PEER_NEGATIVE_CONTROL"
 arm_tc "$NEW_PEER_IF"
-ready 17420 && deny 17421
+ready 17420 || { echo "R23D2B1N_ALLOWED_TCP_MISSING_STOP" >&2; exit 5; }
+deny 17421
 echo "R23D2B1N_REARMED_FILTER_FAIL_CLOSED_PASS"
 echo "R23D2B1N_EPHEMERAL_REAL_DOCKER_RECOVERY_LAB_PASS_NO_HOMEDOCKER_APPLY"
