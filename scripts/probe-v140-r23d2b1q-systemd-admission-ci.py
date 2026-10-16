@@ -24,7 +24,10 @@ def call(*argv, timeout=12):
     except (OSError,subprocess.TimeoutExpired):
         raise Stop("CI_INSPECT_OR_COMMAND_UNAVAILABLE") from None
     if p.returncode:
-        raise Stop("CI_COMMAND_FAILED_"+argv[0].upper())
+        # CI owns only lab resources; preserve bounded, sanitized diagnostics.
+        kind="_".join(argv[:3]).upper().replace("-","_")
+        detail=" ".join(p.stderr.split())[:220]
+        raise Stop("CI_COMMAND_FAILED_"+kind+"_"+detail)
     return p.stdout
 
 def inspect(name):
