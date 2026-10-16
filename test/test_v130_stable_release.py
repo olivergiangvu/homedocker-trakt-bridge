@@ -70,6 +70,33 @@ class StablePromotionRegressionTests(unittest.TestCase):
             with self.assertRaises(deploy.Stop):
                 deploy.check_flags(changed)
 
+    def test_exact_release_manifest_digest_must_match(self):
+        exact = deploy.PUBLISHED_STABLE_REF
+        self.assertEqual(deploy.attested_release_digest([exact]), exact)
+        self.assertEqual(
+            deploy.attested_release_digest([
+                deploy.IMAGE + "@sha256:" + "a"*64, exact
+            ]), exact)
+        for bad in (
+            [], None, "not-a-list", [deploy.IMAGE+"@sha256:"+"b"*64],
+            [exact, None], [12345],
+        ):
+            with self.subTest(bad=bad), self.assertRaises(deploy.Stop):
+                deploy.attested_release_digest(bad)
+
+    def test_published_stable_tag_drift_stops_before_backup_or_compose_write(self):
+        # A mutable tag moved to a new GHCR digest must NEVER be promoted.
+        from unittest.mock import patch
+        changed=deploy.IMAGE+"@sha256:"+"c"*64
+        expected_inspect=json.dumps([{"RepoDigests":[changed]}])
+        with patch.object(deploy.shutil,"which",return_value="/usr/bin/gh"), \
+             patch.object(deploy,"run",return_value="{}") as command, \
+             patch.object(deploy,"docker",return_value=expected_inspect) as inspect:
+            with self.assertRaisesRegex(deploy.Stop,"reviewed published digest"):
+                deploy.stable_image()
+        self.assertTrue(command.called)
+        inspect.assert_called_once_with("image","inspect",deploy.TAG)
+
     def test_stable_deploy_does_not_touch_aio_or_run_prune(self):
         src = (ROOT / "scripts/deploy-v1.3.0-homedocker.py").read_text()
         self.assertIn('"--no-deps"', src)
