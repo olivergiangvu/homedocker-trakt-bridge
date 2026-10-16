@@ -39,7 +39,7 @@ class G1BSafety(unittest.TestCase):
         g1a = type("A", (), {"TOKEN": __import__('re').compile(r".{16,1024}\Z")})
         with patch.object(mod.sys.stdin, "isatty", return_value=False):
             with self.assertRaises(mod.Stop):
-                mod.replay_snapshot(g1a, "existing-token")
+                mod.replay_snapshot(g1a, {}, "existing-token")
 
     def test_runner_no_existing_temp_container_accepted(self):
         with patch.object(mod.subprocess, "run", return_value=type(
