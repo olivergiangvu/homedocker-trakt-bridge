@@ -68,7 +68,9 @@ def verify(a):
         raise Stop("CLIENT_NETWORK_DRIFT")
     # Server must be STOPPED and DETACHED. No Docker API attached peer
     # can be admitted until both kernel safeguards are proven.
-    if s["State"]["Running"] or sn:
+    # Docker --network none can appear as a named "none" NetworkSettings
+    # entry even though it has no routable Docker bridge endpoint.
+    if s["State"]["Running"] or not set(sn).issubset({"none"}):
         raise Stop("SERVER_NOT_STOPPED_AND_NETWORK_DETACHED")
     nd=json.loads(call("docker","network","inspect",network))
     if (len(nd)!=1 or nd[0].get("Internal") is not True
