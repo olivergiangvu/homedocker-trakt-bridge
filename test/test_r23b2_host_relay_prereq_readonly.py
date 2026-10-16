@@ -27,8 +27,8 @@ N={"Internal":False,"Options":{"com.docker.network.bridge.enable_ip_masquerade":
 class Preflight(unittest.TestCase):
     def run_mock(self,c=C,n=N,image=True,dir_exists=False,port="",root=0):
         def docker(*args):
-            if args[:2]==("container","inspect"):return json.dumps(c)
-            if args[:2]==("network","inspect"):return json.dumps(n)
+            if args[:2]==("container","inspect"):return json.dumps([c])
+            if args[:2]==("network","inspect"):return json.dumps([n])
             if args[:2]==("image","inspect"):return "{}" if image else None
             raise AssertionError("unexpected Docker mutation")
         output=io.StringIO()
