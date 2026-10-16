@@ -23,6 +23,7 @@ KEYS=frozenset({
 })
 TRUE_FIELDS=("guard_attested","docker_identity_attested","fence_ready","synthetic_only")
 MAX_FRAME=1024
+LAB_READY_LINE="R23D2B1G_LAB_INPUT_LOOP_READY_NO_HOST_PROOF"
 
 class Stop(Exception):
     pass
@@ -91,6 +92,10 @@ def run_lab(*,epoch,timeout_ms,max_events):
     deadline=time.monotonic()+timeout_ms/1000.0
     try:
         selector.register(sys.stdin.buffer,selectors.EVENT_READ)
+        # Exact LAB-only synchronization point: handlers are installed and
+        # the event loop has registered its input. This is NOT kernel proof
+        # or a systemd-ready notification; stderr is not an authority channel.
+        print(LAB_READY_LINE,file=sys.stderr,flush=True)
         while seq < max_events:
             wait=max(0.0,deadline-time.monotonic())
             if wait==0:
