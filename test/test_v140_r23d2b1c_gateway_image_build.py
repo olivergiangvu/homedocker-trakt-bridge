@@ -23,7 +23,7 @@ def image():
       "Config":{
         "User":"node",
         "WorkingDir":"/app",
-        "Entrypoint":None,
+        "Entrypoint":["docker-entrypoint.sh"],
         "Cmd":["node","src/gateway-canary-entry.mjs"],
         "Volumes":None,
         "ExposedPorts":{"7101/tcp":{}},
