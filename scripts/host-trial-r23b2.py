@@ -29,7 +29,8 @@ SIDECAR = 'homedocker-v140-r23b2-unix-sidecar'
 SOCKET_DIR = Path('/run/homedocker-r23b2-aio')
 SOCKET = SOCKET_DIR / 'readonly.sock'
 STAGED_RELAY = SOCKET_DIR / 'relay.py'
-IMAGE = 'python:3.12-alpine'
+IMAGE = 'python@sha256:1b668429b3511ab407d8e00648891631b0b1a4d7e15e3ca70f38ab5b91ad4ab4'
+EXPECTED_IMAGE_ID = 'sha256:979e5a8a56846771598d47ebf1f8a75b46155104e168a0b237c0783c1dedff8a'
 CONFIRM = 'R23B2_EPHEMERAL_READONLY_UNIX_RELAY_ONLY'
 RECOVER_CONFIRM = 'R23B2_EXACT_OWNER_RECOVERY_ONLY'
 STATE_DIR = Path('/var/lib/homedocker-r23b2-trial')
@@ -340,8 +341,9 @@ def preflight():
         image_id = images[0]['Id'] if len(images) == 1 else None
     except (ValueError, KeyError, TypeError):
         image_id = None
-    if not isinstance(image_id, str) or not image_id.startswith('sha256:'):
-        raise TrialStop('LOCAL_PYTHON_IMAGE_UNVERIFIED')
+    digests = images[0].get('RepoDigests') if isinstance(images, list) and len(images) == 1 else []
+    if image_id != EXPECTED_IMAGE_ID or IMAGE not in (digests or []):
+        raise TrialStop('LOCAL_PYTHON_IMAGE_PIN_MISMATCH')
     canary = inspect_container(CANARY)
     if not canary.get('State', {}).get('Running') or canary['State'].get('Pid', 0) < 2:
         raise TrialStop('EXISTING_CANARY_NOT_RUNNING')
