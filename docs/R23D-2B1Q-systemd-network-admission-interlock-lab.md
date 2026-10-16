@@ -1,6 +1,6 @@
 # R23D-2B1Q — systemd admission interlock across Docker restart and nft loss
 
-**Scope:** real transient systemd one-shot unit + two real synthetic Docker containers and bridge, only in a disposable GitHub-hosted Ubuntu runner. **NOT an actual VM reboot; not a deployable HomeDocker systemd service.**
+**Verified B1Q lab PASS:** real transient systemd one-shot unit + two real synthetic Docker containers and bridge on a disposable GitHub-hosted Ubuntu runner. [GitHub Actions 38872347961](https://github.com/olivergiangvu/homedocker-trakt-bridge/actions/runs/38872347961), dedicated B1Q Docker/systemd job **SUCCESS**, all 11 B1Q markers observed including exact cleanup. Initial runs revealed and corrected Docker `--network none` inspect representation, systemd admission's nft listing format, and the Docker requirement to disconnect built-in `none` before attaching a bridge. **NOT an actual VM reboot; not a deployable HomeDocker systemd service.**
 
 ## What this adds over B1P
 
@@ -8,7 +8,7 @@ B1P proved a bounded 3-second nft timeout for dual userspace SIGKILL. It still f
 
 This is not proof of enforcement against a privileged caller that bypasses the one-shot unit and uses Docker API to connect the server. A future independent launch controller must deny such bypasses.
 
-## Acceptance (expected; observe CI results before marking PASS)
+## Observed acceptance — real Docker + systemd-run CI PASS
 
 1. Create an INTERNAL isolated real Docker bridge, fake client, and **detached** fake server. Both have restart=no, read-only rootfs, no host ports, fixed lab labels, and no secrets. An unexpected `docker start` on the detached fake server must not make synthetic TCP available to the client.
 2. Attach exact tc ingress allowlist/default-deny on client host veth. With lab nft policy **missing**, a real transient systemd one-shot invocation must exit unsuccessfully without connecting or starting the fake server.
