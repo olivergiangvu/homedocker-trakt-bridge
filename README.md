@@ -96,6 +96,7 @@ If AIOMetadata is also part of the stack, use **Trackers = This server only** fo
 - **[Getting started](docs/SETUP.md)** — install, connect Trakt and add the manifest to AIOStreams
 - **[Configuration](docs/CONFIGURATION.md)** — image pinning, identity mode, freshness and reverse proxy settings
 - **[Operations](docs/OPERATIONS.md)** — health, backup, update, rollback and logs
+- **[HomeDocker stable upgrade](docs/STABLE-DEPLOYMENT.md)** — verified v1.3.0 release, RC6 preflight, Bridge-only deployment, protected Compose backup and rollback
 - **[Integrations](docs/INTEGRATIONS.md)** — AIOMetadata and native-Trakt coexistence
 - **[Troubleshooting](docs/TROUBLESHOOTING.md)** — common sync and identity problems
 - **[Documentation index](docs/README.md)** — advanced and maintainer documentation
@@ -116,15 +117,17 @@ For sensitive vulnerabilities, follow **[SECURITY.md](SECURITY.md)** instead of 
 
 ## Project status
 
-`v1.3.0` is the stable release line promoted from the production-qualified `v1.3.0-rc.6` runtime, with no code-path or schema changes after RC6.
+**Latest published stable release:** [`v1.3.0`](https://github.com/olivergiangvu/homedocker-trakt-bridge/releases/tag/v1.3.0), published 2026-10-14 from immutable tag commit `8c505089e0c5ad2e7ce1514bd9c1acf1722bea95`. This promotes production-proven RC6 with **no application behavior or database-schema changes** after RC6. Release published is not proof of installation on any HomeDocker host.
 
-**HomeDocker production:** Bridge `v1.3.0-rc.6`, with `AIO_RECONCILER_MODE=compare` (non-writing), `PULL_IDENTITY_MODE=trakt`, `CANONICAL_ON_DEMAND_VERIFY=false`. **AIOStreams follows upstream `latest` independently**; no AIOStreams digest pin is required for Bridge releases.
+**Last independently attested HomeDocker runtime (2026-10-13):** Bridge `v1.3.0-rc.6` pinned by digest. `main` contains the separately reviewed post-tag **operator-only deployment helper fix** (`ef336f4b730ec14bf995fa83cf170f034dc382a1`), which supports root-protected Compose `.env` and checks the existing RC7 dual-IMDb mitigation before/after a Bridge-only cutover. The published `v1.3.0` application image is not rebuilt by these operator fixes. The current [guarded deployment runbook](docs/STABLE-DEPLOYMENT.md) additionally pins the CI-published stable GHCR digest to prevent mutable tag drift.
 
-**RC7 Monitoring & Rolling Compatibility Phase:** Complete (2026-10-13). The actual HomeDocker Jellyfin compatibility contract returned `PASS_CAPTURED_CHECKS`; the dual-IMDb Continue Watching issue was mitigated through one official AIO series preference and is monitored by the read-only drift tool. Experimental RC7 draft PRs were archived unmerged. See [RC7 closure and cleanup](docs/RC7-CLOSURE-AND-CLEANUP.md).
+**HomeDocker stable upgrade:** use the guarded [v1.3 deployment runbook](docs/STABLE-DEPLOYMENT.md) and host preflight. The runbook requires RC6 baseline, exact image provenance, SQLite online backup, Compose rollback and post-deploy health/identity acceptance. Until actual host output confirms success, do **not** state that HomeDocker is running v1.3 stable.
 
-**v1.3 Stable publication/deployment:** Release source is prepared with version metadata only. The `v1.3.0` tag/GHCR digest and host cutover must be verified separately; until on-host confirmation the existing production Bridge stays RC6. Optional guarded recovery writeback remains excluded (Issue #70). See [v1.3 release notes](docs/releases/v1.3.0.md) and [Stable qualification](docs/design/v1.3-stable-qualification.md).
+**AIOStreams:** independent upstream `ghcr.io/viren070/aiostreams:latest` (no forced pin or update during a Bridge-only deployment). `AIO_RECONCILER_MODE=compare` on the qualified HomeDocker is non-writing; recovery writeback remains excluded (Issue #70). Canonical Trakt identity and existing RC6 settings are preserved.
 
+**v1.4 R23D research:** remains a **Draft/unsafe-for-production gateway-only branch** ([PR #95](https://github.com/olivergiangvu/homedocker-trakt-bridge/pull/95)). The isolated GitHub runner nft/guardian lease experiments do not establish HomeDocker boot-time fencing or an independent live watchdog. No v1.4 stable tag, image rollout, or authenticated gateway relay is authorized.
 
+See [v1.3 release notes](docs/releases/v1.3.0.md), [release qualification](docs/design/v1.3-stable-qualification.md) and [documentation index](docs/README.md).
 
 The v1.2 line keeps native-Trakt coexistence safeguards, direct provider-ID playback transport, family-scoped rate-limit recovery, semantic history dedupe, and the optional read-only AIO local-state reconciler. The reconciler remains **disabled by default**; when enabled in `detect` mode it never writes Trakt or AIOStreams, persists pending candidates across restart, coalesces newer same-item local rows, waits for the configured quiet window, and correlates final state only with an equivalent delivered HomeDocker playback position.
 
