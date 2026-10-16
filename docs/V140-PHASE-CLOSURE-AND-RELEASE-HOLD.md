@@ -24,13 +24,13 @@ These milestones are closed **only for their indicated test scope**. They do not
 | R23D-2B1L | **Real nft kernel 4-second lease expiry** after synthetic issuer SIGKILL, secondary guard loss, scoped teardown | PASS on ephemeral GitHub-hosted Linux network namespaces only |
 | R23D-2B1M | **Real independent `tc clsact` boot/link barrier and full private-namespace nft loss**; negative control verifies removal of tc restores prohibited traffic | PASS on disposable GitHub-hosted Linux network namespaces, [CI 38866504310](https://github.com/olivergiangvu/homedocker-trakt-bridge/actions/runs/38866504310); no Docker host reboot |
 
-Detailed experimental evidence remains in separate Draft PR #95 documents `docs/R23D-2B1[D-L]*`. **Do not copy these lab-specific procedures into a HomeDocker live install runbook or claim these are production-proven.**
+Detailed experimental evidence remains in separate Draft PR #95 documents `docs/R23D-2B1[D-M]*`. **Do not copy these lab-specific procedures into a HomeDocker live install runbook or claim these are production-proven.**
 
 ## Still OPEN / blocking a production release
 
 1. **Boot-time fence:** an independent effective traffic-deny mechanism must be active **before** Docker restores/launches the R23D peer; safely handle restart, daemon startup and unexpected external launches.
 2. **Guardian and kill path:** actual continuously supervised independent process, fresh authenticated Docker and nft evidence, bounded traffic kill when guard fails (not simply a one-shot timed lease with up-to-4-second exposure after SIGKILL).
-3. **Full ruleset loss under actual Docker/host lifecycle:** R23D-2B1M proved an independent `tc` filter survives total nft removal **only inside a disposable private network namespace with an unchanged veth**. Still OPEN: prove fail-closed behavior when Docker recreates the veth/bridge, daemon restarts, or the host reboots; enforce no unguarded startup if either independent filter or nft is absent.
+3. **Full ruleset loss under actual Docker/host lifecycle:** R23D-2B1M performed a **total nft ruleset flush only inside a disposable private network namespace with an unchanged veth**, proving the separate `tc` filter remained active there. Still OPEN: prove fail-closed behavior when Docker recreates the veth/bridge, daemon restarts, or the host reboots; enforce no unguarded startup if either independent filter or nft is absent.
 4. **Docker integration:** prove real Docker bridge, published port/NAT/conntrack, namespace ownership, IPv6 scope, exact image, one peer, firewall INPUT/FORWARD and positive/negative fake TCP paths on a disposable VM.
 5. **Unified Gateway functional acceptance:** integrate latest reviewed `main` with Draft PR #95 and preserve single-Bridge architecture. Qualify read-only NextUp alias canonicalization, bounded upstream behavior, identity graph, Resume behavior, no duplicate history writer, no Trakt/Jellyfin cross-user leakage.
 6. **Release engineering:** build a coherent `1.4.0-rc` candidate after blockers, qualification/soak, SQLite online backup and one-service rollback rehearsal. Only after observed host protection and exact digest checks can `v1.4.0` stable tag be approved.
@@ -91,4 +91,4 @@ Post-cleanup **operator-observed** inventory: **18/18 containers running**; Trak
 
 ## Next owner checkpoint
 
-Maintain Draft PR #95 and integrate with the updated main baseline. Qualify the unresolved independent boot-fence/total-loss scenario in a disposable VM, not on HomeDocker; then prepare version bump and formal candidate review. An actual production deploy needs operator-visible SSH results and explicit scoped backup/rollback checks.
+Maintain Draft PR #95 and integrate with the updated main baseline. Qualify the unresolved independent boot-fence during REAL Docker bridge/veth recreation, daemon restart and host reboot in a disposable VM, not on HomeDocker; then prepare version bump and formal candidate review. An actual production deploy needs operator-visible SSH results and explicit scoped backup/rollback checks.
