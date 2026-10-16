@@ -2,9 +2,11 @@
 
 **Scope:** An isolated disposable GitHub-hosted Linux runner with three private namespaces; no HomeDocker commands, no Docker daemon lifecycle, no external AIO/Trakt credentials, no production bridge, no actual reboot. **Not a v1.4 release qualification.**
 
+**Latest independently checked run:** [GitHub Actions 38866339961](https://github.com/olivergiangvu/homedocker-trakt-bridge/actions/runs/38866339961), both `r23d-kernel-namespace-lab` and `test` **completed SUCCESS** on commit `d026eb77f712059180be2b36343744c77780f8d9`. All eight 2B1M kernel markers below were observed directly in the job log. Earlier run `38866103916` correctly FAILED its positive allowed TCP path; review fixed ARP handling and explicit `tc goto chain 1` processing. That fail is preserved as diagnostic evidence, not counted as a PASS.
+
 ## Why this lab exists
 
-R23D-2B1K demonstrated nft INPUT/FORWARD/IPv6 packet behavior; 2B1L showed expiry of a one-shot 4-second nft lease after userspace SIGKILL and survival after only a **secondary nft table** is removed. Neither shows safety when the **entire nft ruleset** disappears. The R23D-2B1M namespace test introduces a *separate Linux kernel enforcement mechanism*, ingress `tc clsact` on the client-facing veth, installed before its link is brought UP. Only exact synthetic TCP IPv4 `172.31.254.2 -> 172.31.254.1:17420` may reach the lab fake relay; all other packets (including IPv6 and forwarding) are dropped by `tc`.
+R23D-2B1K demonstrated nft INPUT/FORWARD/IPv6 packet behavior; 2B1L showed expiry of a one-shot 4-second nft lease after userspace SIGKILL and survival after only a **secondary nft table** is removed. Neither shows safety when the **entire nft ruleset** disappears. The R23D-2B1M namespace test introduces a *separate Linux kernel enforcement mechanism*, ingress `tc clsact` on the client-facing veth, installed before its link is brought UP. After permitting required IPv4 ARP frames through an isolated classifier chain, only exact synthetic TCP IPv4 `172.31.254.2 -> 172.31.254.1:17420` may reach the lab fake relay; all other packets (including IPv6 and forwarding) are dropped by `tc`.
 
 ## Real kernel experiment and controls
 
@@ -34,7 +36,7 @@ R23D2B1M_TC_FENCE_RESTORED_PASS
 R23D2B1M_OWNED_NAMESPACES_CLEANUP_PASS
 ```
 
-Markers are acceptance expectations, **not evidence of success until observed in a completed CI job**.
+All listed markers were observed in the successful CI job referenced above; any later code changes require a fresh run.
 
 ## Safety implications and residual blockers
 
