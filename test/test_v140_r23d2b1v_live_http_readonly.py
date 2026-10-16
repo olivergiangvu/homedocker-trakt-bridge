@@ -1,10 +1,13 @@
 """B1V read-only live HTTP comparator: synthetic verification only; no network."""
 import importlib.util
+import io
 import json
 from pathlib import Path
 import subprocess
 import sys
 import unittest
+from unittest import mock
+from urllib import error
 
 SCRIPT=Path(__file__).resolve().parents[1]/"scripts/audit-v140-r23d2b1v-real-client-readonly.py"
 spec=importlib.util.spec_from_file_location("b1v",SCRIPT)
@@ -156,6 +159,54 @@ class Contract(unittest.TestCase):
                          capture_output=True,text=True,timeout=4)
         self.assertEqual(p.returncode,5)
         self.assertIn("EXISTING_TOKEN_REQUIRES_COMPARE",p.stderr)
+    def test_http_502_is_sanitized_and_stage_specific(self):
+        class ErrOpener:
+            def __init__(self,payload):
+                self.payload=payload
+                self.requested=[]
+            def open(self,req,timeout=None):
+                self.requested.append((req.get_method(),req.full_url))
+                raise error.HTTPError(req.full_url,502,"upstream",
+                                      {"content-type":"application/json"},
+                                      io.BytesIO(self.payload))
+        for origin,path,payload,want in (
+            ("aio","/Users/Me",b'{"message":"token_sentinel"}',
+             "HTTP_STATUS_502_AIO_USERS_ME"),
+            ("aio",b1v.NEXTUP,b"{}",
+             "HTTP_STATUS_502_AIO_NEXTUP"),
+            ("gateway",b1v.NEXTUP,b'{"error":"upstream_unavailable","token":"secret_sentinel"}',
+             "HTTP_STATUS_502_GATEWAY_NEXTUP_UPSTREAM_UNAVAILABLE"),
+            ("gateway",b1v.NEXTUP,b'{"error":"upstream_response_failure"}',
+             "HTTP_STATUS_502_GATEWAY_NEXTUP_UPSTREAM_RESPONSE_FAILURE"),
+        ):
+            with self.subTest(origin=origin,path=path):
+                opener=ErrOpener(payload)
+                with mock.patch.object(b1v,"OPENER",opener):
+                    with self.assertRaises(b1v.Stop) as cm:
+                        b1v.fixed_get(origin,path,token="x"*32)
+                self.assertEqual(str(cm.exception),want)
+                self.assertNotIn("secret_sentinel",str(cm.exception))
+                self.assertNotIn("token_sentinel",str(cm.exception))
+                self.assertEqual(opener.requested[0][0],"GET")
+    def test_nextup_first_and_recheck_errors_are_distinct(self):
+        def gateway(path):
+            return 200,raw(FILTERED)
+        def first_fail(path):
+            if path=="/Users/Me":
+                return 200,raw({"Id":USER})
+            raise b1v.Stop("HTTP_STATUS_502_AIO_NEXTUP")
+        with self.assertRaisesRegex(b1v.Stop,
+                                    "SOURCE_NEXTUP_FIRST_HTTP_STATUS_502_AIO_NEXTUP"):
+            b1v.safe_compare(first_fail,gateway)
+        calls=[]
+        def last_fail(path):
+            if path=="/Users/Me":return 200,raw({"Id":USER})
+            calls.append(path)
+            if len(calls)==2:raise b1v.Stop("HTTP_STATUS_502_AIO_NEXTUP")
+            return 200,raw(ORIGINAL)
+        with self.assertRaisesRegex(b1v.Stop,
+                                    "SOURCE_NEXTUP_RECHECK_HTTP_STATUS_502_AIO_NEXTUP"):
+            b1v.safe_compare(last_fail,gateway)
     def test_all_report_flags_prevent_live_claim(self):
         source,_=self.src()
         gateway,_=self.gate()
