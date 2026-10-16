@@ -96,6 +96,7 @@ If AIOMetadata is also part of the stack, use **Trackers = This server only** fo
 - **[Getting started](docs/SETUP.md)** — install, connect Trakt and add the manifest to AIOStreams
 - **[Configuration](docs/CONFIGURATION.md)** — image pinning, identity mode, freshness and reverse proxy settings
 - **[Operations](docs/OPERATIONS.md)** — health, backup, update, rollback and logs
+- **[HomeDocker stable upgrade](docs/STABLE-DEPLOYMENT.md)** — verified v1.3.0 release, RC6 preflight, Bridge-only deployment, protected Compose backup and rollback
 - **[Integrations](docs/INTEGRATIONS.md)** — AIOMetadata and native-Trakt coexistence
 - **[Troubleshooting](docs/TROUBLESHOOTING.md)** — common sync and identity problems
 - **[Documentation index](docs/README.md)** — advanced and maintainer documentation
