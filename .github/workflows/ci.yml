@@ -650,3 +650,23 @@ jobs:
           node --check src/jellyfin-gateway.mjs
           node --check test/v140-r23d2b1u-gateway-acceptance.test.mjs
           node --test test/v140-r23d2b1u-gateway-acceptance.test.mjs
+
+  # B1V: no host services or credentials. Python tests inject local fake
+  # GET sources and assert no network write or unauthorized URL paths.
+  r23d-live-http-comparator-contract:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: B1V read-only source/Gateway comparator regression tests
+        run: |
+          set -euo pipefail
+          python3 -B -m unittest discover -s test \
+            -p 'test_v140_r23d2b1v_live_http_readonly.py' -v
+          python3 -B scripts/audit-v140-r23d2b1v-real-client-readonly.py \
+            --compare >/tmp/b1v-refusal.out 2>/tmp/b1v-refusal.err \
+            && exit 1 || rc=$?
+          test "$rc" -eq 5
+          grep -Fq EXPLICIT_LIVE_READONLY_CONFIRMATION_REQUIRED \
+            /tmp/b1v-refusal.err
