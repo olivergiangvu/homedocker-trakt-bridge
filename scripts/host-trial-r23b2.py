@@ -46,7 +46,8 @@ def _receipt_fields(receipt):
     # Persistent metadata never contains an AIO token, Docker environment or URL.
     if (not isinstance(receipt, dict) or set(receipt) != {
         'version', 'nonce', 'image_id', 'canary_id', 'boot_id',
-        'host_pid', 'host_start_ticks', 'ttl_seconds'}
+        'host_pid', 'host_start_ticks', 'launcher_pid',
+        'launcher_start_ticks', 'ttl_seconds'}
         or receipt['version'] != STATE_VERSION
         or not isinstance(receipt['nonce'], str)
         or re.fullmatch(r'[a-f0-9]{32}', receipt['nonce']) is None
@@ -56,6 +57,10 @@ def _receipt_fields(receipt):
         or re.fullmatch(r'[a-f0-9]{64}', receipt['canary_id']) is None
         or not isinstance(receipt['boot_id'], str)
         or re.fullmatch(r'[a-f0-9-]{36}', receipt['boot_id']) is None
+        or type(receipt['launcher_pid']) is not int
+        or receipt['launcher_pid'] < 2
+        or type(receipt['launcher_start_ticks']) is not int
+        or receipt['launcher_start_ticks'] < 1
         or not isinstance(receipt['ttl_seconds'], int)
         or not 60 <= receipt['ttl_seconds'] <= 900
         or (receipt['host_pid'] is None) != (receipt['host_start_ticks'] is None)
@@ -124,7 +129,9 @@ def create_receipt(nonce, canary, image_id, ttl):
     receipt = {
         'version': STATE_VERSION, 'nonce': nonce, 'canary_id': canary['Id'],
         'image_id': image_id, 'boot_id': _boot_id(),
-        'host_pid': None, 'host_start_ticks': None, 'ttl_seconds': ttl}
+        'host_pid': None, 'host_start_ticks': None,
+        'launcher_pid': os.getpid(), 'launcher_start_ticks': _start_ticks(os.getpid()),
+        'ttl_seconds': ttl}
     _write_receipt_atomic(receipt, first=True)
     return receipt
 
@@ -225,6 +232,12 @@ def _stop_orphan_host(receipt):
         return 'HOST_SOCKET_STILL_ACTIVE_MANUAL_REVIEW'
     return None
 
+def _controller_still_alive(receipt):
+    if receipt['boot_id'] != _boot_id():
+        return False
+    pid = receipt['launcher_pid']
+    return _start_ticks(pid) == receipt['launcher_start_ticks']
+
 def _sidecar_owned_by_receipt(c, r):
     if not sidecar_owned(c, r['nonce']):
         return False
@@ -246,6 +259,8 @@ def _recover_trial(apply=False):
     if os.geteuid() != 0:
         raise TrialStop('SUDO_ROOT_REQUIRED')
     r = read_receipt()
+    if _controller_still_alive(r):
+        raise TrialStop('ORIGINAL_TRIAL_CONTROLLER_STILL_ALIVE')
     c = inspect_container(SIDECAR, required=False)
     if c is not None and not _sidecar_owned_by_receipt(c, r):
         raise TrialStop('SIDECAR_OWNER_MISMATCH_MANUAL_REVIEW')
