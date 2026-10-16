@@ -54,6 +54,20 @@ Before writing any deployment commands or proposing an actual temporary host ser
 4. Include bounded temporary process lifetime, exact owned resources, named rollback and verifiable removal: stop sidecar, stop host relay, delete only its own Unix socket directory, verify original R23B intact; avoid broad Docker prune or nft flush.
 5. Do not run alongside the root-equivalent Docker API bypass risk without acknowledging this is a strictly scoped acceptance probe, NOT a production Gateway.
 
+## R23B-2 single-shot operator trial (prepared, NOT run on HomeDocker yet)
+
+After the user supplied the exact local `python:3.12-alpine` image record (`image_id=sha256:979e5a8a56846771598d47ebf1f8a75b46155104e168a0b237c0783c1dedff8a`, repo digest `sha256:1b668429b3511ab407d8e00648891631b0b1a4d7e15e3ca70f38ab5b91ad4ab4`), the existing no-write preflight was re-run on HomeDocker and returned **all checks PASS** including `trial_environment_ready: true`.
+
+The new `scripts/trial-r23b2-ephemeral-relay-acceptance.py` (uninstalled) performs:
+- **Default no-argument dry-run:** requires root/sudo, executes the existing no-write audit and verifies BOTH immutable local image ID and exact repo digest; refuses any prior same-name sidecar.
+- **Explicit one-shot apply** `--apply --confirm R23B2_SINGLE_600S_EPHEMERAL_ACCEPTANCE`: checks R23B current ID, copies at most 30 KiB of reviewed relay code to private UID65534 mode0700 `/run/homedocker-r23b2-aio`, starts host relay as nobody (mode0600 Unix socket), then creates exactly one Docker sidecar `homedocker-r23b2-single-trial` using `--pull never` and the approved digest. Sidecar has `--network container:<unchanged R23B CID>`, `--read-only`, `--user 65534:65534`, `--cap-drop ALL`, `--restart no`, `--security-opt no-new-privileges`, no host port and only read-only bind of the private socket directory.
+- **No-credential readiness:** from the unchanged R23B network namespace, an unauthenticated GET `127.0.0.1:9999/jellyfin/Users/Me` MUST return 401, proving the relay is reachable *and still requires a Jellyfin session*.
+- **Interactive, same-session B1V:** drops back to the invoking SSH account before requesting AIO configuration username/password, then invokes the reviewed B1V comparator with a 480-second overall timeout. Only one AIO login POST is used, after that NextUp source/canary requests are GET-only. The user never pastes a token to chat or embeds password in a shell command.
+- **Exact cleanup on normal/error/interrupt:** remove the **single exact owned/labelled sidecar only**, terminate exact child host relay, remove only UID65534 socket and script from the dedicated dir, verify original canary CID unchanged. Both relay processes have independent 600-second TTL; they stop listening even if the SSH parent dies.
+- **SIGKILL/host-power-loss caveat:** the parent cannot execute cleanup after SIGKILL or a host crash. The sidecar itself has restart=no and a 600-second listener TTL, but an exited sidecar container/private directory could remain; manual inspection and exact-owned cleanup may be necessary. This is a time-limited **acceptance** tool, not persistent DR-grade supervision. No automatic image removal.
+
+**Do not treat this as continuous production routing, root-equivalent Docker API protection or stable release qualification.** It temporarily turns the local canary into an authenticated read-only NextUp observer; the original R23B image, environment, nginx routes and RC6 production remain unchanged.
+
 ## Gates and scope
 
 The existing B1V source-user auth has passed on HomeDocker, and the offline canary URL is confirmed. **Live AIO→R23B HTTP forwarding is NOT YET VERIFIED.** After the dedicated synthetic AND disposable REAL-Docker CI jobs succeed, the next step is the new no-write image/ownership/socket audit on HomeDocker; only then consider operator-authorized ephemeral relay deployment. B1P intermittent lease renewal, B1S privileged Docker bypass, production-shaped tc/nft ingress, and actual Trakt history/scrobble remain OPEN. **`V140_STABLE_RELEASE_HOLD` must not be changed.**
