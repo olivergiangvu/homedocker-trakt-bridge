@@ -117,6 +117,7 @@ Environment=CI=true
 Environment=RUNNER_OS=Linux
 Environment=RUNNER_ENVIRONMENT=github-hosted
 Environment=R23D2B1R_EPHEMERAL_ONLY=true
+Environment=R23D2B1Q_EPHEMERAL_ONLY=true
 Restart=always
 RestartSec=1
 WatchdogSec=8
