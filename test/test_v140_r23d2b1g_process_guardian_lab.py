@@ -6,7 +6,7 @@ from pathlib import Path
 import signal
 import subprocess
 import sys
-import time
+import select
 import unittest
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -106,7 +106,13 @@ class ProcessLab(unittest.TestCase):
                            stdin=subprocess.PIPE,stdout=subprocess.PIPE,
                            stderr=subprocess.PIPE)
         try:
-            time.sleep(0.15)
+            # Synchronize with the child's initialized signal handler.
+            # A fixed sleep races with Python interpreter startup on busy hosts.
+            ready,_,_=select.select([p.stderr],[],[],3)
+            self.assertTrue(ready,"LAB child did not advertise input-loop readiness")
+            self.assertEqual(p.stderr.readline().decode("ascii").strip(),
+                             m.LAB_READY_LINE)
+            self.assertIsNone(p.poll(),"LAB child exited before SIGTERM injection")
             p.send_signal(signal.SIGTERM)
             code=p.wait(timeout=3)
             rows=[json.loads(line) for line in p.stdout.read().splitlines()]
