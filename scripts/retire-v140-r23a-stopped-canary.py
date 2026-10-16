@@ -45,7 +45,6 @@ def cmd(*args):
     )
     if args not in allowed_read+allowed_mutate and not (
         len(args)>3 and args[:3]==("docker","container","inspect")
-        and all(x.startswith("0123456789abcdef") is False for x in ())
         and all(isinstance(x,str) and len(x)==64
                 and all(c in "0123456789abcdef" for c in x)
                 for x in args[3:])
