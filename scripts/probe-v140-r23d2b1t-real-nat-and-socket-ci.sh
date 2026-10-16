@@ -169,11 +169,31 @@ HOSTPORT="$(docker port "$SERVER" 17420/tcp)"
 }
 PUBLISHED_PORT="${HOSTPORT##*:}"
 python3 -B - "$PUBLISHED_PORT" <<'PY'
-import socket,sys
+import socket,sys,time
 p=int(sys.argv[1])
-with socket.create_connection(("127.0.0.1",p),timeout=3) as s:
-    s.sendall(b"r23d2b1n-fake")
-    assert s.recv(2)==b"ok"
+def good(addr,port):
+    try:
+        with socket.create_connection((addr,port),timeout=0.8) as s:
+            s.settimeout(0.8)
+            s.sendall(b"r23d2b1n-fake")
+            return s.recv(2)==b"ok"
+    except (OSError,TimeoutError):
+        return False
+# First prove the fake gateway is actually listening in its namespace;
+# a published-port test must not pass or fail because of startup races.
+for _ in range(45):
+    if good("172.31.250.3",17420):
+        break
+    time.sleep(0.15)
+else:
+    raise SystemExit("R23D2B1T_FAKE_DOCKER_SERVER_NOT_READY_STOP")
+print("R23D2B1T_REAL_FAKE_CONTAINER_TCP_READY_PASS")
+for _ in range(45):
+    if good("127.0.0.1",p):
+        break
+    time.sleep(0.15)
+else:
+    raise SystemExit("R23D2B1T_LOOPBACK_PUBLISH_NOT_REACHABLE_STOP")
 print("R23D2B1T_REAL_LOOPBACK_HOST_PORT_PUBLISH_PASS")
 PY
 # Do not claim external exposure is fully excluded solely by loopback
