@@ -195,7 +195,15 @@ echo "R23D2B1P_CONTINUOUS_MUTUAL_LIVENESS_KERNEL_LEASE_ADMISSION_PASS"
 
 # Prove renewal really works LONGER than the nominal 3s timeout.
 sleep 4
-ready 17420 || { echo "R23D2B1P_LEASE_NOT_REFRESHED_STOP" >&2;exit 5; }
+ready 17420 || {
+  echo "R23D2B1P_LEASE_NOT_REFRESHED_STOP" >&2
+  # Exact synthetic lab diagnostics ONLY; do not print real host rules or
+  # credentials. Keep failure strict; never lengthen or force the lease.
+  tail -n 18 "$TMP/guard.log" "$TMP/wd.log" >&2 || true
+  nft list set bridge "$TABLE" authorized >&2 || true
+  docker inspect --format 'server_state={{.State.Status}} client_state=lab' "$SERVER" >&2 || true
+  exit 5
+}
 denied 17421
 echo "R23D2B1P_ACTIVE_3S_KERNEL_LEASE_REFRESH_PASS"
 
