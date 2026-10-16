@@ -40,6 +40,16 @@ STATE_VERSION = 1
 class TrialStop(Exception):
     pass
 
+# Fixed, allowlisted phase markers only. Never print env, IDs, paths or tokens.
+def phase(name):
+    if name not in {
+        'PREFLIGHT_PASS', 'RECEIPT_CREATED', 'HOST_SOCKET_READY',
+        'SIDECAR_CREATED', 'SIDECAR_STARTED', 'NETNS_LISTENER_READY',
+        'CANARY_FINGERPRINT_PASS', 'READY', 'CLEANUP_START',
+        'CLEANUP_DONE'}:
+        raise TrialStop('UNRECOGNIZED_PHASE_MARKER')
+    print('R23B2_PHASE_' + name, flush=True)
+
 def _boot_id():
     return Path('/proc/sys/kernel/random/boot_id').read_text().strip()
 
@@ -476,12 +486,14 @@ def stop_host(host):
 
 def trial(ttl):
     canary, image_id = preflight()
+    phase('PREFLIGHT_PASS')
     original = fingerprint(canary)
     nonce = secrets.token_hex(16)
     directory_created = False
     host = None
     errors = []
     receipt = create_receipt(nonce, canary, image_id, ttl)
+    phase('RECEIPT_CREATED')
     try:
         SOCKET_DIR.mkdir(mode=0o700)
         directory_created = True
@@ -494,6 +506,7 @@ def trial(ttl):
             stderr=subprocess.DEVNULL)
         receipt = _set_host_pid(receipt, host.pid)
         wait_for_socket(host)
+        phase('HOST_SOCKET_READY')
         # 'create' first, before 'start': enables exact recovery if a Docker start fails.
         # Even a failed 'create' is recoverable via name + unguessable owned nonce.
         command('docker', 'create', '--name', SIDECAR, '--restart', 'no',
@@ -508,14 +521,19 @@ def trial(ttl):
                 '--role', 'sidecar', '--ttl-seconds', str(ttl), timeout=35)
         created = inspect_container(SIDECAR)
         check_sidecar(created, image_id, nonce)
+        phase('SIDECAR_CREATED')
         command('docker', 'start', created['Id'], timeout=30)
         current = inspect_container(created['Id'])
         check_sidecar(current, image_id, nonce)
         if not current.get('State', {}).get('Running'):
             raise TrialStop('SIDECAR_NOT_RUNNING')
+        phase('SIDECAR_STARTED')
         wait_netns_listener(canary['State']['Pid'])
+        phase('NETNS_LISTENER_READY')
         if fingerprint(inspect_container(CANARY)) != original:
             raise TrialStop('R23B_CANARY_DRIFT')
+        phase('CANARY_FINGERPRINT_PASS')
+        phase('READY')
         print(json.dumps({'status': 'R23B2_TEMPORARY_RELAY_RUNNING',
              'ttl_seconds': ttl, 'resume_enabled': False,
              'trakt_or_aio_history_writes_requested': 0,
@@ -529,6 +547,7 @@ def trial(ttl):
                 raise TrialStop('SIDECAR_EXITED_EARLY')
             time.sleep(min(2, max(.1, deadline - time.monotonic())))
     finally:
+        phase('CLEANUP_START')
         err = remove_owned_sidecar(nonce, receipt)
         if err: errors.append(err)
         err = stop_host(host)
@@ -550,6 +569,7 @@ def trial(ttl):
             # These codes reveal no config, IDs, credentials or private networking.
             raise TrialStop('CLEANUP_INCOMPLETE_' + '_'.join(errors))
         print('R23B2_OWNED_RESOURCES_CLEANUP_PASS')
+        phase('CLEANUP_DONE')
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
