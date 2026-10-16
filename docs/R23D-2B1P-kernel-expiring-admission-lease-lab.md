@@ -1,6 +1,6 @@
 # R23D-2B1P — Real-Docker kernel-expiring admission lease
 
-**Checkpoint:** R23D-2B1P. **Scope:** only a disposable, dedicated GitHub-hosted Linux VM. **No HomeDocker apply, no v1.4 release authorization.** CI outcome must be explicitly observed before marking this lab PASS.
+**Checkpoint:** R23D-2B1P — REAL KERNEL LAB PASS. **Scope:** only a disposable, dedicated GitHub-hosted Linux VM. **No HomeDocker apply, no v1.4 release authorization.** The 2B1P dedicated Docker/nft job in [GitHub Actions run 38870650340](https://github.com/olivergiangvu/homedocker-trakt-bridge/actions/runs/38870650340) completed SUCCESS: all nine markers below observed directly in the job log. Initial CI 38870289550 FAILED a unit-test ordering assertion and a literal backslash-n nft batch syntax bug; diagnostic run 38870477027 established the exact cause. The atomic nft renewal was corrected to send actual newlines. The successful kernel job proved the fake gateway remained RUNNING after dual SIGKILL, while new and existing TCP became unreachable after kernel lease expiry.
 
 ## Addressing the observed B1O fail-open counterexample
 
@@ -18,7 +18,7 @@ An empty/expired set means the kernel drops new fake relay TCP traffic, without 
 - **Negative control:** delete only the test-owned nft bridge table while leaving the known tc allow path active: the previously forbidden-to-access *authorized* fake TCP port must immediately become reachable again. Recreate the same EMPTY kernel nft table to prove denial returns without any process replenishing a lease.
 - Cleanup only exact two owned Docker containers, private Docker bridge and the test-created nft bridge table; no global `nft flush ruleset`, host services, systemd units, real credentials, Trakt history or unscoped cleanup.
 
-## Expected acceptance evidence (do not pre-mark PASS)
+## Observed acceptance evidence — dedicated B1P kernel job SUCCESS
 
 The private runner must report successful application tests, B1K–M kernel tests, B1N daemon recovery, B1O guardian, **and** the dedicated B1P kernel expiry job. Required B1P result markers:
 
