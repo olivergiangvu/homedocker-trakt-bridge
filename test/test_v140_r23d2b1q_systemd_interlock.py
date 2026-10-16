@@ -48,7 +48,7 @@ class AdmissionInterlockSafety(unittest.TestCase):
     def test_exact_labels_and_nets_verified_before_admission(self):
         code=PY.read_text(encoding="utf8")
         self.assertIn('labels.get("r23d2b1q.lab")!="disposable"',code)
-        self.assertIn('row.get("master")!=BRIDGE',code)
+        self.assertIn('iface.get("master")!=BRIDGE',code)
         self.assertIn("NFT_ADMISSION_POLICY_MISSING",code)
         self.assertIn("INDEPENDENT_TC_FENCE_NOT_PROVEN",code)
         self.assertIn('call("docker","network","connect","--ip",IP_SERVER,network,server)',code)
