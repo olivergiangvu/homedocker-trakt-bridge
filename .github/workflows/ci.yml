@@ -447,3 +447,35 @@ jobs:
           set -euo pipefail
           sudo --preserve-env=CI,GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT \
             bash scripts/probe-v140-r23d2b1o-admission-failure-ci.sh --ci-ephemeral-only
+
+  # R23D-2B1P: separate disposable GitHub-hosted VM, real Docker bridge and
+  # kernel nft bridge set with a 3s lease. NO HomeDocker/shell host access.
+  r23d-kernel-expiring-admission-lease-lab:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify B1P runner and nftables prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v nft >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq nftables
+          fi
+          command -v docker
+          command -v nsenter
+          command -v tc
+          command -v python3
+          command -v nft
+          bash -n scripts/probe-v140-r23d2b1p-real-docker-nft-lease-ci.sh
+          python3 -B -c 'import ast,pathlib;ast.parse(pathlib.Path("scripts/probe-v140-r23d2b1p-fake-tcp-session-ci.py").read_text())'
+      - name: R23D-2B1P dual SIGKILL expiring nft bridge lease with real Docker
+        shell: bash
+        env:
+          RUNNER_ENVIRONMENT: github-hosted
+        run: |
+          set -euo pipefail
+          sudo --preserve-env=CI,GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT \
+            bash scripts/probe-v140-r23d2b1p-real-docker-nft-lease-ci.sh --ci-ephemeral-only
