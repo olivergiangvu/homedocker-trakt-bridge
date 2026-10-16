@@ -113,18 +113,26 @@ echo "R23D2B1M_LINK_DOWN_BEFORE_FENCE_PASS"
 # IPv4 and ALL IPv6 are rejected by the independent terminal drop.
 install_tc() {
   ip netns exec "$NS_H" tc qdisc add dev r23ms0 clsact
+  # L2 ARP must work for the *authorized* IPv4 TCP flow. Separate tc
+  # classifier chains prevent the default-drop catchall from also dropping
+  # packets accepted by a previous classifier.
+  ip netns exec "$NS_H" tc filter add dev r23ms0 ingress protocol arp pref 5 \
+    matchall action goto chain 1
   ip netns exec "$NS_H" tc filter add dev r23ms0 ingress protocol ip pref 10 u32 \
     match ip src 172.31.254.2/32 \
     match ip dst 172.31.254.1/32 \
     match ip protocol 6 0xff \
     match ip dport 17420 0xffff \
-    action pass
+    action goto chain 1
   ip netns exec "$NS_H" tc filter add dev r23ms0 ingress protocol all pref 20 \
     matchall action drop
+  ip netns exec "$NS_H" tc filter add dev r23ms0 ingress chain 1 protocol all pref 5 \
+    matchall action pass
 }
 install_tc
 # Confirm rules exist before allowing this namespace's link to be brought UP.
 ip netns exec "$NS_H" tc filter show dev r23ms0 ingress > "$TMP/tc-before.txt"
+grep -q "pref 5" "$TMP/tc-before.txt"
 grep -q "pref 10" "$TMP/tc-before.txt"
 grep -q "pref 20" "$TMP/tc-before.txt"
 ip -n "$NS_H" link set r23ms0 up
