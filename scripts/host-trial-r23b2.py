@@ -6,6 +6,9 @@ Dry-run by default. The opt-in trial is deliberately time bounded.
 Only use from an exact reviewed Git checkout with the two sibling R23B2 scripts.
 """
 import argparse
+import re
+import socket
+import select
 import json
 import os
 import pwd
@@ -28,9 +31,242 @@ SOCKET = SOCKET_DIR / 'readonly.sock'
 STAGED_RELAY = SOCKET_DIR / 'relay.py'
 IMAGE = 'python:3.12-alpine'
 CONFIRM = 'R23B2_EPHEMERAL_READONLY_UNIX_RELAY_ONLY'
+RECOVER_CONFIRM = 'R23B2_EXACT_OWNER_RECOVERY_ONLY'
+STATE_DIR = Path('/var/lib/homedocker-r23b2-trial')
+RECEIPT = STATE_DIR / 'receipt.json'
+STATE_VERSION = 1
 
 class TrialStop(Exception):
     pass
+
+def _boot_id():
+    return Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+
+def _receipt_fields(receipt):
+    # Persistent metadata never contains an AIO token, Docker environment or URL.
+    if (not isinstance(receipt, dict) or set(receipt) != {
+        'version', 'nonce', 'image_id', 'canary_id', 'boot_id',
+        'host_pid', 'host_start_ticks', 'ttl_seconds'}
+        or receipt['version'] != STATE_VERSION
+        or not isinstance(receipt['nonce'], str)
+        or re.fullmatch(r'[a-f0-9]{32}', receipt['nonce']) is None
+        or not isinstance(receipt['image_id'], str)
+        or re.fullmatch(r'sha256:[a-f0-9]{64}', receipt['image_id']) is None
+        or not isinstance(receipt['canary_id'], str)
+        or re.fullmatch(r'[a-f0-9]{64}', receipt['canary_id']) is None
+        or not isinstance(receipt['boot_id'], str)
+        or re.fullmatch(r'[a-f0-9-]{36}', receipt['boot_id']) is None
+        or not isinstance(receipt['ttl_seconds'], int)
+        or not 60 <= receipt['ttl_seconds'] <= 900
+        or (receipt['host_pid'] is None) != (receipt['host_start_ticks'] is None)
+        or (receipt['host_pid'] is not None and (
+            type(receipt['host_pid']) is not int or receipt['host_pid'] < 2
+            or type(receipt['host_start_ticks']) is not int
+            or receipt['host_start_ticks'] < 1))):
+        raise TrialStop('ROOT_RECEIPT_SCHEMA_INVALID_MANUAL_REVIEW')
+    return receipt
+
+def _require_root_receipt_dir():
+    try:
+        st = STATE_DIR.lstat()
+        st2 = RECEIPT.lstat()
+    except FileNotFoundError as exc:
+        raise TrialStop('ROOT_RECEIPT_NOT_FOUND') from exc
+    if (not stat.S_ISDIR(st.st_mode) or st.st_uid != 0
+        or stat.S_IMODE(st.st_mode) != 0o700
+        or not stat.S_ISREG(st2.st_mode) or st2.st_uid != 0
+        or stat.S_IMODE(st2.st_mode) != 0o600):
+        raise TrialStop('ROOT_RECEIPT_OWNERSHIP_OR_MODE_DRIFT')
+
+def read_receipt():
+    _require_root_receipt_dir()
+    try:
+        # O_NOFOLLOW guards against symlink substitution.
+        fd = os.open(RECEIPT, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd, 'r') as f:
+            raw = f.read(4097)
+        if len(raw) > 4096:
+            raise ValueError('large receipt')
+        return _receipt_fields(json.loads(raw))
+    except (OSError, ValueError, UnicodeError) as exc:
+        raise TrialStop('ROOT_RECEIPT_UNREADABLE_MANUAL_REVIEW') from exc
+
+def _fsync_dir(path):
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+def _write_receipt_atomic(r, first=False):
+    _receipt_fields(r)
+    data = (json.dumps(r, sort_keys=True, separators=(',', ':')) + '\n').encode()
+    if first:
+        fd = os.open(RECEIPT, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        dst = RECEIPT
+    else:
+        dst = STATE_DIR / ('receipt-next-' + r['nonce'])
+        fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'wb') as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    if not first:
+        os.replace(dst, RECEIPT)
+    _fsync_dir(STATE_DIR)
+
+def create_receipt(nonce, canary, image_id, ttl):
+    if os.path.lexists(STATE_DIR):
+        raise TrialStop('PREVIOUS_TRIAL_RECEIPT_PRESENT_USE_RECOVER')
+    STATE_DIR.mkdir(mode=0o700)
+    # All entries must be root-owned and permission-restricted.
+    os.chmod(STATE_DIR, 0o700)
+    receipt = {
+        'version': STATE_VERSION, 'nonce': nonce, 'canary_id': canary['Id'],
+        'image_id': image_id, 'boot_id': _boot_id(),
+        'host_pid': None, 'host_start_ticks': None, 'ttl_seconds': ttl}
+    _write_receipt_atomic(receipt, first=True)
+    return receipt
+
+def _start_ticks(pid):
+    try:
+        stat_data = (Path('/proc') / str(pid) / 'stat').read_text()
+        return int(stat_data[stat_data.rfind(')') + 2:].split()[19])
+    except (OSError, ValueError, IndexError):
+        return None
+
+def _set_host_pid(receipt, pid):
+    ticks = _start_ticks(pid)
+    if ticks is None:
+        raise TrialStop('HOST_RELAY_PID_CANNOT_BE_ATTESTED')
+    receipt = dict(receipt, host_pid=pid, host_start_ticks=ticks)
+    _write_receipt_atomic(receipt)
+    return receipt
+
+def _safe_receipt_remove(receipt):
+    if read_receipt() != receipt:
+        raise TrialStop('ROOT_RECEIPT_CONTENT_CHANGED')
+    expected = {'receipt.json', 'receipt-next-' + receipt['nonce']}
+    if {p.name for p in STATE_DIR.iterdir()} - expected:
+        raise TrialStop('UNEXPECTED_ROOT_JOURNAL_FILES_MANUAL_REVIEW')
+    temporary = STATE_DIR / ('receipt-next-' + receipt['nonce'])
+    if temporary.exists():
+        st = temporary.lstat()
+        if not (stat.S_ISREG(st.st_mode) and st.st_uid == 0
+                and stat.S_IMODE(st.st_mode) == 0o600):
+            raise TrialStop('ROOT_RECEIPT_TEMP_DRIFT')
+        temporary.unlink()
+    RECEIPT.unlink()
+    STATE_DIR.rmdir()
+
+def _process_identity(receipt):
+    # No host PID may be killed without same-boot, same-PID-starttime,
+    # UID and exact staged relay command evidence.
+    pid = receipt['host_pid']
+    if pid is None or receipt['boot_id'] != _boot_id():
+        return 'absent', None
+    root = Path('/proc') / str(pid)
+    if not root.exists():
+        return 'absent', None
+    if (_start_ticks(pid) != receipt['host_start_ticks']
+        or root.stat().st_uid != 65534):
+        return 'mismatch', None
+    try:
+        cmdline = (root / 'cmdline').read_bytes().split(b'\0')
+    except OSError:
+        return 'mismatch', None
+    if not (str(STAGED_RELAY).encode() in cmdline
+            and b'--role' in cmdline and b'host' in cmdline
+            and b'--ttl-seconds' in cmdline
+            and str(receipt['ttl_seconds']).encode() in cmdline):
+        return 'mismatch', None
+    return 'running', pid
+
+def _owned_relay_active():
+    try:
+        st = SOCKET.lstat()
+    except FileNotFoundError:
+        return False
+    if not (stat.S_ISSOCK(st.st_mode) and st.st_uid == 65534):
+        raise TrialStop('UNIX_SOCKET_DRIFT_MANUAL_REVIEW')
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.settimeout(.4)
+        return sock.connect_ex(str(SOCKET)) == 0
+
+def _stop_orphan_host(receipt):
+    status, pid = _process_identity(receipt)
+    if status == 'mismatch':
+        return 'HOST_PID_REUSED_OR_COMMAND_DRIFT_MANUAL_REVIEW'
+    if status == 'absent':
+        if _owned_relay_active():
+            return 'UNTRACKED_HOST_RELAY_ALIVE_WAIT_TTL_MANUAL_REVIEW'
+        return None
+    # pidfd binds the *same* process despite numerical PID reuse.
+    if not (hasattr(os, 'pidfd_open') and hasattr(signal, 'pidfd_send_signal')):
+        return 'PIDFD_NOT_AVAILABLE_MANUAL_REVIEW'
+    try:
+        pidfd = os.pidfd_open(pid)
+        try:
+            if _process_identity(receipt)[0] != 'running':
+                return 'HOST_PID_REATTESTATION_FAILED_MANUAL_REVIEW'
+            signal.pidfd_send_signal(pidfd, signal.SIGTERM)
+            poller = select.poll()
+            poller.register(pidfd, select.POLLIN)
+            if not poller.poll(2500):
+                signal.pidfd_send_signal(pidfd, signal.SIGKILL)
+                if not poller.poll(2500):
+                    return 'HOST_PROCESS_COULD_NOT_BE_STOPPED_MANUAL_REVIEW'
+        finally:
+            os.close(pidfd)
+    except (OSError, ProcessLookupError):
+        if _process_identity(receipt)[0] != 'absent':
+            return 'HOST_PROCESS_SIGNAL_FAILED_MANUAL_REVIEW'
+    if _owned_relay_active():
+        return 'HOST_SOCKET_STILL_ACTIVE_MANUAL_REVIEW'
+    return None
+
+def _sidecar_owned_by_receipt(c, r):
+    if not sidecar_owned(c, r['nonce']):
+        return False
+    h = c.get('HostConfig') or {}
+    mounts = c.get('Mounts') or []
+    return (c.get('Image') == r['image_id']
+            and h.get('NetworkMode') in ('container:' + CANARY,
+                                         'container:' + r['canary_id'])
+            and h.get('Privileged') is False
+            and h.get('ReadonlyRootfs') is True
+            and h.get('RestartPolicy', {}).get('Name') == 'no'
+            and c.get('Config', {}).get('User') == '65534:65534'
+            and len(mounts) == 1
+            and mounts[0].get('Source') == str(SOCKET_DIR)
+            and mounts[0].get('Destination') == str(SOCKET_DIR)
+            and mounts[0].get('RW') is False)
+
+def _recover_trial(apply=False):
+    if os.geteuid() != 0:
+        raise TrialStop('SUDO_ROOT_REQUIRED')
+    r = read_receipt()
+    c = inspect_container(SIDECAR, required=False)
+    if c is not None and not _sidecar_owned_by_receipt(c, r):
+        raise TrialStop('SIDECAR_OWNER_MISMATCH_MANUAL_REVIEW')
+    if not apply:
+        print('R23B2_RECOVERY_INSPECT_ONLY_RECEIPT_VALID_NO_CHANGES')
+        return
+    if c is not None:
+        err = remove_owned_sidecar(r['nonce'], r)
+        if err:
+            raise TrialStop(err)
+    err = _stop_orphan_host(r)
+    if err:
+        raise TrialStop(err)
+    if os.path.lexists(SOCKET_DIR):
+        err = remove_owned_dir(True)
+        if err:
+            raise TrialStop(err)
+    if inspect_container(SIDECAR, required=False) is not None or os.path.lexists(SOCKET_DIR):
+        raise TrialStop('RECOVERY_LEFTOVER_RESOURCE_MANUAL_REVIEW')
+    _safe_receipt_remove(r)
+    print('R23B2_EXACT_OWNER_RECOVERY_COMPLETE')
 
 def command(*argv, timeout=18, allow_failure=False):
     try:
@@ -65,6 +301,8 @@ def fingerprint(c):
 def preflight():
     if os.geteuid() != 0:
         raise TrialStop('SUDO_ROOT_REQUIRED')
+    if os.path.lexists(STATE_DIR):
+        raise TrialStop('PREVIOUS_TRIAL_RECEIPT_PRESENT_USE_RECOVER')
     if not PREFLIGHT.is_file() or not RELAY.is_file():
         raise TrialStop('PINNED_SIBLING_SCRIPTS_MISSING')
     rc, raw = command(sys.executable, '-B', str(PREFLIGHT), timeout=45)
@@ -160,13 +398,13 @@ def check_sidecar(c, image_id, nonce):
             and m[0]['RW'] is False):
         raise TrialStop('SIDECAR_SECURITY_CONTRACT_DRIFT')
 
-def remove_owned_sidecar(nonce):
+def remove_owned_sidecar(nonce, receipt=None):
     """Return error code, not an exception, so other cleanup always runs."""
     try:
         c = inspect_container(SIDECAR, required=False)
         if c is None:
             return None
-        if not sidecar_owned(c, nonce):
+        if not (sidecar_owned(c, nonce) and (receipt is None or _sidecar_owned_by_receipt(c, receipt))):
             return 'SIDECAR_OWNERSHIP_MISMATCH_MANUAL_REVIEW'
         identifier = c['Id']
         # ID-specific calls; no broad prune and no other container targets.
@@ -226,6 +464,7 @@ def trial(ttl):
     directory_created = False
     host = None
     errors = []
+    receipt = create_receipt(nonce, canary, image_id, ttl)
     try:
         SOCKET_DIR.mkdir(mode=0o700)
         directory_created = True
@@ -236,6 +475,7 @@ def trial(ttl):
              '--ttl-seconds', str(ttl)],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL)
+        receipt = _set_host_pid(receipt, host.pid)
         wait_for_socket(host)
         # 'create' first, before 'start': enables exact recovery if a Docker start fails.
         # Even a failed 'create' is recoverable via name + unguessable owned nonce.
@@ -272,17 +512,23 @@ def trial(ttl):
                 raise TrialStop('SIDECAR_EXITED_EARLY')
             time.sleep(min(2, max(.1, deadline - time.monotonic())))
     finally:
-        err = remove_owned_sidecar(nonce)
+        err = remove_owned_sidecar(nonce, receipt)
         if err: errors.append(err)
         err = stop_host(host)
         if err: errors.append(err)
-        err = remove_owned_dir(directory_created)
-        if err: errors.append(err)
+        if not errors:
+            err = remove_owned_dir(directory_created)
+            if err: errors.append(err)
         try:
             if fingerprint(inspect_container(CANARY)) != original:
                 errors.append('R23B_CANARY_CHANGED_MANUAL_REVIEW')
         except (TrialStop, KeyError, ValueError):
             errors.append('R23B_CANARY_UNVERIFIABLE_MANUAL_REVIEW')
+        if not errors:
+            try:
+                _safe_receipt_remove(receipt)
+            except TrialStop:
+                errors.append('RECEIPT_CLEANUP_FAILED_MANUAL_REVIEW')
         if errors:
             # These codes reveal no config, IDs, credentials or private networking.
             raise TrialStop('CLEANUP_INCOMPLETE_' + '_'.join(errors))
@@ -290,12 +536,19 @@ def trial(ttl):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--apply', action='store_true')
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('--apply', action='store_true')
+    group.add_argument('--recover', action='store_true')
     parser.add_argument('--confirm', default='')
     parser.add_argument('--ttl-seconds', type=int, default=600)
     a = parser.parse_args()
     if not 60 <= a.ttl_seconds <= 900:
         raise TrialStop('TTL_OUTSIDE_60_900_SECONDS')
+    if a.recover:
+        if a.confirm not in ('', RECOVER_CONFIRM):
+            raise TrialStop('RECOVERY_CONFIRMATION_INVALID')
+        _recover_trial(apply=a.confirm == RECOVER_CONFIRM)
+        return
     if a.apply and a.confirm != CONFIRM:
         raise TrialStop('EXACT_APPLY_CONFIRMATION_REQUIRED')
     if not a.apply and a.confirm:
