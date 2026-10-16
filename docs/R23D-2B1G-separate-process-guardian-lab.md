@@ -22,6 +22,25 @@ This is NOT a systemd guardian, Docker watcher, nft kernel verifier, privilege i
 
 The test suite launches child processes for normal two-frame completion, signal interruption, missing heartbeat, EOF, reboot, duplicate keys, malformed/excess frames, wrong epoch, stale/replayed sequence, and failure response without secret echo.
 
+
+## HomeDocker SIGTERM startup race and correction (2026-10-16)
+
+The first real HomeDocker subprocess run passed 17/18 tests. The SIGTERM
+test sent a signal after a fixed `time.sleep(0.15)`; on the actual host the
+child returned `-15`, meaning the kernel delivered SIGTERM before Python
+had necessarily registered its handler. Fixed elapsed time is not a reliable
+readiness signal under CPU or IO contention.
+
+The lab now writes the fixed, non-sensitive
+`R23D2B1G_LAB_INPUT_LOOP_READY_NO_HOST_PROOF` marker to stderr **after**
+installing SIGTERM/SIGINT handlers and registering the stdin selector.
+The post-ready SIGTERM test waits for this marker with a bounded select before
+injecting the signal, and expects a structured STOP with exit status 2.
+An intentionally early SIGTERM may legitimately exit `-15` or `2`; both
+are nonzero, with no canary permission or host mutation. A readiness marker
+is **not** `sd_notify`, does not attest nft/Docker, and is not an external
+fence or a production heartbeat.
+
 ## Remaining implementation blockers
 
 1. Develop a **genuine host-side evidence source** under independent privilege with exact Docker image/peer/network and fresh kernel nft JSON identity inspection. These assertions must be externally verified, not synthetic true booleans. The existing R23D-2A structural nft verifier can be reused, but it does not test effective INPUT/FORWARD packet behavior.
