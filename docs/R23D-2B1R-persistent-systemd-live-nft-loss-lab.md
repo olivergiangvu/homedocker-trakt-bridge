@@ -1,6 +1,6 @@
 # R23D-2B1R — Installed systemd controller and live nft-loss response
 
-**Scope:** ONLY a dedicated ephemeral GitHub-hosted Linux VM. The lab creates an actual, enabled systemd unit file at `/etc/systemd/system/r23d2b1r-monitor-$PID.service` for the duration of the CI job, **then removes it, its enablement symlink, the fake Docker network/containers and nft table**. It intentionally restarts the runner's Docker daemon. **It does not reboot the VM or its kernel, and is NOT approved for HomeDocker.**
+**Verified lab result — PASS:** [GitHub Actions 38874137420](https://github.com/olivergiangvu/homedocker-trakt-bridge/actions/runs/38874137420) completed **7/7 jobs SUCCESS**. The dedicated R23D-2B1R installed systemd job observed all nine acceptance markers including exact cleanup. Initial B1R run 38873699302 failed safe when the systemd environment omitted the B1Q disposable admission guard; diagnostic run 38873949220 identified `NOT_DISPOSABLE_GITHUB_RUNNER` from B1Q. The unit was fixed to pass **both** CI-scoped guards before accepting admission; final rerun succeeded. **Scope:** ONLY a dedicated ephemeral GitHub-hosted Linux VM. The lab creates an actual, enabled systemd unit file at `/etc/systemd/system/r23d2b1r-monitor-$PID.service` for the duration of the CI job, **then removes it, its enablement symlink, the fake Docker network/containers and nft table**. It intentionally restarts the runner's Docker daemon. **It does not reboot the VM or its kernel, and is NOT approved for HomeDocker.**
 
 ## Why B1R matters
 
@@ -8,7 +8,7 @@ B1Q tested a real transient systemd **one-shot** which checked tc+nft before att
 
 This monitor deliberately uses no Trakt/AIO secrets. Only two synthetic Docker peers on one `--internal` bridge, with no published host ports, no volumes, and `--restart no`. It recognizes exact project labels, image-independent Docker identities, current host veth, scoped tc filter evidence and the owned bridge-family nft timeout set. When valid, it calls the B1Q admission check and starts only the exact named fake server. When invalid, it disconnects and stops the exact server (if present). This is **polling**, not an asynchronous atomic kernel deny: up to the detection interval/command latency, a live TCP connection can be exposed after `nft` deletion.
 
-## Required live acceptance
+## Observed live acceptance — CI SUCCESS
 
 - Install and enable a real `Type=notify` systemd unit with `Restart=always`, `WatchdogSec`, `After`/`BindsTo`/`PartOf=docker.service`, and `WantedBy=docker.service`. Unit is only for disposable CI, not portable production code.
 - Start controller while nft/tc are absent. The fake server must remain stopped and `--network none`.
