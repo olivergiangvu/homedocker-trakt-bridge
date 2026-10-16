@@ -123,8 +123,11 @@ test('canonical-only Trakt stop is not an invented raw alias', () => {
 
 test('never learn identity from unrelated pause, failed scrobble or a speculative Trakt GET', async () => {
   const db = fakeDb();
+  // This case explicitly tests OPTED-IN graph learning. Gateway-off must
+  // preserve the old RC6 no-new-graph-write behavior.
   const client = new TraktClient({
     traktClientId: 'example', userAgent: 'test', historyDedupeSeconds: 60,
+    jellyfinGatewayEnabled: true,
   }, db);
   client.requestDetailed = async (_p, _path, _) => ({
     status: 201,
