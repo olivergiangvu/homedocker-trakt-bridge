@@ -102,7 +102,11 @@ class UnixConnection(http.client.HTTPConnection):
     def connect(self):
         sock=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
         sock.settimeout(self.timeout)
-        sock.connect(self.unix_path)
+        try:
+            sock.connect(self.unix_path)
+        except OSError:
+            sock.close()
+            raise
         self.sock=sock
 
 def to_host_aio(path,headers):
@@ -145,7 +149,7 @@ class ReadOnlyHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
     def do_POST(self):
-        self.send_header # No forwarded POST, including AuthByName.
+        # No forwarded POST, including AuthenticateByName.
         return self._reject(405,"get_only")
     do_PUT=do_POST
     do_PATCH=do_POST
