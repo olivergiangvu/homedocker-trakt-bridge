@@ -25,8 +25,10 @@ const ITEMS_A = [
 ];
 const NEXT_A = JSON.stringify({ Items: ITEMS_A, TotalRecordCount:2,
   StartIndex:0, OtherOpaque:'AIO-own-data' });
-const NEXT_B = JSON.stringify({ Items:[{Id:'B-only',SeriesId:'B-series',
-  Type:'Episode',UserData:{PlaybackPositionTicks:111}}],TotalRecordCount:1 });
+const NEXT_B = JSON.stringify({ Items:[
+  {Id:'B-only-1',SeriesId:'B-series-1',Type:'Episode',UserData:{PlaybackPositionTicks:111}},
+  {Id:'B-only-2',SeriesId:'B-series-2',Type:'Episode',UserData:{PlaybackPositionTicks:222}},
+],TotalRecordCount:2 });
 const RESUME_A = JSON.stringify({
   Items:[
     {Id:'movieA',Type:'Movie',UserData:{PlaybackPositionTicks:222}},
