@@ -327,7 +327,16 @@ for _ in $(seq 1 40); do
   sleep 0.12
 done
 detached
-[[ "$(docker inspect -f '{{.State.Running}}' "$SERVER")" == "false" ]] || {
+# The B1R controller disconnects before its bounded Docker stop completes.
+# Wait for the same exact-labeled fake container's State.Running=false.
+STOPPED=0
+for _ in $(seq 1 40);do
+  if [[ "$(docker inspect -f '{{.State.Running}}' "$SERVER")" == "false" ]];then
+    STOPPED=1;break
+  fi
+  sleep 0.15
+done
+[[ "$STOPPED" == "1" ]] || {
   echo "R23D2B1S_EXPECTED_STOPPED_FAKE_SERVER_STOP" >&2;exit 5;
 }
 PAUSED_PID="$(systemctl show -p MainPID --value "$UNIT")"
