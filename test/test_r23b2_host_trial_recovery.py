@@ -21,7 +21,8 @@ BOOT = '123e4567-e89b-12d3-a456-426614174000'
 def receipt(**kwargs):
     r = {'version': 1, 'nonce': NONCE, 'image_id': IMAGE,
          'canary_id': CANARY_ID, 'boot_id': BOOT,
-         'host_pid': None, 'host_start_ticks': None, 'ttl_seconds': 120}
+         'host_pid': None, 'host_start_ticks': None,
+         'launcher_pid': 101, 'launcher_start_ticks': 102, 'ttl_seconds': 120}
     r.update(kwargs)
     return r
 
@@ -73,6 +74,7 @@ class CrashRecovery(unittest.TestCase):
     def test_recovery_read_only_prints_only_safe_marker(self):
         with (mock.patch.object(mod.os, 'geteuid', return_value=0),
               mock.patch.object(mod, 'read_receipt', return_value=receipt()),
+              mock.patch.object(mod, '_controller_still_alive', return_value=False),
               mock.patch.object(mod, 'inspect_container', return_value=sidecar()),
               mock.patch.object(mod, 'remove_owned_sidecar') as rm,
               mock.patch.object(mod, '_stop_orphan_host') as stop,
@@ -88,6 +90,7 @@ class CrashRecovery(unittest.TestCase):
     def test_recovery_refuses_foreign_sidecar(self):
         with (mock.patch.object(mod.os, 'geteuid', return_value=0),
               mock.patch.object(mod, 'read_receipt', return_value=receipt()),
+              mock.patch.object(mod, '_controller_still_alive', return_value=False),
               mock.patch.object(mod, 'inspect_container', return_value=sidecar(nonce='d'*32)),
               mock.patch.object(mod, 'remove_owned_sidecar') as rm,
               mock.patch.object(mod, '_stop_orphan_host') as stop):
@@ -106,6 +109,7 @@ class CrashRecovery(unittest.TestCase):
     def test_recovery_owner_cleanup_happy_path(self):
         with (mock.patch.object(mod.os, 'geteuid', return_value=0),
               mock.patch.object(mod, 'read_receipt', return_value=receipt()),
+              mock.patch.object(mod, '_controller_still_alive', return_value=False),
               mock.patch.object(mod, 'inspect_container', side_effect=[sidecar(), None]),
               mock.patch.object(mod, 'remove_owned_sidecar', return_value=None) as rm,
               mock.patch.object(mod, '_stop_orphan_host', return_value=None) as stop,
@@ -123,6 +127,7 @@ class CrashRecovery(unittest.TestCase):
     def test_recovery_cleanup_failure_does_not_delete_socket_or_receipt(self):
         with (mock.patch.object(mod.os, 'geteuid', return_value=0),
               mock.patch.object(mod, 'read_receipt', return_value=receipt()),
+              mock.patch.object(mod, '_controller_still_alive', return_value=False),
               mock.patch.object(mod, 'inspect_container', return_value=sidecar()),
               mock.patch.object(mod, 'remove_owned_sidecar', return_value='SIDECAR_CLEANUP_FAILED'),
               mock.patch.object(mod, '_stop_orphan_host') as stop,
