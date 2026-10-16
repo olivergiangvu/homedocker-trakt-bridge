@@ -1,6 +1,6 @@
 # R23D-2B1U — Read-only Unified Gateway Application Contract Acceptance
 
-**Scope:** Node 24 synthetic local HTTP tests only. **No real AIOStreams/Jellyfin/Remux/Trellis clients, no production Trakt login, no HomeDocker apply, no database write, no version/tag/release approval.**
+**Synthetic HTTP contract: PASS.** [GitHub Actions 38882412892](https://github.com/olivergiangvu/homedocker-trakt-bridge/actions/runs/38882412892), dedicated `r23d-gateway-contract-acceptance` job SUCCESS: **all six B1U tests passed** and the general `test` job also SUCCESS. **Scope:** Node 24 synthetic local HTTP tests only. **No real AIOStreams/Jellyfin/Remux/Trellis clients, no production Trakt login, no HomeDocker apply, no database write, no version/tag/release approval.**
 
 ## What is being qualified
 
