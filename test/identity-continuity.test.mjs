@@ -151,6 +151,31 @@ test('never learn identity from unrelated pause, failed scrobble or a speculativ
   assert.equal(loadVerifiedIdentityGraph(db, 'p').shows['263102'].aliases[0], 'tt44094505');
 });
 
+test('Gateway disabled keeps successful Trakt stop free of new identity graph writes', async () => {
+  const db = fakeDb();
+  const client = new TraktClient({
+    traktClientId: 'synthetic', userAgent: 'synthetic', historyDedupeSeconds: 60,
+    jellyfinGatewayEnabled: false,
+  }, db);
+  client.requestDetailed = async () => ({
+    status: 201,
+    data: {
+      action: 'pause',
+      show: { ids: fixed },
+      episode: { ids: { trakt: 301 } },
+    },
+  });
+  const event = {
+    scope: 'episode', event: 'stop',
+    metaId: 'tt44094505', videoId: 'tt44094505:1:6',
+    season: 1, episode: 6,
+  };
+  const outcome = await client.applyEvent('p', event,
+    { kind: 'scrobble', action: 'stop', progress: 25 });
+  assert.equal(outcome.identityContinuity, undefined);
+  assert.deepEqual(loadVerifiedIdentityGraph(db, 'p').shows, {});
+});
+
 test('Bridge-owned graph stores no episode timeline, watched timestamp or personal credentials', () => {
   const db = fakeDb();
   observeVerifiedShowIdentity(db, 'p', fixed, 'tt44094505');
