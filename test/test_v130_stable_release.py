@@ -70,6 +70,33 @@ class StablePromotionRegressionTests(unittest.TestCase):
             with self.assertRaises(deploy.Stop):
                 deploy.check_flags(changed)
 
+    def test_exact_release_manifest_digest_must_match(self):
+        exact = deploy.PUBLISHED_STABLE_REF
+        self.assertEqual(deploy.attested_release_digest([exact]), exact)
+        self.assertEqual(
+            deploy.attested_release_digest([
+                deploy.IMAGE + "@sha256:" + "a"*64, exact
+            ]), exact)
+        for bad in (
+            [], None, "not-a-list", [deploy.IMAGE+"@sha256:"+"b"*64],
+            [exact, None], [12345],
+        ):
+            with self.subTest(bad=bad), self.assertRaises(deploy.Stop):
+                deploy.attested_release_digest(bad)
+
+    def test_published_stable_tag_drift_stops_before_backup_or_compose_write(self):
+        # A mutable tag moved to a new GHCR digest must NEVER be promoted.
+        from unittest.mock import patch
+        changed=deploy.IMAGE+"@sha256:"+"c"*64
+        expected_inspect=json.dumps([{"RepoDigests":[changed]}])
+        with patch.object(deploy.shutil,"which",return_value="/usr/bin/gh"), \
+             patch.object(deploy,"run",return_value="{}") as command, \
+             patch.object(deploy,"docker",return_value=expected_inspect) as inspect:
+            with self.assertRaisesRegex(deploy.Stop,"reviewed published digest"):
+                deploy.stable_image()
+        self.assertTrue(command.called)
+        inspect.assert_called_once_with("image","inspect",deploy.TAG)
+
     def test_stable_deploy_does_not_touch_aio_or_run_prune(self):
         src = (ROOT / "scripts/deploy-v1.3.0-homedocker.py").read_text()
         self.assertIn('"--no-deps"', src)
@@ -114,6 +141,45 @@ class StablePromotionRegressionTests(unittest.TestCase):
                 capture_output=True, text=True,
             )
             self.assertNotEqual(p.returncode, 0)
+
+    def test_root_owned_docker_volume_uses_readonly_privileged_stat(self):
+        source=(ROOT / "scripts/deploy-v1.3.0-homedocker.py").read_text()
+        self.assertIn('run("sudo", "-n", "python3", "-B", "-c", check_mount, src)',source)
+        self.assertIn("ROOT_ONLY_BRIDGE_VOLUME_DB=VERIFIED_READONLY",source)
+        self.assertNotIn('Path(mounts[0]["Source"]).is_dir()',source)
+        self.assertNotIn("chmod -R",source)
+        self.assertNotIn("chown -R",source)
+        code=source.split('    check_mount = r"""',1)[1].split('"""',1)[0]
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)/"protected-docker-data"
+            root.mkdir(mode=0o700)
+            db=root/"bridge.db"
+            db.write_bytes(b"fixture only; no DB mutations required")
+            p=subprocess.run([sys.executable,"-B","-c",code,str(root)],
+                             capture_output=True,text=True,timeout=3)
+            self.assertEqual(p.returncode,0,p.stderr)
+            self.assertEqual(p.stdout.strip(),"ROOT_ONLY_BRIDGE_VOLUME_DB=VERIFIED_READONLY")
+            self.assertEqual(db.read_bytes(),b"fixture only; no DB mutations required")
+            db.unlink()
+            p=subprocess.run([sys.executable,"-B","-c",code,str(root)],
+                             capture_output=True,text=True,timeout=3)
+            self.assertNotEqual(p.returncode,0)
+
+    def test_volume_root_symlink_or_db_symlink_rejected(self):
+        source=(ROOT / "scripts/deploy-v1.3.0-homedocker.py").read_text()
+        code=source.split('    check_mount = r"""',1)[1].split('"""',1)[0]
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)/"volume-data"
+            root.mkdir()
+            target=Path(td)/"db-target"
+            target.write_text("do-not-follow")
+            (root/"bridge.db").symlink_to(target)
+            for path in (root,Path(td)/"link"):
+                if path!=root: path.symlink_to(root, target_is_directory=True)
+                p=subprocess.run([sys.executable,"-B","-c",code,str(path)],
+                                 capture_output=True,text=True,timeout=3)
+                self.assertNotEqual(p.returncode,0)
+            self.assertEqual(target.read_text(),"do-not-follow")
 
     def test_rc7_mitigation_is_required_before_and_after_stable(self):
         from unittest.mock import patch

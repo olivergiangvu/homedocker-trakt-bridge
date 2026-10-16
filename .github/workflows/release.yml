@@ -15,6 +15,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # A tag push would otherwise publish :1.4 / :latest automatically.
+      # Fail before registry login, build or GHCR write until v1.4 release
+      # acceptance and host boot-fence qualification are recorded/reviewed.
+      # Applies to tagged commits that contain this workflow version.
+      - name: Block unqualified v1.4 Gateway publication
+        if: ${{ startsWith(github.ref_name, 'v1.4') }}
+        shell: bash
+        run: |
+          echo 'V140_STABLE_RELEASE_HOLD: missing independent host boot fence, continuous watchdog, total nft loss and Docker restart certification.' >&2
+          echo 'Do not publish v1.4 candidates or stable until a separately reviewed release-gate change.' >&2
+          exit 1
+
       - uses: actions/setup-node@v4
         with:
           node-version: '24'

@@ -28,6 +28,10 @@ REPO = "olivergiangvu/homedocker-trakt-bridge"
 IMAGE = "ghcr.io/olivergiangvu/homedocker-trakt-bridge"
 RC6 = IMAGE + "@sha256:d89865742b23a54361bff48637512caa37e4ba1b55f1d2ce4510dc737fd70ab2"
 TAG = IMAGE + ":1.3.0"
+# Exact manifest-list digest independently attested by GitHub Release run
+# 38491804075 on 2026-10-14; NEVER accept a later mutable :1.3.0 retag.
+PUBLISHED_STABLE_DIGEST = "sha256:b15e31895eef825f55f33ada6fa3066747a6f954fbdf4acedb7a083615126f37"
+PUBLISHED_STABLE_REF = IMAGE + "@" + PUBLISHED_STABLE_DIGEST
 BRIDGE = "trakt-bridge"
 AIO = "aiostreams"
 OPENER = build_opener(ProxyHandler({}))
@@ -138,9 +142,37 @@ print("ROOT_ONLY_COMPOSE_ENV=VALIDATED_WITHOUT_SECRET_OUTPUT")
     if image_rendered != current:
         raise Stop("Compose rendered image does not equal current image; manager drift")
     mounts = [m for m in info.get("Mounts", []) if m.get("Destination") == "/app/data"]
-    if len(mounts) != 1 or not Path(mounts[0]["Source"]).is_dir():
+    if len(mounts) != 1 or mounts[0].get("Type") not in ("volume", "bind"):
         raise Stop("Bridge /app/data persistent mount is missing/ambiguous")
-    return info, cmd, envfile, paths, mounts[0]["Source"]
+    src = mounts[0].get("Source")
+    if not isinstance(src, str) or not src.startswith("/"):
+        raise Stop("Bridge /app/data source path invalid")
+    # Docker-managed volumes under /var/lib/docker/volumes are deliberately
+    # inaccessible to the SSH user. Read-only stat MUST use the same elevated
+    # context already needed for root-protected Compose files. Do not chown
+    # or chmod Docker-managed volume directories to make this check pass.
+    check_mount = r"""
+from pathlib import Path
+import os, stat, sys
+root = Path(sys.argv[1])
+if not root.is_absolute() or root.is_symlink():
+    raise SystemExit("STOP: Bridge /app/data root invalid")
+root_st = os.stat(root, follow_symlinks=False)
+if not stat.S_ISDIR(root_st.st_mode):
+    raise SystemExit("STOP: Bridge /app/data root not directory")
+db = root / "bridge.db"
+if db.is_symlink():
+    raise SystemExit("STOP: Bridge SQLite database symlink")
+db_st = os.stat(db, follow_symlinks=False)
+if not stat.S_ISREG(db_st.st_mode):
+    raise SystemExit("STOP: Bridge SQLite database missing/not regular")
+print("ROOT_ONLY_BRIDGE_VOLUME_DB=VERIFIED_READONLY")
+"""
+    evidence = run("sudo", "-n", "python3", "-B", "-c", check_mount, src)
+    if evidence.strip() != "ROOT_ONLY_BRIDGE_VOLUME_DB=VERIFIED_READONLY":
+        raise Stop("Bridge /app/data root-only inspection not verified")
+    print("ROOT_ONLY_BRIDGE_VOLUME_DB=VERIFIED_READONLY")
+    return info, cmd, envfile, paths, src
 
 
 def backup(src_db, envfile, compose_files, prev_ref, aio_id):
@@ -238,6 +270,20 @@ def rc7_identity_guard():
     print("RC7_IDENTITY=KNOWN_PAIR_SAFE_READONLY")
 
 
+def attested_release_digest(digests):
+    """Require EXACT reviewed GHCR published manifest, never an arbitrary :tag.
+
+    RepoDigests can contain multiple refs; deterministic lexicographic choice
+    is not release provenance. A missing original manifest-list digest MUST
+    fail closed before backing up or editing any Compose/.env file.
+    """
+    if not isinstance(digests, list) or any(not isinstance(x, str) for x in digests):
+        raise Stop("stable image RepoDigests malformed")
+    if PUBLISHED_STABLE_REF not in digests:
+        raise Stop("stable GHCR tag is not the reviewed published digest")
+    return PUBLISHED_STABLE_REF
+
+
 def stable_image():
     if shutil.which("gh") is None:
         raise Stop("GitHub CLI required to verify published v1.3 release")
@@ -245,11 +291,9 @@ def stable_image():
     print("GITHUB_RELEASE=CONFIRMED")
     run("docker", "pull", TAG)
     imgs = json.loads(docker("image", "inspect", TAG))
-    digests = (imgs[0].get("RepoDigests") or [])
-    matching = sorted(d for d in digests if d.startswith(IMAGE+"@sha256:"))
-    if not matching:
-        raise Stop("stable digest not found in local Docker RepoDigests")
-    pinned = matching[0]
+    if not isinstance(imgs,list) or len(imgs)!=1 or not isinstance(imgs[0],dict):
+        raise Stop("stable Docker image inspection malformed")
+    pinned = attested_release_digest(imgs[0].get("RepoDigests"))
     docker("image", "inspect", pinned)
     return pinned
 

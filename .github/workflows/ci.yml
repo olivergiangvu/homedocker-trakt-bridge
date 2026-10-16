@@ -336,3 +336,393 @@ jobs:
           test "$code" = "503"
           grep -q '"status":"setup_required"' /tmp/readiness.json
           grep -q "\"schemaVersion\":${expected_schema}" /tmp/readiness.json
+
+  # R23D-2B1K: privileged test is confined to PRIVATE NETNS on a disposable
+  # GitHub-hosted runner, never HomeDocker, Portainer or a production server.
+  r23d-kernel-namespace-lab:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify isolated CI kernel-lab prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v nft >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq nftables
+          fi
+          command -v ip
+          command -v nft
+          command -v python3
+          bash -n scripts/probe-v140-r23d2b1k-ephemeral-kernel-ci.sh
+          python3 -B -c 'import ast,pathlib;ast.parse(pathlib.Path("scripts/probe-v140-r23d2b1k-ci.py").read_text())'
+      - name: R23D-2B1K isolated real kernel nft INPUT/FORWARD/IPv6 TCP
+        shell: bash
+        env:
+          RUNNER_ENVIRONMENT: github-hosted
+        run: |
+          set -euo pipefail
+          sudo --preserve-env=CI,GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT \
+            bash scripts/probe-v140-r23d2b1k-ephemeral-kernel-ci.sh --ci-ephemeral-only
+
+      - name: R23D-2B1L guarded crash lease in disposable kernel namespace
+        shell: bash
+        env:
+          RUNNER_ENVIRONMENT: github-hosted
+        run: |
+          set -euo pipefail
+          bash -n scripts/probe-v140-r23d2b1l-guardian-crash-ci.sh
+          sudo --preserve-env=CI,GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT \
+            bash scripts/probe-v140-r23d2b1l-guardian-crash-ci.sh --ci-ephemeral-only
+
+      - name: R23D-2B1M independent tc boot fence survives total nft loss
+        shell: bash
+        env:
+          RUNNER_ENVIRONMENT: github-hosted
+        run: |
+          set -euo pipefail
+          command -v tc
+          bash -n scripts/probe-v140-r23d2b1m-tc-nft-total-loss-ci.sh
+          sudo --preserve-env=CI,GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT \
+            bash scripts/probe-v140-r23d2b1m-tc-nft-total-loss-ci.sh --ci-ephemeral-only
+
+  # R23D-2B1N runs on its OWN disposable GitHub-hosted VM.
+  # It deliberately restarts that VM's Docker daemon and MUST NEVER be
+  # invoked from a self-hosted runner or HomeDocker.
+  r23d-real-docker-daemon-recovery-lab:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify dedicated GitHub-hosted Docker daemon lab prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v docker
+          command -v ip
+          command -v tc
+          command -v nsenter
+          command -v systemctl
+          systemctl is-active --quiet docker
+          bash -n scripts/probe-v140-r23d2b1n-real-docker-daemon-ci.sh
+          python3 -B -c 'import ast,pathlib;ast.parse(pathlib.Path("scripts/probe-v140-r23d2b1n-docker-fake-ci.py").read_text())'
+      - name: R23D-2B1N real private Docker bridge and daemon restart
+        shell: bash
+        env:
+          RUNNER_ENVIRONMENT: github-hosted
+        run: |
+          set -euo pipefail
+          sudo --preserve-env=CI,GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT \
+            bash scripts/probe-v140-r23d2b1n-real-docker-daemon-ci.sh --ci-ephemeral-only
+
+  # R23D-2B1O runs on a distinct, unused disposable GitHub-hosted VM.
+  # Actual systemctl restart docker, fake TCP and SIGKILL fault injection.
+  r23d-mutual-admission-guardian-lab:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify isolated dual-process guardian Docker lab prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v docker
+          command -v ip
+          command -v tc
+          command -v nsenter
+          command -v python3
+          command -v systemctl
+          systemctl is-active --quiet docker
+          bash -n scripts/probe-v140-r23d2b1o-admission-failure-ci.sh
+          python3 -B -c 'import ast,pathlib;ast.parse(pathlib.Path("scripts/probe-v140-r23d2b1o-admission-guardian-ci.py").read_text())'
+      - name: R23D-2B1O two-process watchdog and guarded Docker recovery
+        shell: bash
+        env:
+          RUNNER_ENVIRONMENT: github-hosted
+        run: |
+          set -euo pipefail
+          sudo --preserve-env=CI,GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT \
+            bash scripts/probe-v140-r23d2b1o-admission-failure-ci.sh --ci-ephemeral-only
+
+  # R23D-2B1P: separate disposable GitHub-hosted VM, real Docker bridge and
+  # kernel nft bridge set with a 3s lease. NO HomeDocker/shell host access.
+  r23d-kernel-expiring-admission-lease-lab:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify B1P runner and nftables prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v nft >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq nftables
+          fi
+          command -v docker
+          command -v nsenter
+          command -v tc
+          command -v python3
+          command -v nft
+          bash -n scripts/probe-v140-r23d2b1p-real-docker-nft-lease-ci.sh
+          python3 -B -c 'import ast,pathlib;ast.parse(pathlib.Path("scripts/probe-v140-r23d2b1p-fake-tcp-session-ci.py").read_text())'
+      - name: R23D-2B1P dual SIGKILL expiring nft bridge lease with real Docker
+        shell: bash
+        env:
+          RUNNER_ENVIRONMENT: github-hosted
+        run: |
+          set -euo pipefail
+          sudo --preserve-env=CI,GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT \
+            bash scripts/probe-v140-r23d2b1p-real-docker-nft-lease-ci.sh --ci-ephemeral-only
+
+  # R23D-2B1Q: isolated systemd transient admission, fake Docker network
+  # disconnection and actual Docker daemon restart. NO true host reboot.
+  r23d-systemd-network-interlock-lab:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify disposable real systemd and Docker prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v nft >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq nftables
+          fi
+          command -v systemd-run
+          command -v systemctl
+          command -v docker
+          command -v nft
+          command -v tc
+          command -v nsenter
+          command -v python3
+          systemctl is-active --quiet docker
+          bash -n scripts/probe-v140-r23d2b1q-systemd-docker-admission-ci.sh
+          python3 -B -c 'import ast,pathlib;ast.parse(pathlib.Path("scripts/probe-v140-r23d2b1q-systemd-admission-ci.py").read_text())'
+      - name: R23D-2B1Q actual systemd admission and nft-loss Docker hold
+        shell: bash
+        env:
+          RUNNER_ENVIRONMENT: github-hosted
+        run: |
+          set -euo pipefail
+          sudo --preserve-env=CI,GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT \
+            bash scripts/probe-v140-r23d2b1q-systemd-docker-admission-ci.sh --ci-ephemeral-only
+
+  # R23D-2B1R: dedicated disposable GH-hosted VM ONLY. Installs one
+  # exact test-owned /etc/systemd/system unit, restarts DOCKER daemon,
+  # and removes the unit during scoped cleanup. NOT a real reboot.
+  r23d-persistent-systemd-boot-interlock-lab:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify isolated persistent-systemd Docker test prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v nft >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq nftables
+          fi
+          command -v docker
+          command -v systemctl
+          command -v systemd-analyze
+          command -v nft
+          command -v tc
+          command -v nsenter
+          systemctl is-active --quiet docker
+          bash -n scripts/probe-v140-r23d2b1r-persistent-systemd-docker-ci.sh
+          python3 -B -c 'import ast,pathlib;ast.parse(pathlib.Path("scripts/probe-v140-r23d2b1r-persistent-systemd-monitor-ci.py").read_text())'
+      - name: R23D-2B1R persistent systemd real-Docker nft-loss and daemon restart
+        shell: bash
+        env:
+          RUNNER_ENVIRONMENT: github-hosted
+        run: |
+          set -euo pipefail
+          sudo --preserve-env=CI,GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT \
+            bash scripts/probe-v140-r23d2b1r-persistent-systemd-docker-ci.sh --ci-ephemeral-only
+
+  # B1S privileged Docker API bypass negative control. Disposable runner.
+  r23d-privileged-docker-bypass-negative-lab:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify no host side-effects outside exact disposable runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v nft >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq nftables
+          fi
+          bash -n scripts/probe-v140-r23d2b1s-privileged-docker-bypass-ci.sh
+          systemctl is-active --quiet docker
+      - name: B1S prove Docker API bypass against paused systemd monitor
+        shell: bash
+        env:
+          RUNNER_ENVIRONMENT: github-hosted
+        run: |
+          set -euo pipefail
+          sudo --preserve-env=CI,GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT \
+            bash scripts/probe-v140-r23d2b1s-privileged-docker-bypass-ci.sh --ci-ephemeral-only
+
+  # B1S: real Ubuntu guest kernel reboot on a dedicated disposable GitHub VM.
+  # QEMU guest reboot only; host never rebooted; requires /dev/kvm.
+  r23d-real-qemu-guest-kernel-reboot-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify GitHub runner KVM and install isolated QEMU guest tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -c /dev/kvm
+          sudo test -r /dev/kvm
+          sudo test -w /dev/kvm
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-system-x86 qemu-utils cloud-image-utils
+          bash -n scripts/probe-v140-r23d2b1s-real-vm-reboot-ci.sh
+      - name: B1S real guest Linux kernel reboot plus guest Docker systemd admission HOLD
+        shell: bash
+        env:
+          RUNNER_ENVIRONMENT: github-hosted
+        run: |
+          set -euo pipefail
+          sudo --preserve-env=CI,GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT \
+            bash scripts/probe-v140-r23d2b1s-real-vm-reboot-ci.sh --ci-ephemeral-only
+
+  # B1T: only a dedicated disposable GitHub-hosted runner; no Docker
+  # daemon restart, HomeDocker, or external network requests by probes.
+  r23d-production-shaped-network-and-socket-lab:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check disposable non-internal Docker NAT lab requirements
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v docker
+          command -v ip
+          command -v setpriv
+          command -v python3
+          command -v nsenter
+          bash -n scripts/probe-v140-r23d2b1t-real-nat-and-socket-ci.sh
+          python3 -B -c 'import ast,pathlib;ast.parse(pathlib.Path("scripts/probe-v140-r23d2b1t-external-echo-ci.py").read_text())'
+      - name: B1T Docker real SNAT, loopback publish and unprivileged socket boundary
+        shell: bash
+        env:
+          RUNNER_ENVIRONMENT: github-hosted
+        run: |
+          set -euo pipefail
+          sudo --preserve-env=CI,GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT \
+            bash scripts/probe-v140-r23d2b1t-real-nat-and-socket-ci.sh --ci-ephemeral-only
+
+  # R23D-2B1U: entirely synthetic AIO/Jellyfin/Trakt identities and history.
+  # No HomeDocker, upstream credentials or real application-side writes.
+  r23d-gateway-contract-acceptance:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: B1U read-only same-user NextUp/Resume and no-second-writer contracts
+        run: |
+          set -euo pipefail
+          node --check src/jellyfin-gateway.mjs
+          node --check test/v140-r23d2b1u-gateway-acceptance.test.mjs
+          node --test test/v140-r23d2b1u-gateway-acceptance.test.mjs
+
+  # B1V: no host services or credentials. Python tests inject local fake
+  # GET sources and assert no network write or unauthorized URL paths.
+  r23d-live-http-comparator-contract:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: B1V read-only source/Gateway comparator regression tests
+        run: |
+          set -euo pipefail
+          python3 -B -m unittest discover -s test \
+            -p 'test_v140_r23d2b1v_live_http_readonly.py' -v
+          python3 -B -m unittest discover -s test \
+            -p 'test_v140_r23d2b1v_username_password_auth.py' -v
+          python3 -B scripts/audit-v140-r23d2b1v-real-client-readonly.py \
+            --compare >/tmp/b1v-refusal.out 2>/tmp/b1v-refusal.err \
+            && exit 1 || rc=$?
+          test "$rc" -eq 5
+          grep -Fq EXPLICIT_LIVE_USERNAME_PASSWORD_LOGIN_CONFIRMATION_REQUIRED \
+            /tmp/b1v-refusal.err
+          python3 -B scripts/audit-v140-r23d2b1v-real-client-readonly.py \
+            --compare --existing-token --confirm LIVE_AUTH_LOGIN_GET_ONLY \
+            >/tmp/b1v-token-refusal.out 2>/tmp/b1v-token-refusal.err \
+            && exit 1 || rc=$?
+          test "$rc" -eq 5
+          grep -Fq EXPLICIT_LIVE_TOKEN_CONFIRMATION_REQUIRED \
+            /tmp/b1v-token-refusal.err
+
+  # R23B-2: no Docker/host access, no credentials; one temporary local
+  # TCP fake AIO, Unix HTTP relay and loopback-sidecar socket in CI.
+  r23b2-readonly-unix-relay-contract:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: R23B-2 sidecar/Unix/local AIO GET-only and rollback contract
+        run: |
+          set -euo pipefail
+          python3 -B -m unittest discover -s test \
+            -p 'test_r23b2_unix_get_only_relay.py' -v
+          python3 -B -m unittest discover -s test \
+            -p 'test_r23b2_host_relay_prereq_readonly.py' -v
+          python3 -B -m unittest discover -s test \
+            -p 'test_r23b2_ephemeral_trial_operator.py' -v
+          python3 -B -m py_compile scripts/r23b2-experimental-aio-unix-get-relay.py
+          python3 -B -m py_compile scripts/audit-r23b2-host-relay-prereqs.py
+          python3 -B -m py_compile scripts/trial-r23b2-ephemeral-relay-acceptance.py
+
+  # Dedicated disposable GitHub runner: REAL Docker sidecar on shared
+  # canary netns, private UID65534 Unix socket, host-only fake AIO.
+  # NO HomeDocker or actual AIO credentials; teardown is exact-labeled.
+  r23b2-real-docker-netns-get-relay-lab:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check R23B2 disposable shared-network-namespace lab source
+        run: |
+          set -euo pipefail
+          command -v docker
+          command -v setpriv
+          command -v python3
+          bash -n scripts/probe-r23b2-real-docker-netns-unix-ci.sh
+      - name: Prove real rootless sidecar in canary netns and scoped Unix rollback
+        shell: bash
+        env:
+          RUNNER_ENVIRONMENT: github-hosted
+        run: |
+          set -euo pipefail
+          sudo --preserve-env=CI,GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT \
+            bash scripts/probe-r23b2-real-docker-netns-unix-ci.sh --ci-ephemeral-only

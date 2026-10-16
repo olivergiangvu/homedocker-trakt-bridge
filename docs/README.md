@@ -2,7 +2,7 @@
 
 This is the versioned user manual for HomeDocker Trakt Bridge.
 
-The repository and GHCR package are public. `v1.3.0` promotes the established RC6 runtime without behavior/schema changes. Publication and on-host cutover require separate release and deployment acceptance; AIOStreams remains independently rolling on `latest`.
+The repository and GHCR package are public. **v1.3.0 is published stable (2026-10-14)**, promoted from qualified RC6 with no behavior/schema changes. The latest confirmed HomeDocker runtime in the release records is still RC6; actual host upgrade must be verified separately. AIOStreams remains independently rolling on `latest`. **v1.4 R23D is research-only in Draft PR #95, not a stable release.**
 
 ## User guides
 
@@ -34,6 +34,18 @@ AIOStreams   = Jellyfin-compatible playback/state surface
 AIOMetadata  = metadata/catalog + optional secondary-tracker write fan-out
 ```
 
+## Current release and upgrade
+
+| Item | Canonical record |
+| --- | --- |
+| Latest published stable | [v1.3.0 release](https://github.com/olivergiangvu/homedocker-trakt-bridge/releases/tag/v1.3.0) — immutable tag and published image |
+| Bridge-only HomeDocker upgrade | [Stable deployment runbook](STABLE-DEPLOYMENT.md) — exact source pin, guarded preflight, SQLite backup, rollback and acceptance |
+| Stable qualification history | [v1.3 operator evidence and limitations](design/v1.3-stable-qualification.md) — evidence through 2026-10-13; later publication does not rewrite historic observations |
+| Historical release notes | [Versioned archive](releases/) — preserve RC notes and stable records for audit |
+| Unreleased v1.4 Unified Gateway | [Phase closure and release HOLD](V140-PHASE-CLOSURE-AND-RELEASE-HOLD.md) — qualified lab milestones, missing production fences, no v1.4 tag/deploy; [Draft PR #95](https://github.com/olivergiangvu/homedocker-trakt-bridge/pull/95) holds detailed prototype evidence |
+
+**Documentation cleanup policy:** keep `docs/releases/v*.md`, RC7 closure reports and rollback references intact. Keep general user instructions in the main five guides, release deployment in this one runbook, and experimental v1.4 documentation on its separate Draft PR branch. No deletion of tagged history or production rollback artifacts.
+
 ## Advanced / maintainer docs
 
 These pages are intentionally kept out of the main README because most users do not need them:
@@ -42,7 +54,7 @@ These pages are intentionally kept out of the main README because most users do 
 - [Development](DEVELOPMENT.md) — contributor notes, identity edge cases, tests and release engineering
 - [Release acceptance records](releases/) — canary, published-artifact and HomeDocker acceptance history
 - [RC7 closure and cleanup](RC7-CLOSURE-AND-CLEANUP.md) — operational acceptance, archived PRs, branch housekeeping and Docker safe inventory
-- [v1.3 Stable qualification](design/v1.3-stable-qualification.md) — remaining release gates, separate from completed RC7 tooling
+- [v1.3 Stable qualification](design/v1.3-stable-qualification.md) — historical live RC6 evidence, residual risk and the accepted publication boundary
 - [Security policy](../SECURITY.md)
 - [Changelog](../CHANGELOG.md)
 

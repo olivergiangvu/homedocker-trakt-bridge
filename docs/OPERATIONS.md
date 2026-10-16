@@ -53,6 +53,10 @@ For a live SQLite database, prefer SQLite's online backup mechanism instead of b
 
 ## Update
 
+**Qualified HomeDocker RC6 → published v1.3.0 Stable:** follow the [exact-SHA, Bridge-only rollout runbook](STABLE-DEPLOYMENT.md). The public v1.3.0 GitHub release exists, but source publication does not prove that the HomeDocker host has been upgraded. The guarded helper requires exact RC6 image identity, root-protected Compose project validation, online SQLite backup and verification of the existing RC7 identity mitigation. It recreates **only `trakt-bridge`** and does not pull or restart AIOStreams. If any preflight check fails, stop instead of issuing generic full-stack Compose commands.
+
+The generic instructions below are for *other explicitly managed installations*, not a substitute for the HomeDocker qualified production runbook.
+
 The GHCR package is public and supports anonymous pulls.
 
 If you intentionally follow `latest`:
