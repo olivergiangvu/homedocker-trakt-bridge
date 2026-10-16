@@ -155,8 +155,8 @@ if __name__=="__main__":
     p.add_argument("--client",required=True)
     p.add_argument("--network",required=True)
     p.add_argument("--bridge",required=True)
-    p.add_argument("--server-ip",default="172.31.251.3")
-    p.add_argument("--client-ip",default="172.31.251.2")
+    p.add_argument("--server-ip",default="172.31.252.3")
+    p.add_argument("--client-ip",default="172.31.252.2")
     p.add_argument("--guard-heartbeat",required=True)
     p.add_argument("--watchdog-heartbeat",required=True)
     p.add_argument("--guard-pidfile",required=True)
@@ -169,7 +169,7 @@ if __name__=="__main__":
             not re.fullmatch(r"r23d2b1o-peer-[1-9][0-9]*",args.client) or
             not re.fullmatch(r"r23d2b1o-private-[1-9][0-9]*",args.network) or
             args.bridge!="br-r23d2b1o" or
-            args.server_ip!="172.31.251.3" or args.client_ip!="172.31.251.2"):
+            args.server_ip!="172.31.252.3" or args.client_ip!="172.31.252.2"):
             stop("B1O_STOP_NON_LAB_DOCKER_RESOURCE")
         if args.role=="watchdog": watchdog_loop(args)
         else: guard_loop(args)
