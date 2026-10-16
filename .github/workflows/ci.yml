@@ -387,3 +387,33 @@ jobs:
           bash -n scripts/probe-v140-r23d2b1m-tc-nft-total-loss-ci.sh
           sudo --preserve-env=CI,GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT \
             bash scripts/probe-v140-r23d2b1m-tc-nft-total-loss-ci.sh --ci-ephemeral-only
+
+  # R23D-2B1N runs on its OWN disposable GitHub-hosted VM.
+  # It deliberately restarts that VM's Docker daemon and MUST NEVER be
+  # invoked from a self-hosted runner or HomeDocker.
+  r23d-real-docker-daemon-recovery-lab:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify dedicated GitHub-hosted Docker daemon lab prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v docker
+          command -v ip
+          command -v tc
+          command -v nsenter
+          command -v systemctl
+          systemctl is-active --quiet docker
+          bash -n scripts/probe-v140-r23d2b1n-real-docker-daemon-ci.sh
+          python3 -B -c 'import ast,pathlib;ast.parse(pathlib.Path("scripts/probe-v140-r23d2b1n-docker-fake-ci.py").read_text())'
+      - name: R23D-2B1N real private Docker bridge and daemon restart
+        shell: bash
+        env:
+          RUNNER_ENVIRONMENT: github-hosted
+        run: |
+          set -euo pipefail
+          sudo --preserve-env=CI,GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT \
+            bash scripts/probe-v140-r23d2b1n-real-docker-daemon-ci.sh --ci-ephemeral-only
