@@ -1,5 +1,8 @@
 # v1.4.0 Unified Gateway — phase closure register and release hold
 
+
+> **Release-scope decision / 2026-10-16 (review proposal; do not rewrite history):** The HomeDocker operator chose the narrower **Practical Unified Gateway** release target. Its [scope, trusted Docker/root-admin boundary and G0–G4 Definition of Done](design/v1.4-practical-unified-gateway-release-charter.md) are the proposed forward-looking release policy. The R23D kernel/guardian/fence experiments and privileged-Docker negative evidence in this report remain historically accurate but are **proposed for removal from the practical release critical path**, not magically completed. The review PR must be accepted before changing the release policy; `V140_STABLE_RELEASE_HOLD`, unmerged Draft PRs and tag publishing safeguards stay in place meanwhile. R23A was deliberately retired per merged PR #103; any old host preflight requiring that exact stopped container is stale and must be corrected without dropping present rollback/backup verification.
+
 **Date:** 2026-10-16
 **Release status:** `V140_STABLE_RELEASE_HOLD`
 **Latest GitHub stable:** `v1.3.0` published 2026-10-14; immutable GHCR digest `sha256:b15e31895eef825f55f33ada6fa3066747a6f954fbdf4acedb7a083615126f37`
