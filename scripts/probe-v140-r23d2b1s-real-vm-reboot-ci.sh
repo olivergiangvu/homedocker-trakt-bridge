@@ -112,7 +112,7 @@ qemu-system-x86_64 -enable-kvm -machine q35 -m 2560 -smp 2 \
   -drive "file=$TMP/seed.iso,if=virtio,media=cdrom" \
   -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:$PORT-:22" \
   -device virtio-net-pci,netdev=net0 \
-  -nographic -serial "file:$TMP/guest-serial.log" \
+  -display none -serial "file:$TMP/guest-serial.log" \
   -daemonize -pidfile "$TMP/vm.pid"
 VM_PID="$(cat "$TMP/vm.pid")"
 [[ "$VM_PID" =~ ^[1-9][0-9]*$ ]]
