@@ -142,9 +142,37 @@ print("ROOT_ONLY_COMPOSE_ENV=VALIDATED_WITHOUT_SECRET_OUTPUT")
     if image_rendered != current:
         raise Stop("Compose rendered image does not equal current image; manager drift")
     mounts = [m for m in info.get("Mounts", []) if m.get("Destination") == "/app/data"]
-    if len(mounts) != 1 or not Path(mounts[0]["Source"]).is_dir():
+    if len(mounts) != 1 or mounts[0].get("Type") not in ("volume", "bind"):
         raise Stop("Bridge /app/data persistent mount is missing/ambiguous")
-    return info, cmd, envfile, paths, mounts[0]["Source"]
+    src = mounts[0].get("Source")
+    if not isinstance(src, str) or not src.startswith("/"):
+        raise Stop("Bridge /app/data source path invalid")
+    # Docker-managed volumes under /var/lib/docker/volumes are deliberately
+    # inaccessible to the SSH user. Read-only stat MUST use the same elevated
+    # context already needed for root-protected Compose files. Do not chown
+    # or chmod Docker-managed volume directories to make this check pass.
+    check_mount = r"""
+from pathlib import Path
+import os, stat, sys
+root = Path(sys.argv[1])
+if not root.is_absolute() or root.is_symlink():
+    raise SystemExit("STOP: Bridge /app/data root invalid")
+root_st = os.stat(root, follow_symlinks=False)
+if not stat.S_ISDIR(root_st.st_mode):
+    raise SystemExit("STOP: Bridge /app/data root not directory")
+db = root / "bridge.db"
+if db.is_symlink():
+    raise SystemExit("STOP: Bridge SQLite database symlink")
+db_st = os.stat(db, follow_symlinks=False)
+if not stat.S_ISREG(db_st.st_mode):
+    raise SystemExit("STOP: Bridge SQLite database missing/not regular")
+print("ROOT_ONLY_BRIDGE_VOLUME_DB=VERIFIED_READONLY")
+"""
+    evidence = run("sudo", "-n", "python3", "-B", "-c", check_mount, src)
+    if evidence.strip() != "ROOT_ONLY_BRIDGE_VOLUME_DB=VERIFIED_READONLY":
+        raise Stop("Bridge /app/data root-only inspection not verified")
+    print("ROOT_ONLY_BRIDGE_VOLUME_DB=VERIFIED_READONLY")
+    return info, cmd, envfile, paths, src
 
 
 def backup(src_db, envfile, compose_files, prev_ref, aio_id):
