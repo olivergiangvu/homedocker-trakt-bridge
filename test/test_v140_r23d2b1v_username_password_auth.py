@@ -112,7 +112,7 @@ class AuthenticationContract(unittest.TestCase):
             contextlib.redirect_stdout(out),
         ):
             mod.main()
-        payload=json.loads(out.getvalue().split("\n",2)[2])
+        payload=json.loads(out.getvalue()[out.getvalue().index("{"):])
         self.assertEqual(payload["authentication_post_requests"],1)
         self.assertTrue(payload["authentication_created_server_session"])
         self.assertEqual(payload["authentication_mode"],"USERNAME_PASSWORD_LOGIN")
