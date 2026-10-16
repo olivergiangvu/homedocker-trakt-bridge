@@ -62,9 +62,14 @@ class AuthenticationContract(unittest.TestCase):
     def test_no_redirect_or_proxy_used_for_real_http(self):
         self.assertEqual(mod.AIO,"http://127.0.0.1:3240/jellyfin")
         self.assertEqual(mod.GATEWAY,"http://127.0.0.1:17141")
-        self.assertTrue(any(isinstance(h,mod.request.ProxyHandler)
-                            for h in mod.OPENER.handlers))
+        # urllib.build_opener deliberately omits an EMPTY ProxyHandler;
+        # that is the correct behavior (no proxy routing is registered).
+        self.assertIn('request.ProxyHandler({})',SCRIPT.read_text())
+        self.assertFalse(any(isinstance(h,mod.request.ProxyHandler)
+                             for h in mod.OPENER.handlers))
         self.assertTrue(any(isinstance(h,mod.request.HTTPRedirectHandler)
+                            and h.redirect_request(None,None,None,None,None,None)
+                                is None
                             for h in mod.OPENER.handlers))
     def test_malformed_or_oversize_login_response_stops_without_sending_token(self):
         for payload in (b"{}",b'{"AccessToken":"abcd","User":{"Id":"x"}}',
