@@ -4,7 +4,7 @@
 
 **Host status:** the latest independently evidenced HomeDocker application runtime was `v1.3.0-rc.6`. Do not infer stable deployment merely from the public GitHub Release, from CI or from pushing documentation. This runbook is only valid if the actual host preflight reconfirms the qualified RC6 digest.
 
-**Reviewed operator tooling:** tested source commit `46e5561940393db038a87d6a3c3e8ee08bcb2d26`, which includes the original post-tag root-protected Compose/RC7 verifier fix and a later **operator-only immutable GHCR digest gate**. These post-tag commits modify host-side deployment tooling/tests/docs only; the stable application image stays the original v1.3.0 tag. To avoid ref drift, **use this exact immutable tooling commit for the host procedure**, not an unqualified `main` or Draft v1.4 branch.
+**Reviewed operator tooling:** tested source commit `7914fe3d6c876a8eef4444969857f512cb57a493`, which includes the original post-tag root-protected Compose/RC7 verifier fix and a later **operator-only immutable GHCR digest gate**. These post-tag commits modify host-side deployment tooling/tests/docs only; the stable application image stays the original v1.3.0 tag. To avoid ref drift, **use this exact immutable tooling commit for the host procedure**, not an unqualified `main` or Draft v1.4 branch.
 
 
 **CI-attested image identity:** `ghcr.io/olivergiangvu/homedocker-trakt-bridge@sha256:b15e31895eef825f55f33ada6fa3066747a6f954fbdf4acedb7a083615126f37` was built, published and smoke-tested in [Release run 38491804075](https://github.com/olivergiangvu/homedocker-trakt-bridge/actions/runs/38491804075). The operator helper now rejects a mutable `:1.3.0` tag if its local RepoDigests do not include exactly this published reference, **before** backup, Compose edit or Bridge recreate. A `docker pull :1.3.0` still populates local image cache but must never silently replace the reviewed manifest.
@@ -25,7 +25,7 @@ A fresh detached checkout avoids running a mutable branch or a script copied to 
 ```bash
 (
 set -euo pipefail
-SHA="46e5561940393db038a87d6a3c3e8ee08bcb2d26"
+SHA="7914fe3d6c876a8eef4444969857f512cb57a493"
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
 git clone --quiet --no-checkout \
@@ -50,7 +50,7 @@ Only if the actual fresh Step 1 output passes, and operator accepts the automati
 ```bash
 (
 set -euo pipefail
-SHA="46e5561940393db038a87d6a3c3e8ee08bcb2d26"
+SHA="7914fe3d6c876a8eef4444969857f512cb57a493"
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
 git clone --quiet --no-checkout \
