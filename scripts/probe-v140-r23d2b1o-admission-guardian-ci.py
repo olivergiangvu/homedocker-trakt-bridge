@@ -53,10 +53,16 @@ def verify(c,name,net,ip):
         or c["HostConfig"]["Privileged"] is not False
         or c["HostConfig"].get("PortBindings") not in (None,{})
         or c["HostConfig"]["NetworkMode"]!=net
-        or set(c["NetworkSettings"]["Networks"])!={net}
-        or c["NetworkSettings"]["Networks"][net]["IPAddress"]!=ip
         or (c["Config"].get("Labels") or {}).get("r23d2b1o.lab")!="ephemeral"):
         stop("B1O_DOCKER_OWNERSHIP_FAIL")
+    networks=(c.get("NetworkSettings") or {}).get("Networks") or {}
+    # Docker does not necessarily attach created/stopped containers to a
+    # bridge until docker start. Never mistake an empty stopped IP for drift.
+    if networks and set(networks)!={net}:
+        stop("B1O_DOCKER_OTHER_NETWORK_PRESENT")
+    if c["State"]["Running"]:
+        if set(networks)!={net} or networks[net].get("IPAddress")!=ip:
+            stop("B1O_RUNNING_PEER_IP_DRIFT")
 def docker_stop(name):
     c=state(name)
     if c["State"]["Running"]:
