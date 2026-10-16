@@ -146,7 +146,13 @@ peer_veth() {
   local pid iflink
   pid="$(docker inspect --format '{{.State.Pid}}' "$CLIENT")"
   [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
-  iflink="$(nsenter -t "$pid" -n cat /sys/class/net/eth0/iflink)"
+  # nsenter -n does not remount /sys on some GitHub runner images. Resolve
+  # kernel peer ifindex from the namespaced "eth0@ifNN" iproute2 output.
+  iflink="$(nsenter -t "$pid" -n ip -o link show dev eth0 |
+    python3 -B -c 'import re,sys
+m=re.search(r"\\beth0@if([1-9][0-9]*):",sys.stdin.read())
+if not m: sys.exit(2)
+print(m.group(1))')" || return 1
   [[ "$iflink" =~ ^[1-9][0-9]*$ ]] || return 1
   ip -j link show | python3 -B -c '
 import json,sys
