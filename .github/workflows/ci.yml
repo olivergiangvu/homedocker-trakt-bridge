@@ -632,3 +632,21 @@ jobs:
           set -euo pipefail
           sudo --preserve-env=CI,GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT \
             bash scripts/probe-v140-r23d2b1t-real-nat-and-socket-ci.sh --ci-ephemeral-only
+
+  # R23D-2B1U: entirely synthetic AIO/Jellyfin/Trakt identities and history.
+  # No HomeDocker, upstream credentials or real application-side writes.
+  r23d-gateway-contract-acceptance:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: B1U read-only same-user NextUp/Resume and no-second-writer contracts
+        run: |
+          set -euo pipefail
+          node --check src/jellyfin-gateway.mjs
+          node --check test/v140-r23d2b1u-gateway-acceptance.test.mjs
+          node --test test/v140-r23d2b1u-gateway-acceptance.test.mjs
