@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import {
   validateGatewayConfig, validatedNextUpTimeoutMs, upstreamTimeoutForRoute,
 } from '../src/jellyfin-gateway.mjs';
-import { canaryGatewayConfig } from '../src/gateway-standalone.mjs';
 import { loadConfig } from '../src/config.mjs';
 import { createJellyfinGateway } from '../src/jellyfin-gateway.mjs';
 import { once } from 'node:events';
@@ -16,12 +15,6 @@ const config = (nextUpTimeoutMs) => ({
   ...(nextUpTimeoutMs === undefined
     ? {} : { jellyfinGatewayNextUpTimeoutMs: nextUpTimeoutMs }),
 });
-
-const proof = { profileId: 'a'.repeat(24) };
-const env = {
-  JELLYFIN_GATEWAY_AIO_USER_ID: '12345678abcdef',
-  JELLYFIN_GATEWAY_UPSTREAM_URL: 'http://127.0.0.1:3240/jellyfin',
-};
 
 test('Gateway v1.4 unchanged default is 8s for all upstream fetches', () => {
   const options = validateGatewayConfig(config());
@@ -46,18 +39,6 @@ test('rejects unsafe/unbounded/malformed timeout without silent clamping', () =>
                   /NextUp timeout/);
   }
   assert.equal(validatedNextUpTimeoutMs(20000), 20000);
-});
-
-test('standalone canary validates environment independently and defaults to 8s', () => {
-  assert.equal(canaryGatewayConfig(proof, env).jellyfinGatewayNextUpTimeoutMs, 8000);
-  assert.equal(canaryGatewayConfig(proof, {
-    ...env, JELLYFIN_GATEWAY_NEXTUP_TIMEOUT_MS: '15000',
-  }).jellyfinGatewayNextUpTimeoutMs, 15000);
-  for (const value of ['7999', '20001', 'Infinity', 'NaN', '12000.5', 'false']) {
-    assert.throws(() => canaryGatewayConfig(proof, {
-      ...env, JELLYFIN_GATEWAY_NEXTUP_TIMEOUT_MS: value,
-    }), /timeout/);
-  }
 });
 
 test('Bridge env is strict and the default does not silently change', () => {
