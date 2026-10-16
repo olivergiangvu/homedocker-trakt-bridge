@@ -376,3 +376,14 @@ jobs:
           bash -n scripts/probe-v140-r23d2b1l-guardian-crash-ci.sh
           sudo --preserve-env=CI,GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT \
             bash scripts/probe-v140-r23d2b1l-guardian-crash-ci.sh --ci-ephemeral-only
+
+      - name: R23D-2B1M independent tc boot fence survives total nft loss
+        shell: bash
+        env:
+          RUNNER_ENVIRONMENT: github-hosted
+        run: |
+          set -euo pipefail
+          command -v tc
+          bash -n scripts/probe-v140-r23d2b1m-tc-nft-total-loss-ci.sh
+          sudo --preserve-env=CI,GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT \
+            bash scripts/probe-v140-r23d2b1m-tc-nft-total-loss-ci.sh --ci-ephemeral-only
