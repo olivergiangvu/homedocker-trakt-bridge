@@ -695,8 +695,11 @@ jobs:
             -p 'test_r23b2_unix_get_only_relay.py' -v
           python3 -B -m unittest discover -s test \
             -p 'test_r23b2_host_relay_prereq_readonly.py' -v
+          python3 -B -m unittest discover -s test \
+            -p 'test_r23b2_ephemeral_trial_operator.py' -v
           python3 -B -m py_compile scripts/r23b2-experimental-aio-unix-get-relay.py
           python3 -B -m py_compile scripts/audit-r23b2-host-relay-prereqs.py
+          python3 -B -m py_compile scripts/trial-r23b2-ephemeral-relay-acceptance.py
 
   # Dedicated disposable GitHub runner: REAL Docker sidecar on shared
   # canary netns, private UID65534 Unix socket, host-only fake AIO.
