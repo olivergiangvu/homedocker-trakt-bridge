@@ -29,7 +29,7 @@ class V140ReleaseHold(unittest.TestCase):
         p=(ROOT/"docs/V140-PHASE-CLOSURE-AND-RELEASE-HOLD.md").read_text("utf8")
         for required in ("V140_STABLE_RELEASE_HOLD","total nft ruleset flush",
                          "Draft PR #95","No remote host access",
-                         "v1.4.0","DOCKER", "R23D-2B1L"):
+                         "v1.4.0","Docker", "R23D-2B1L"):
             self.assertIn(required,p)
     def test_readonly_cleanup_script_still_safe(self):
         script=(ROOT/"scripts/audit-homedocker-docker-cleanup.sh").read_text("utf8")
