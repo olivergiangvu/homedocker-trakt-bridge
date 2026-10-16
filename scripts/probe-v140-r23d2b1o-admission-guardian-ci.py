@@ -119,7 +119,7 @@ def refresh_optional_kernel_lease(a):
     p=subprocess.run(["nft","-f","-"],input=batch,text=True,
                      capture_output=True,timeout=3,check=False)
     if p.returncode:
-        stop("B1P_KERNEL_LEASE_REFRESH_FAILED")
+        stop("B1P_KERNEL_LEASE_REFRESH_FAILED_"+(" ".join(p.stderr.split())[:190] or "NO_NFT_STDERR"))
 
 def guard_loop(a):
     # Guardian owns only exact-named, labeled fake Docker containers.
@@ -153,7 +153,7 @@ def guard_loop(a):
         except Exception as exc:
             try: docker_stop(a.server)
             except Exception: pass
-            print("R23D2B1O_GUARDIAN_FAIL_CLOSED_"+type(exc).__name__,flush=True)
+            print("R23D2B1O_GUARDIAN_FAIL_CLOSED_"+type(exc).__name__+"_"+(str(exc) if isinstance(exc,RuntimeError) else "SANITIZED"),flush=True)
             return
         time.sleep(0.25)
 def watchdog_loop(a):
