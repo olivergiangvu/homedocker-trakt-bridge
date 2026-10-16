@@ -664,9 +664,18 @@ jobs:
           set -euo pipefail
           python3 -B -m unittest discover -s test \
             -p 'test_v140_r23d2b1v_live_http_readonly.py' -v
+          python3 -B -m unittest discover -s test \
+            -p 'test_v140_r23d2b1v_username_password_auth.py' -v
           python3 -B scripts/audit-v140-r23d2b1v-real-client-readonly.py \
             --compare >/tmp/b1v-refusal.out 2>/tmp/b1v-refusal.err \
             && exit 1 || rc=$?
           test "$rc" -eq 5
-          grep -Fq EXPLICIT_LIVE_READONLY_CONFIRMATION_REQUIRED \
+          grep -Fq EXPLICIT_LIVE_USERNAME_PASSWORD_LOGIN_CONFIRMATION_REQUIRED \
             /tmp/b1v-refusal.err
+          python3 -B scripts/audit-v140-r23d2b1v-real-client-readonly.py \
+            --compare --existing-token --confirm LIVE_AUTH_LOGIN_GET_ONLY \
+            >/tmp/b1v-token-refusal.out 2>/tmp/b1v-token-refusal.err \
+            && exit 1 || rc=$?
+          test "$rc" -eq 5
+          grep -Fq EXPLICIT_LIVE_TOKEN_CONFIRMATION_REQUIRED \
+            /tmp/b1v-token-refusal.err
