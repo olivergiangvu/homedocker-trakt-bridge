@@ -336,3 +336,33 @@ jobs:
           test "$code" = "503"
           grep -q '"status":"setup_required"' /tmp/readiness.json
           grep -q "\"schemaVersion\":${expected_schema}" /tmp/readiness.json
+
+  # R23D-2B1K: privileged test is confined to PRIVATE NETNS on a disposable
+  # GitHub-hosted runner, never HomeDocker, Portainer or a production server.
+  r23d-kernel-namespace-lab:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify isolated CI kernel-lab prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v nft >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq nftables
+          fi
+          command -v ip
+          command -v nft
+          command -v python3
+          bash -n scripts/probe-v140-r23d2b1k-ephemeral-kernel-ci.sh
+          python3 -B -c 'import ast,pathlib;ast.parse(pathlib.Path("scripts/probe-v140-r23d2b1k-ci.py").read_text())'
+      - name: R23D-2B1K isolated real kernel nft INPUT/FORWARD/IPv6 TCP
+        shell: bash
+        env:
+          RUNNER_ENVIRONMENT: github-hosted
+        run: |
+          set -euo pipefail
+          sudo --preserve-env=CI,GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT \
+            bash scripts/probe-v140-r23d2b1k-ephemeral-kernel-ci.sh --ci-ephemeral-only
