@@ -111,9 +111,27 @@ def fixed_get(origin, path, token=None):
     except error.HTTPError as exc:
         if path == RESUME and exc.code == 404:
             return 404, b""
-        raise Stop("HTTP_STATUS_" + str(exc.code)
-                   if exc.code in (400,401,403,404,405,429,500,502,503)
-                   else "HTTP_STATUS_OTHER") from None
+        # Never output response bodies, URLs, user IDs or token headers.
+        # Only trusted enum labels may appear in terminal diagnostics.
+        stage = {
+            ("aio", "/Users/Me"): "AIO_USERS_ME",
+            ("aio", NEXTUP): "AIO_NEXTUP",
+            ("gateway", NEXTUP): "GATEWAY_NEXTUP",
+            ("aio", RESUME): "AIO_RESUME",
+            ("gateway", RESUME): "GATEWAY_RESUME",
+        }.get((origin,path), "FIXED_GET")
+        code = str(exc.code) if exc.code in (
+            400,401,403,404,405,429,500,502,503,504) else "OTHER"
+        detail = ""
+        if origin == "gateway" and path == NEXTUP and exc.code == 502:
+            try:
+                error_body = json.loads(exc.read(512))
+                error_kind = error_body.get("error") if isinstance(error_body,dict) else None
+                if error_kind in ("upstream_unavailable","upstream_response_failure"):
+                    detail = "_" + error_kind.upper()
+            except (ValueError,UnicodeError,OSError):
+                pass
+        raise Stop("HTTP_STATUS_" + code + "_" + stage + detail) from None
     except (error.URLError, OSError, TimeoutError):
         raise Stop("LOOPBACK_HTTP_UNAVAILABLE") from None
     return status, raw
@@ -177,11 +195,20 @@ def safe_compare(source_get, gateway_get, include_resume=False, expected_user_id
         raise Stop("SOURCE_USER_ID_INVALID")
     if expected_user_id is not None and me["Id"] != expected_user_id:
         raise Stop("AUTH_LOGIN_USER_MISMATCH")
-    status, pre = source_get(NEXTUP)
+    try:
+        status, pre = source_get(NEXTUP)
+    except Stop as exc:
+        raise Stop("SOURCE_NEXTUP_FIRST_" + str(exc)) from None
     if status != 200: raise Stop("SOURCE_NEXTUP_UNAVAILABLE")
-    g_status, projected = gateway_get(NEXTUP)
+    try:
+        g_status, projected = gateway_get(NEXTUP)
+    except Stop as exc:
+        raise Stop("GATEWAY_NEXTUP_" + str(exc)) from None
     if g_status != 200: raise Stop("GATEWAY_NEXTUP_UNAVAILABLE")
-    status, post = source_get(NEXTUP)
+    try:
+        status, post = source_get(NEXTUP)
+    except Stop as exc:
+        raise Stop("SOURCE_NEXTUP_RECHECK_" + str(exc)) from None
     if status != 200: raise Stop("SOURCE_NEXTUP_RECHECK_UNAVAILABLE")
     pre_json, post_json = decoded(pre,"NEXTUP"), decoded(post,"NEXTUP")
     observed = {
