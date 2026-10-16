@@ -112,9 +112,9 @@ def refresh_optional_kernel_lease(a):
     if not a.kernel_lease:
         return
     batch=(
-        "flush set bridge r23d2b1p_lease authorized\\n"
+        "flush set bridge r23d2b1p_lease authorized\n"
         "add element bridge r23d2b1p_lease authorized "
-        "{ 172.31.252.2 timeout 3s }\\n"
+        "{ 172.31.252.2 timeout 3s }\n"
     )
     p=subprocess.run(["nft","-f","-"],input=batch,text=True,
                      capture_output=True,timeout=3,check=False)
