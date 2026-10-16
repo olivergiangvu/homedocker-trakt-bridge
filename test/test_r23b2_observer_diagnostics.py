@@ -48,7 +48,7 @@ class ObserverSafety(unittest.TestCase):
         self.assertIn("sleep .5", source)
         self.assertIn("/var/tmp/r23b2-observe.", source)
         self.assertIn("chmod 0700", source)
-        self.assertIn("R23B2_OBSERVER_ROOT_ONLY_LOG_RETAINED", source) if False else None
+        self.assertIn("R23B2_OBSERVER_STOP_ROOT_ONLY_LOG_RETAINED", source)
         for route in (
             "/jellyfin/Users/Me",
             "/jellyfin/Shows/NextUp?Limit=20",
