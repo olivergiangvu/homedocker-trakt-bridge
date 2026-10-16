@@ -57,10 +57,11 @@ class ExpiringLeaseSafety(unittest.TestCase):
         self.assertIn('["nft","-f","-"]',s)
         self.assertIn("flush set bridge r23d2b1p_lease authorized",s)
         self.assertIn("{ 172.31.252.2 timeout 3s }",s)
-        self.assertLess(s.index("if not alive(a.watchdog_pid) or not fresh(a.watchdog_heartbeat):"),
-                        s.index("refresh_optional_kernel_lease(a)"))
-        self.assertLess(s.index("refresh_optional_kernel_lease(a)"),
-                        s.index('run("docker","start",a.server'))
+        loop=s[s.index("def guard_loop(a):"):s.index("def watchdog_loop(a):")]
+        self.assertLess(loop.index("if not alive(a.watchdog_pid) or not fresh(a.watchdog_heartbeat):"),
+                        loop.index("refresh_optional_kernel_lease(a)"))
+        self.assertLess(loop.index("refresh_optional_kernel_lease(a)"),
+                        loop.index('run("docker","start",a.server'))
     def test_persistent_session_probes_established_tcp(self):
         s=PROBE.read_text()
         self.assertIn("R23D2B1P_EXISTING_TCP_SESSION_ESTABLISHED",s)
