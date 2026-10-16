@@ -366,3 +366,13 @@ jobs:
           set -euo pipefail
           sudo --preserve-env=CI,GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT \
             bash scripts/probe-v140-r23d2b1k-ephemeral-kernel-ci.sh --ci-ephemeral-only
+
+      - name: R23D-2B1L guarded crash lease in disposable kernel namespace
+        shell: bash
+        env:
+          RUNNER_ENVIRONMENT: github-hosted
+        run: |
+          set -euo pipefail
+          bash -n scripts/probe-v140-r23d2b1l-guardian-crash-ci.sh
+          sudo --preserve-env=CI,GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT \
+            bash scripts/probe-v140-r23d2b1l-guardian-crash-ci.sh --ci-ephemeral-only
