@@ -679,3 +679,18 @@ jobs:
           test "$rc" -eq 5
           grep -Fq EXPLICIT_LIVE_TOKEN_CONFIRMATION_REQUIRED \
             /tmp/b1v-token-refusal.err
+
+  # R23B-2: no Docker/host access, no credentials; one temporary local
+  # TCP fake AIO, Unix HTTP relay and loopback-sidecar socket in CI.
+  r23b2-readonly-unix-relay-contract:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: R23B-2 sidecar/Unix/local AIO GET-only and rollback contract
+        run: |
+          set -euo pipefail
+          python3 -B -m unittest discover -s test \
+            -p 'test_r23b2_unix_get_only_relay.py' -v
+          python3 -B -m py_compile scripts/r23b2-experimental-aio-unix-get-relay.py
