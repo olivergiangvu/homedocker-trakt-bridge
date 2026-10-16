@@ -97,10 +97,23 @@ def subset(source, projected):
         raise Stop("GATEWAY_MODIFIED_SOURCE_ITEM_OR_POSITION")
     if len(after) > len(before):
         raise Stop("GATEWAY_ADDED_ITEM")
-    # Only collection bookkeeping, not item body, may change on normalization.
-    if len(after) != len(before):
+    # Preserve both the opaque top-level envelope and each user's row,
+    # except the count fields explicitly adjusted when the view is filtered.
+    # For unchanged views the COMPLETE JSON response must be unchanged.
+    if len(after) == len(before):
+        if projected != source:
+            raise Stop("GATEWAY_UNEXPECTED_UNFILTERED_MUTATION")
+    else:
         if projected.get("TotalRecordCount") != len(after):
             raise Stop("GATEWAY_TOTAL_COUNT_MISMATCH")
+        allowed = {"Items","TotalRecordCount","Count"}
+        if any(projected.get(k) != v for k,v in source.items()
+               if k not in allowed):
+            raise Stop("GATEWAY_CHANGED_OPAQUE_ENVELOPE")
+        if set(projected) != set(source):
+            raise Stop("GATEWAY_CHANGED_ENVELOPE_KEYS")
+        if "Count" in source and projected.get("Count") != len(after):
+            raise Stop("GATEWAY_COUNT_MISMATCH")
     return {"source_items":len(before), "gateway_items":len(after),
             "removed_in_projection":len(before)-len(after),
             "source_item_data_preserved":True}
