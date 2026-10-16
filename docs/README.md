@@ -42,7 +42,7 @@ AIOMetadata  = metadata/catalog + optional secondary-tracker write fan-out
 | Bridge-only HomeDocker upgrade | [Stable deployment runbook](STABLE-DEPLOYMENT.md) — exact source pin, guarded preflight, SQLite backup, rollback and acceptance |
 | Stable qualification history | [v1.3 operator evidence and limitations](design/v1.3-stable-qualification.md) — evidence through 2026-10-13; later publication does not rewrite historic observations |
 | Historical release notes | [Versioned archive](releases/) — preserve RC notes and stable records for audit |
-| Unreleased v1.4 R23D | [Draft PR #95](https://github.com/olivergiangvu/homedocker-trakt-bridge/pull/95) — kernel namespace test evidence only; host boot fencing remains BLOCKED |
+| Unreleased v1.4 Unified Gateway | [Phase closure and release HOLD](V140-PHASE-CLOSURE-AND-RELEASE-HOLD.md) — qualified lab milestones, missing production fences, no v1.4 tag/deploy; [Draft PR #95](https://github.com/olivergiangvu/homedocker-trakt-bridge/pull/95) holds detailed prototype evidence |
 
 **Documentation cleanup policy:** keep `docs/releases/v*.md`, RC7 closure reports and rollback references intact. Keep general user instructions in the main five guides, release deployment in this one runbook, and experimental v1.4 documentation on its separate Draft PR branch. No deletion of tagged history or production rollback artifacts.
 
