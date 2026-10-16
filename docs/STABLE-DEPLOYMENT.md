@@ -4,7 +4,10 @@
 
 **Host status:** the latest independently evidenced HomeDocker application runtime was `v1.3.0-rc.6`. Do not infer stable deployment merely from the public GitHub Release, from CI or from pushing documentation. This runbook is only valid if the actual host preflight reconfirms the qualified RC6 digest.
 
-**Latest operator tooling:** `main` at commit `ef336f4b730ec14bf995fa83cf170f034dc382a1`, which is one commit **after** the release tag. The post-tag difference is only corrected privileged Compose deployment tooling, tests and release notes; stable application image remains the original v1.3.0 tag. To avoid ref drift, **use this exact immutable tooling commit for the host procedure**, not an unqualified `main` or Draft v1.4 branch.
+**Reviewed operator tooling:** tested source commit `46e5561940393db038a87d6a3c3e8ee08bcb2d26`, which includes the original post-tag root-protected Compose/RC7 verifier fix and a later **operator-only immutable GHCR digest gate**. These post-tag commits modify host-side deployment tooling/tests/docs only; the stable application image stays the original v1.3.0 tag. To avoid ref drift, **use this exact immutable tooling commit for the host procedure**, not an unqualified `main` or Draft v1.4 branch.
+
+
+**CI-attested image identity:** `ghcr.io/olivergiangvu/homedocker-trakt-bridge@sha256:b15e31895eef825f55f33ada6fa3066747a6f954fbdf4acedb7a083615126f37` was built, published and smoke-tested in [Release run 38491804075](https://github.com/olivergiangvu/homedocker-trakt-bridge/actions/runs/38491804075). The operator helper now rejects a mutable `:1.3.0` tag if its local RepoDigests do not include exactly this published reference, **before** backup, Compose edit or Bridge recreate. A `docker pull :1.3.0` still populates local image cache but must never silently replace the reviewed manifest.
 
 ## Non-negotiable scope and safety
 
@@ -22,7 +25,7 @@ A fresh detached checkout avoids running a mutable branch or a script copied to 
 ```bash
 (
 set -euo pipefail
-SHA="ef336f4b730ec14bf995fa83cf170f034dc382a1"
+SHA="46e5561940393db038a87d6a3c3e8ee08bcb2d26"
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
 git clone --quiet --no-checkout \
@@ -47,7 +50,7 @@ Only if the actual fresh Step 1 output passes, and operator accepts the automati
 ```bash
 (
 set -euo pipefail
-SHA="ef336f4b730ec14bf995fa83cf170f034dc382a1"
+SHA="46e5561940393db038a87d6a3c3e8ee08bcb2d26"
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
 git clone --quiet --no-checkout \
@@ -61,7 +64,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -B \
 )
 ```
 
-**What apply does:** verify existing exact RC6 immutable digest and active Compose ownership; check release; pull only `ghcr.io/olivergiangvu/homedocker-trakt-bridge:1.3.0` and resolve its actual `RepoDigests` (never guess the new digest); perform SQLite online backup and copy root-protected Compose/`.env` to a restrictive operator backup directory; update only `TRAKT_BRIDGE_IMAGE` to the immutable stable digest; run `docker compose up -d --no-deps --no-build --pull never trakt-bridge` using the original Compose project; verify v1.3.0 health/readiness, unchanged AIO running image ID, safe compare-only flags and continuing RC7 mitigation. On qualifying failure after editing `.env`, attempt automatic RC6 image reference rollback and re-check readiness. A rollback attempt is **not proof** it succeeded. Backup may contain OAuth/Trakt secrets; never publish it to a GitHub issue or terminal transcript.
+**What apply does:** verify existing exact RC6 immutable digest and active Compose ownership; check release; pull only `ghcr.io/olivergiangvu/homedocker-trakt-bridge:1.3.0` and verify `RepoDigests` includes the exact CI-attested stable digest (reject tag drift); perform SQLite online backup and copy root-protected Compose/`.env` to a restrictive operator backup directory; update only `TRAKT_BRIDGE_IMAGE` to the immutable stable digest; run `docker compose up -d --no-deps --no-build --pull never trakt-bridge` using the original Compose project; verify v1.3.0 health/readiness, unchanged AIO running image ID, safe compare-only flags and continuing RC7 mitigation. On qualifying failure after editing `.env`, attempt automatic RC6 image reference rollback and re-check readiness. A rollback attempt is **not proof** it succeeded. Backup may contain OAuth/Trakt secrets; never publish it to a GitHub issue or terminal transcript.
 
 **Do not execute Step 2 merely because GitHub CI passed.** Step 1 is the host-level gate and may legitimately STOP if the current installation differs or has already been upgraded.
 
