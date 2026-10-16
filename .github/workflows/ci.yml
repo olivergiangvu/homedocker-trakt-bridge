@@ -514,3 +514,38 @@ jobs:
           set -euo pipefail
           sudo --preserve-env=CI,GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT \
             bash scripts/probe-v140-r23d2b1q-systemd-docker-admission-ci.sh --ci-ephemeral-only
+
+  # R23D-2B1R: dedicated disposable GH-hosted VM ONLY. Installs one
+  # exact test-owned /etc/systemd/system unit, restarts DOCKER daemon,
+  # and removes the unit during scoped cleanup. NOT a real reboot.
+  r23d-persistent-systemd-boot-interlock-lab:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify isolated persistent-systemd Docker test prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v nft >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq nftables
+          fi
+          command -v docker
+          command -v systemctl
+          command -v systemd-analyze
+          command -v nft
+          command -v tc
+          command -v nsenter
+          systemctl is-active --quiet docker
+          bash -n scripts/probe-v140-r23d2b1r-persistent-systemd-docker-ci.sh
+          python3 -B -c 'import ast,pathlib;ast.parse(pathlib.Path("scripts/probe-v140-r23d2b1r-persistent-systemd-monitor-ci.py").read_text())'
+      - name: R23D-2B1R persistent systemd real-Docker nft-loss and daemon restart
+        shell: bash
+        env:
+          RUNNER_ENVIRONMENT: github-hosted
+        run: |
+          set -euo pipefail
+          sudo --preserve-env=CI,GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT \
+            bash scripts/probe-v140-r23d2b1r-persistent-systemd-docker-ci.sh --ci-ephemeral-only
