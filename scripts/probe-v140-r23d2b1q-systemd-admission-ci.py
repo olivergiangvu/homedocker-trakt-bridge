@@ -96,12 +96,11 @@ def verify(a):
         policy=call("nft","list","table","bridge",TABLE)
     except Stop:
         raise Stop("NFT_ADMISSION_POLICY_MISSING")
-    if not (all(t in policy for t in (
-            "hook forward priority -250",
-            "iifname", "oifname", "@authorized",
-            "flags timeout", "drop"))
-        and IP_CLIENT in policy and IP_SERVER in policy):
-        raise Stop("NFT_ADMISSION_POLICY_UNQUALIFIED")
+    required=("hook forward", "iifname", "oifname", "@authorized",
+              "flags timeout", "drop", IP_CLIENT, IP_SERVER)
+    missing=[str(i) for i,t in enumerate(required) if t not in policy]
+    if missing:
+        raise Stop("NFT_ADMISSION_POLICY_UNQUALIFIED_FIELDS_"+",".join(missing))
     return server,network
 
 def main():
