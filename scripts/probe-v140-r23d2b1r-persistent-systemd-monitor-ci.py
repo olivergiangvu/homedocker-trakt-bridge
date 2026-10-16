@@ -46,42 +46,49 @@ def owned(c,name,network):
         and h.get("ReadonlyRootfs") is True
         and h.get("PortBindings") in ({},None)
     )
+_reported=set()
+def reject(label):
+    if label not in _reported:
+        _reported.add(label)
+        print('R23D2B1R_ATTESTATION_REJECT_'+label,flush=True)
+    return False
+
 def check_fences(client,network):
     try:
         c=b1q.inspect(client)
         nets=(c.get("NetworkSettings") or {}).get("Networks") or {}
         if not owned(c,client,network) or not c["State"]["Running"]:
-            return False
+            return reject("CLIENT_NOT_RUNNING_OR_OWNER_DRIFT")
         if set(nets)!={network} or nets[network]["IPAddress"]!=b1q.IP_CLIENT:
-            return False
+            return reject("CLIENT_IP_OR_NETWORK_DRIFT")
         pid=c["State"]["Pid"]
-        if not isinstance(pid,int) or pid<2:return False
+        if not isinstance(pid,int) or pid<2:return reject("CLIENT_INVALID_PID")
         l=b1q.call("nsenter","-t",str(pid),"-n",
                    "ip","-o","link","show","dev","eth0")
         m=re.search(r"eth0@if([1-9][0-9]*):",l)
-        if not m:return False
+        if not m:return reject("NO_IFLINK")
         interfaces=json.loads(b1q.call("ip","-j","link","show"))
         matches=[i for i in interfaces if i.get("ifindex")==int(m.group(1))]
-        if len(matches)!=1:return False
+        if len(matches)!=1:return reject("AMBIGUOUS_HOST_VETH")
         row=matches[0]
         dev=row["ifname"].split("@",1)[0]
         if not dev.startswith("veth") or row.get("master")!=b1q.BRIDGE:
-            return False
+            return reject("NOT_PRIVATE_DOCKER_BRIDGE")
         q=b1q.call("tc","qdisc","show","dev",dev)
         fl=b1q.call("tc","filter","show","dev",dev,"ingress")
         if not all(x in q+fl for x in ("clsact","pref 10","pref 20")):
-            return False
+            return reject("TC_FILTER_INCOMPLETE")
         table=b1q.call("nft","list","table","bridge",b1q.TABLE)
         timed=b1q.call("nft","list","set","bridge",b1q.TABLE,"authorized")
         if not all(x in table for x in (
                 "hook forward","iifname","oifname","@authorized",
                 "drop",b1q.IP_CLIENT,b1q.IP_SERVER)):
-            return False
+            return reject("NFT_TABLE_POLICY_INCOMPLETE")
         if not all(x in timed for x in ("type ipv4_addr","timeout 20s")):
-            return False
+            return reject("NFT_SET_EXACT_TIMEOUT_MISSING")
         return True
-    except (b1q.Stop,ValueError,KeyError,IndexError,TypeError,OSError):
-        return False
+    except (b1q.Stop,ValueError,KeyError,IndexError,TypeError,OSError) as e:
+        return reject("INSPECTION_ERROR_"+type(e).__name__+"_"+(str(e)[:60] if isinstance(e,b1q.Stop) else "SANITIZED"))
 def cut(server,network):
     # On fence degradation disconnect the specifically labeled fake server
     # even if it remains a live process. Extra stop is defence in depth.
@@ -104,6 +111,7 @@ def loop(suffix):
     if not re.fullmatch(r"[1-9][0-9]*",suffix):
         raise RuntimeError("INVALID_LAB_SUFFIX")
     first=True
+    logged_admit_error=False
     while True:
         safe=check_fences(client,network)
         raw=docker("container","inspect",server)
@@ -139,7 +147,10 @@ def loop(suffix):
                     b1q.call("docker","network","connect","--ip",b1q.IP_SERVER,network,server)
                     b1q.call("docker","start",server,timeout=30)
                     print("R23D2B1R_CONTROLLER_REATTESTED_AND_AUTO_ADMITTED",flush=True)
-                except (b1q.Stop,OSError,ValueError):
+                except (b1q.Stop,OSError,ValueError) as e:
+                    if not logged_admit_error:
+                        print("R23D2B1R_ADMISSION_REJECT_"+(str(e)[:160] if isinstance(e,b1q.Stop) else type(e).__name__),flush=True)
+                        logged_admit_error=True
                     cut(server,network)
             elif network not in nets:
                 if live:cut(server,network)
