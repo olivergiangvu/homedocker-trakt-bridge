@@ -1,6 +1,6 @@
 # R23D-2B1N — Real Docker bridge/veth and daemon-restart recovery lab
 
-**Status:** CI verification pending until the specific job reports completed success. **Safety scope:** a wholly dedicated, disposable GitHub-hosted Ubuntu runner; NOT HomeDocker. Unlike 2B1M, this lab really restarts the runner's Docker daemon. Do **not** run its privileged script manually on a protected host or self-hosted CI.
+**Status:** R23D-2B1N verified **PASS** in [GitHub Actions run 38868129308](https://github.com/olivergiangvu/homedocker-trakt-bridge/actions/runs/38868129308): **all three jobs** (standard test, nft namespace lab, real Docker daemon recovery) completed SUCCESS. Exact 2B1N PASS markers below were observed in the Docker lab job log. Initial attempt [run 38867975197](https://github.com/olivergiangvu/homedocker-trakt-bridge/actions/runs/38867975197) properly failed to authenticate the host veth: reading /sys after nsenter -n did not provide a reliable namespace-specific peer map on that runner. Replaced it with parsing the kernel eth0@ifindex via namespaced iproute2 and revalidated exact private bridge membership before any tc modification. **Safety scope:** a wholly dedicated, disposable GitHub-hosted Ubuntu runner; NOT HomeDocker. Unlike 2B1M, this lab really restarts the runner's Docker daemon. Do **not** run its privileged script manually on a protected host or self-hosted CI.
 
 ## Experiment
 
@@ -14,7 +14,7 @@ The runner's **actual Docker daemon is then restarted via systemd**, within a de
 
 Negative control: in the private bridge only, remove `tc` from the new veth while the fake listeners are running; the formerly forbidden port must immediately become reachable, proving that a direct Docker start without a guard can reopen traffic. Re-arm `tc` and prove forbidden traffic is blocked again. Exit cleanup removes only the two owned Docker containers and the one owned network and verifies absence, without `docker system prune`, Docker volumes, nginx, host nft rules, systemd units, HomeDocker containers or real history.
 
-## Evidence checklist (must be observed in successful workflow)
+## Observed exact job markers — PASS
 
 ```text
 R23D2B1N_INTERNAL_DOCKER_BRIDGE_OWNERSHIP_PASS
