@@ -1,6 +1,6 @@
 # R23D-2B1O — Real-Docker independent admission guardian and watchdog lab
 
-**Status: PENDING runner acceptance** until the exact commit's GitHub Actions three/four jobs succeed. This experiment runs on a separate, disposable GitHub-hosted Ubuntu VM and **does not install systemd boot units or touch HomeDocker**.
+**Status: VERIFIED EPHEMERAL LAB PASS.** GitHub Actions [run 38869176829](https://github.com/olivergiangvu/homedocker-trakt-bridge/actions/runs/38869176829) reports **four of four jobs completed SUCCESS** (application tests, 2B1K/L/M kernel namespace tests, 2B1N Docker daemon recovery, 2B1O independent processes). All nine 2B1O markers below were observed in the dedicated real-Docker job logs. The observed simultaneous guardian + watchdog SIGKILL exposure remains an explicit **NO-GO** production release finding. This experiment runs on a separate, disposable GitHub-hosted Ubuntu VM and **does not install systemd boot units or touch HomeDocker**.
 
 ## Goal and actual scope
 
@@ -21,7 +21,7 @@ Fake runtime: one `--internal` Docker bridge, no published ports, two no-privile
 
 The test may show two OS processes watching one another and safely re-arming a newly verified veth. **That is not a truly independent persistent boot-time guardian**. Both processes are launched by a CI shell, not independent host startup dependencies. A root-triggered unexpected Docker peer start, concurrent guardian/watchdog death, missing kernel fence and actual VM reboot remain unqualified. `V140_STABLE_RELEASE_HOLD` continues even after this individual lab passes. Do not copy this lab's fake ports, network or watch processes to HomeDocker. PR #95 remains **DRAFT, unmerged**.
 
-### Evidence markers (only accepted when present in a successful dedicated CI job)
+### Exact observed evidence markers — CI PASS (including unsafe-dual-loss counterexample)
 
 ```
 R23D2B1O_STOPPED_REAL_DOCKER_PEERS_BEFORE_ADMISSION_PASS
