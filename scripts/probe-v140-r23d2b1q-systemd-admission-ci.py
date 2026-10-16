@@ -128,6 +128,13 @@ def main():
         call("nft","add","element","bridge",TABLE,"authorized",
              "{ "+IP_CLIENT+" timeout 20s }")
         granted=True
+        # Docker forbids attaching a second network while the container is
+        # still on built-in 'none' (private) mode. Drop ONLY that disconnected
+        # endpoint after the exact fence attestation, then attach the proven
+        # bridge while the fake server is STOPPED.
+        current=(inspect(server).get("NetworkSettings") or {}).get("Networks") or {}
+        if set(current)=={"none"}:
+            call("docker","network","disconnect","none",server)
         call("docker","network","connect","--ip",IP_SERVER,network,server)
         call("docker","start",server,timeout=30)
         live=inspect(server)
