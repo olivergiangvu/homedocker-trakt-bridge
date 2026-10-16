@@ -1,0 +1,8 @@
+# R23D2B1C: deny-by-default Docker build context, specific to gateway image.
+# Prevent Git internals, host .env, private configs, proof files, DBs,
+# caches, docs and unrelated scripts reaching the daemon build context.
+**
+!Dockerfile.gateway-canary
+!package.json
+!src/
+!src/**

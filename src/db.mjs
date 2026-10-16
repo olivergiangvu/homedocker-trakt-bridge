@@ -140,6 +140,28 @@ export class BridgeDb {
     }
   }
 
+  // Read-only counterpart to cacheGet, which deletes expired/corrupt rows.
+  // Required for a genuinely non-mutating legacy identity import preview.
+  cachePeek(key) {
+    const row = this.db.prepare(
+      'SELECT payload_json, expires_at FROM media_cache WHERE cache_key=?'
+    ).get(key);
+    if (!row || Number(row.expires_at) < this.now()) return null;
+    try { return JSON.parse(row.payload_json); }
+    catch { return null; }
+  }
+
+  // Never overwrite an existing graph, even on concurrent startup.
+  // SQLite INSERT OR IGNORE makes migration one atomic opt-in insertion.
+  cacheInsertIfAbsent(key, payload, ttlSeconds = 7 * 24 * 3600) {
+    const now = this.now();
+    const outcome = this.db.prepare(
+      'INSERT OR IGNORE INTO media_cache'
+      + ' (cache_key, payload_json, expires_at, updated_at) VALUES (?, ?, ?, ?)'
+    ).run(key, JSON.stringify(payload), now + ttlSeconds, now);
+    return Number(outcome.changes) === 1;
+  }
+
   cacheSet(key, payload, ttlSeconds = 7 * 24 * 3600) {
     const now = this.now();
     this.db.prepare(`

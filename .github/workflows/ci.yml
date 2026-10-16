@@ -23,7 +23,40 @@ jobs:
           python3 -m py_compile scripts/monitor-identity-drift.py
           python3 -m py_compile scripts/audit-stable-event-pulse.py
           python3 -m py_compile scripts/audit-rolling-aio-contract.py
+          python3 -m py_compile scripts/audit-aio-identity-readiness.py
+          python3 -m py_compile scripts/audit-gateway-readiness.py
+          python3 -m py_compile scripts/export-canary-identity-proof.py
+          python3 -m py_compile scripts/audit-jellyfin-auth-preview.py
           python3 -m py_compile scripts/cleanup-github-branches.py
+          python3 -m py_compile scripts/cleanup-rc7-canaries.py
+          python3 -m py_compile scripts/audit-v140-performance.py
+          python3 -m py_compile scripts/audit-v140-unused-images.py
+          python3 -m py_compile scripts/audit-v140-client-ingress.py
+          python3 -m py_compile scripts/audit-v140-client-delta.py
+          python3 -m py_compile scripts/preview-v140-legacy-import.py
+          python3 -m py_compile scripts/verify-v140-legacy-import-offline.py
+          python3 -m py_compile scripts/audit-v140-pilot-readiness.py
+          python3 -m py_compile scripts/backup-v140-rc6-rollback.py
+          python3 -m py_compile scripts/deploy-v140-integrated-canary.py
+          python3 -m py_compile scripts/deploy-v140-r23b-hostcanary.py
+          python3 -m py_compile scripts/audit-v140-live-nextup-readonly.py
+          python3 -m py_compile scripts/audit-v140-live-resume-alias-readonly.py
+          python3 -m py_compile scripts/audit-v140-r23d-host-preflight.py
+          python3 -m py_compile scripts/audit-v140-r23d-firewall-readonly.py
+          python3 -m py_compile scripts/probe-v140-r23d-egress-synthetic.py
+          python3 -m py_compile scripts/audit-v140-r23d-host-policy-readonly.py
+          python3 -m py_compile scripts/audit-v140-r23d-nft-hooks-readonly.py
+          python3 -m py_compile scripts/render-v140-r23d-nft-policy-offline.py
+          python3 -m py_compile scripts/audit-v140-r23d1f-firewall-plan-readonly.py
+          python3 -m py_compile scripts/probe-v140-r23d1g-guarded-egress.py
+          python3 -m py_compile scripts/serve-v140-r23d-aio-get-relay.py
+          python3 -m py_compile scripts/attest-v140-r23d-persistent-guard.py
+          python3 -m py_compile scripts/plan-v140-r23d2b-gateway-offline.py
+          python3 -m py_compile scripts/audit-v140-r23d2b1-offline-runtime-readiness.py
+          python3 -m py_compile scripts/acquire-v140-r23d2b1b-pinned-base.py
+          python3 -m py_compile scripts/build-v140-r23d2b1c-gateway-only.py
+          python3 -m py_compile scripts/diagnose-v140-r23d2b1c-build-stop-readonly.py
+          node --check scripts/verify-v140-legacy-import-memory.mjs
           python3 -m py_compile scripts/audit-dangling-image-ownership.py
           python3 -m py_compile scripts/publish-v1.3.0-tag.py
           python3 -m py_compile scripts/deploy-v1.3.0-homedocker.py
@@ -44,6 +77,216 @@ jobs:
 
       - name: Build production container
         run: docker build -t homedocker-trakt-bridge:ci .
+
+      - name: R23A isolated integrated runtime and both listeners smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          cleanup() {
+            docker rm -f v140-r23a-ci >/dev/null 2>&1 || true
+            docker network rm v140-r23a-ci-net >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker network create --driver bridge --internal v140-r23a-ci-net
+          docker run --rm -d --name v140-r23a-ci --restart no \
+            --network v140-r23a-ci-net --read-only --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --pids-limit 64 --memory 192m --cpus 1 \
+            --tmpfs /app/data:rw,size=33554432,uid=1000,gid=1000,mode=0700 \
+            -p 127.0.0.1:17041:7000 -p 127.0.0.1:17141:7101 \
+            -e PUBLIC_BASE_URL=http://127.0.0.1:17041 \
+            -e TRAKT_CLIENT_ID=ci-fake-client -e TRAKT_CLIENT_SECRET=ci-fake-secret \
+            -e BRIDGE_SECRET_KEY=ci-fake-local-secret \
+            -e ADMIN_KEY=ci-fake-admin-key \
+            -e JELLYFIN_GATEWAY_ENABLED=true \
+            -e JELLYFIN_GATEWAY_PORT=7101 \
+            -e JELLYFIN_GATEWAY_UPSTREAM_URL=http://127.0.0.1:9999/jellyfin \
+            -e JELLYFIN_GATEWAY_AIO_USER_ID=CANARY_PREVIEW_NO_MATCH_USER \
+            -e JELLYFIN_GATEWAY_PROFILE_ID=cccccccccccccccccccccccc \
+            -e AIO_RECONCILER_MODE=off \
+            -e AIO_HISTORY_ECHO_GUARD=false \
+            -e JELLYFIN_GATEWAY_LEGACY_IMPORT=off \
+            homedocker-trakt-bridge:ci
+          ready=0
+          for i in $(seq 1 20); do
+            if docker exec v140-r23a-ci wget -q -O /dev/null http://127.0.0.1:7000/health \
+              && docker exec v140-r23a-ci wget -q -O /dev/null http://127.0.0.1:7101/health; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" -eq 1
+          docker inspect --format '{{json .Mounts}}' v140-r23a-ci \
+            | python3 -c 'import sys,json; m=json.load(sys.stdin); assert not any(x["Type"] in ("volume","bind") for x in m), m'
+          docker inspect --format '{{json .NetworkSettings.Networks}}' v140-r23a-ci \
+            | python3 -c 'import sys,json; n=json.load(sys.stdin); assert list(n)==["v140-r23a-ci-net"], n'
+          echo "R23A_INTEGRATED_RUNTIME_ISOLATED_HEALTH=PASS"
+
+      - name: R23B1 dedicated non-internal bridge host-loopback smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          cleanup() {
+            docker rm -f v140-r23b-ci >/dev/null 2>&1 || true
+            docker network rm v140-r23b-ci-bridge >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker network create --driver bridge \
+            --opt com.docker.network.bridge.enable_ip_masquerade=false \
+            v140-r23b-ci-bridge
+          docker network inspect v140-r23b-ci-bridge \
+            --format '{{json .}}' \
+            | python3 -c 'import json,sys; n=json.load(sys.stdin); assert n["Internal"] is False; assert n["Options"]["com.docker.network.bridge.enable_ip_masquerade"] == "false"'
+          docker run -d --name v140-r23b-ci --restart no \
+            --network v140-r23b-ci-bridge --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --pids-limit 64 \
+            --memory 192m --cpus 1 \
+            --tmpfs /app/data:rw,size=33554432,uid=1000,gid=1000,mode=0700 \
+            -p 127.0.0.1:17042:7000 -p 127.0.0.1:17142:7101 \
+            -e PUBLIC_BASE_URL=http://127.0.0.1:17042 \
+            -e TRAKT_CLIENT_ID=r23b-ci-not-real \
+            -e TRAKT_CLIENT_SECRET=ci-fake-secret \
+            -e BRIDGE_SECRET_KEY=ci-fake-bridge-secret \
+            -e ADMIN_KEY=ci-fake-admin \
+            -e JELLYFIN_GATEWAY_ENABLED=true \
+            -e JELLYFIN_GATEWAY_PORT=7101 \
+            -e JELLYFIN_GATEWAY_UPSTREAM_URL=http://127.0.0.1:9999/jellyfin \
+            -e JELLYFIN_GATEWAY_AIO_USER_ID=CANARY_PREVIEW_NO_MATCH_USER \
+            -e JELLYFIN_GATEWAY_PROFILE_ID=cccccccccccccccccccccccc \
+            -e JELLYFIN_GATEWAY_LEGACY_IMPORT=off \
+            -e AIO_RECONCILER_MODE=off \
+            -e AIO_HISTORY_ECHO_GUARD=false \
+            homedocker-trakt-bridge:ci
+          ok=0
+          for i in $(seq 1 30); do
+            if curl --noproxy '*' --max-time 3 -fsS http://127.0.0.1:17042/health >/dev/null 2>&1 \
+              && curl --noproxy '*' --max-time 3 -fsS http://127.0.0.1:17142/health >/dev/null 2>&1; then
+              ok=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ok" = 1
+          docker inspect v140-r23b-ci --format '{{json .Mounts}}' \
+            | python3 -c 'import sys,json; m=json.load(sys.stdin); assert not any(x["Type"] in ("volume","bind") for x in m)'
+          docker inspect v140-r23b-ci --format '{{json .NetworkSettings.Networks}}' \
+            | python3 -c 'import sys,json; n=json.load(sys.stdin); assert set(n)=={"v140-r23b-ci-bridge"}'
+          echo "R23B1_HOST_LOCAL_INTEGRATED_GATEWAY=PASS"
+
+      - name: Build and smoke-test isolated gateway-only canary
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build -f Dockerfile.gateway-canary -t homedocker-nextup-gateway:ci .
+          td=$(mktemp -d)
+          cleanup() {
+            docker rm -f nextup-gateway-ci >/dev/null 2>&1 || true
+            sudo rm -rf "$td"
+          }
+          trap cleanup EXIT
+          cat > "$td/identity-proof.json" <<'JSON'
+          {"contract":"homedocker-canary-identity-proof-v1","profileId":"aaaaaaaaaaaaaaaaaaaaaaaa","graph":{"revision":1,"conflicts":[],"shows":{"263102":{"canonicalImdb":"tt44051354","aliases":["tt44094505"],"tmdb":null,"tvdb":null}}}}
+          JSON
+          chmod 600 "$td/identity-proof.json"
+          sudo chown 1000:1000 "$td/identity-proof.json"
+          docker run -d --name nextup-gateway-ci \
+            --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --mount "type=bind,src=$td/identity-proof.json,dst=/run/identity-proof.json,readonly" \
+            -p 127.0.0.1:17139:7101 \
+            -e JELLYFIN_GATEWAY_AIO_USER_ID=12345678abcdef \
+            -e JELLYFIN_GATEWAY_UPSTREAM_URL=http://127.0.0.1:3240 \
+            homedocker-nextup-gateway:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:17139/health > "$td/health.json"; then
+              break
+            fi
+            sleep 1
+          done
+          grep -q '"adapter":"nextup-only"' "$td/health.json"
+          test "$(docker inspect nextup-gateway-ci --format '{{.State.Running}}')" = "true"
+          echo "ISOLATED_GATEWAY_HEALTH=PASS"
+
+      - name: Smoke-test v1.4 Gateway inside ONE Trakt Bridge runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="trakt-bridge-v14-module-ci"
+          cleanup() { docker rm -f -v "$name" >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          # Synthetic keys only: CI is isolated and NEVER connects to a live
+          # HomeDocker AIO, Trakt or production network.
+          docker run -d --name "$name" \
+            --cap-drop ALL --security-opt no-new-privileges \
+            -p 127.0.0.1:17041:7000 \
+            -p 127.0.0.1:17141:7101 \
+            -e PUBLIC_BASE_URL=http://127.0.0.1:17041 \
+            -e TRAKT_CLIENT_ID=ci-client \
+            -e TRAKT_CLIENT_SECRET=ci-fake-secret \
+            -e BRIDGE_SECRET_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+            -e ADMIN_KEY=abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789 \
+            -e JELLYFIN_GATEWAY_ENABLED=true \
+            -e JELLYFIN_GATEWAY_PORT=7101 \
+            -e JELLYFIN_GATEWAY_AIO_USER_ID=11111111abcdef00 \
+            -e JELLYFIN_GATEWAY_PROFILE_ID=aaaaaaaaaaaaaaaaaaaaaaaa \
+            -e JELLYFIN_GATEWAY_UPSTREAM_URL=http://127.0.0.1:3240/jellyfin \
+            -e JELLYFIN_GATEWAY_RESUME_PASSTHROUGH=false \
+            homedocker-trakt-bridge:ci
+
+          ready=0
+          for i in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:17041/health >/dev/null 2>&1 \
+                && curl -fsS http://127.0.0.1:17141/health >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = "1"
+          test "$(docker inspect "$name" --format '{{.State.Running}}')" = "true"
+
+          curl -fsS http://127.0.0.1:17141/health | grep -q '"adapter":"nextup-only"'
+          code=$(curl -sS -o /tmp/ci-gw-unknown.json -w '%{http_code}' \
+            http://127.0.0.1:17141/Users/Me)
+          test "$code" = "404"
+
+          key=abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
+          curl -fsS "http://127.0.0.1:17041/setup?key=$key" \
+            | grep -q 'AIO Identity Gateway'
+          curl -fsS "http://127.0.0.1:17041/status?key=$key" \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); g=x["gateway"]; assert g["enabled"] is True; assert g["listening"] is True; assert g["productionRoutingQualified"] is False; assert g["resumeMode"] == "off"'
+          echo "V140_SINGLE_BRIDGE_DASHBOARD_GATEWAY=PASS"
+
+      - name: Smoke-test R20 memory-only importer in sealed runtime container
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | docker run --rm -i \
+            --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --user 1000:1000 --pids-limit 32 --memory 128m \
+            --mount "type=bind,source=$PWD,target=/audit,readonly" \
+            --mount "type=tmpfs,destination=/app/data,tmpfs-size=1048576" \
+            --entrypoint /usr/local/bin/node \
+            homedocker-trakt-bridge:ci \
+            /audit/scripts/verify-v140-legacy-import-memory.mjs \
+          | python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["status"] == "OFFLINE_MEMORY_IMPORT_PASS"; assert r["imported_show_mappings"] == 15; assert r["alias_groups"] == 1; assert r["migration_persisted_to_production"] is False; assert r["sqlite_writes"] == 0; print("R20_OFFLINE_MEMORY_DOCKER=PASS")'
+          import json
+          import time
+          now = int(time.time())
+          rows = {str(i+1): {"traktImdb":"tt" + str(i+10000000),
+                             "preferredMetaId":"tt" + str(i+10000000),
+                             "updatedAt":now - 300}
+                  for i in range(14)}
+          rows["263102"] = {"traktImdb":"tt44051354",
+                            "preferredMetaId":"tt44094505", "updatedAt":now - 300}
+          print(json.dumps({
+              "profileId":"a"*24,
+              "legacy":{"shows":rows},
+              "expected":{"shows":15, "aliases":1}
+          }))
+          PY
 
       - name: Enforce runtime image-size budget
         shell: bash
