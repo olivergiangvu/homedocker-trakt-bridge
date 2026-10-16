@@ -121,6 +121,27 @@ class ProcessLab(unittest.TestCase):
         finally:
             if p.poll() is None:p.kill()
             p.communicate(timeout=2)
+    def test_sigterm_before_readiness_is_nonzero_and_never_authorizes(self):
+        # An OS-delivered SIGTERM before Python installs handlers can exit -15.
+        # Without any input or host mutation, either -15 or the structured
+        # post-initialization STOP (2) is safe. No runtime permission can arise.
+        p=subprocess.Popen([sys.executable,"-B",str(SCRIPT),
+                            "--lab-only","--timeout-ms","2500"],
+                           stdin=subprocess.PIPE,stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE)
+        try:
+            p.send_signal(signal.SIGTERM)
+            out,err=p.communicate(timeout=3)
+            self.assertIn(p.returncode,(-signal.SIGTERM,2))
+            rows=[json.loads(line) for line in out.splitlines()]
+            self.assertTrue(all(not row["real_canary_start_authorized"] for row in rows))
+            if p.returncode==2:
+                self.assertEqual(rows[-1]["reason"],"PROCESS_INTERRUPTED_FAIL_CLOSED")
+        finally:
+            if p.poll() is None:
+                p.kill()
+                p.communicate(timeout=2)
+
     def test_no_lab_flag_never_starts_guardian(self):
         p=subprocess.run([sys.executable,"-B",str(SCRIPT)],capture_output=True,timeout=3)
         self.assertNotEqual(p.returncode,0)
