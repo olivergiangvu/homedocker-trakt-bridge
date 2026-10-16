@@ -16,6 +16,7 @@ import socket
 import socketserver
 import stat
 import sys
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
@@ -169,7 +170,7 @@ def build_handler(role,allow_resume=False,unix_path=SOCKET_PATH):
         (lambda path,headers:to_host_unix(path,headers,unix_path)))
     return Endpoint
 
-def run_host(allow_resume=False):
+def run_host(allow_resume=False,ttl_seconds=600):
     parent=Path(SOCKET_PATH).parent
     info=parent.stat()
     if not (stat.S_ISDIR(info.st_mode) and info.st_uid==65534
@@ -181,12 +182,16 @@ def run_host(allow_resume=False):
     os.umask(0o177)
     with UnixHTTPServer(SOCKET_PATH,build_handler("host",allow_resume)) as server:
         os.chmod(SOCKET_PATH,0o600)
+        timer=threading.Timer(ttl_seconds,server.shutdown)
+        timer.daemon=True
+        timer.start()
         try:
             server.serve_forever(poll_interval=0.2)
         finally:
+            timer.cancel()
             Path(SOCKET_PATH).unlink(missing_ok=True)
 
-def run_sidecar(allow_resume=False):
+def run_sidecar(allow_resume=False,ttl_seconds=600):
     if os.geteuid()!=65534:
         raise SystemExit("R23B2_STOP_UNPRIVILEGED_SIDECAR_UID_REQUIRED")
     p=Path(SOCKET_PATH)
@@ -196,14 +201,24 @@ def run_sidecar(allow_resume=False):
         raise SystemExit("R23B2_STOP_PRIVATE_UNIX_SOCKET_REQUIRED")
     with ThreadingHTTPServer((SIDECAR_BIND,SIDECAR_PORT),
                              build_handler("sidecar",allow_resume)) as server:
-        server.serve_forever(poll_interval=0.2)
+        timer=threading.Timer(ttl_seconds,server.shutdown)
+        timer.daemon=True
+        timer.start()
+        try:
+            server.serve_forever(poll_interval=0.2)
+        finally:
+            timer.cancel()
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--role",required=True,choices=("host","sidecar"))
     parser.add_argument("--allow-resume",action="store_true")
+    parser.add_argument("--ttl-seconds",type=int,default=600)
     options=parser.parse_args()
-    (run_host if options.role=="host" else run_sidecar)(options.allow_resume)
+    if not 60<=options.ttl_seconds<=900:
+        raise SystemExit("R23B2_STOP_TTL_MUST_BE_60_TO_900_SECONDS")
+    (run_host if options.role=="host" else run_sidecar)(
+        options.allow_resume,options.ttl_seconds)
 
 if __name__=="__main__":
     main()
