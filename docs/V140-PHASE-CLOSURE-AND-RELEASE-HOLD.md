@@ -50,6 +50,22 @@ Only run the existing **read-only** inventory `scripts/audit-homedocker-docker-c
 
 **Explicit release checkpoint:** `v1.4.0` publication **NO-GO**, Docker/nft/systemd host mutation **NO-GO**, authenticated Gateway relay **NO-GO**, host cleanup mutations **NO-GO until exact candidates and rollback evidence**. The user requested release/deploy/cleanup, but without these proofs it cannot be represented as completed.
 
+## Operator-confirmed exact Docker image cleanup — 2026-10-16
+
+HomeDocker operator executed a previously reviewed exact-image-ID cleanup script and pasted the full successful terminal output. All pre-delete checks passed: Netdata and CrossWatch healthy, preserved rollback images existed, three removed images were unreferenced by any Docker container, and repo digests matched. Deletions reported:
+
+| Removed image | Repository | Disposition |
+| --- | --- | --- |
+| `sha256:14bff67c4793...` | obsolete Netdata | exact old digest removed |
+| `sha256:6625e40fa9f3...` | obsolete CrossWatch | exact old digest removed |
+| `sha256:85e4ca3ada3d...` | obsolete CrossWatch | exact old digest removed |
+
+**Verified operator output:** Docker image logical totals `9.660 GB -> 8.512 GB` (**1.148 GB less**); reclaimable `3.366 GB -> 2.218 GB`; image count `35 -> 32`; container count **19 unchanged**; **0 containers and 0 volumes deleted**; active volumes **13 of 13**. No blanket prune. These are the user's observed Docker summary values, not filesystem block-level reconciliation.
+
+**Protected evidence:** production RC6 running image `sha256:74ef797c7d8556f27f57571023cc2a9371afc81e13766b81295490df745e2116` remains used; AIOStreams unchanged in the audit; old R23A integrated canary is stopped with restart=no, no mounts, and shares image `sha256:6f239a2f...` with **running R23B**. Resume contract canary runs on `media_core_net` with a read-only identity-proof bind mount and must not be disrupted. Old private R23A network `homedocker_v140_canary_internal` has no active endpoint, but the stopped container still refers to it.
+
+The bounded `scripts/retire-v140-r23a-stopped-canary.py` helper is **audit-only by default**; it can retire **only** that stopped, no-mount R23A container and its empty exact-name private network after confirming immutable image and protected RC6/R23B/Resume identities. Its `--apply` needs an exact opt-in phrase and is for the operator to execute through SSH after auditing. The helper does **not** delete a single image, volume, active canary, route, nft rule or systemd service. No HomeDocker execution is inferred from merging GitHub code.
+
 ## Next owner checkpoint
 
 Maintain Draft PR #95 and integrate with the updated main baseline. Qualify the unresolved independent boot-fence/total-loss scenario in a disposable VM, not on HomeDocker; then prepare version bump and formal candidate review. An actual production deploy needs operator-visible SSH results and explicit scoped backup/rollback checks.
