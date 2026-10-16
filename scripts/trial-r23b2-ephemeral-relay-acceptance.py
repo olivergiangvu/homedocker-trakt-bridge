@@ -184,7 +184,8 @@ def start_sidecar(canary_id):
         IMAGE,"python3","-B",str(STAGED),"--role","sidecar",
         "--ttl-seconds",str(TTL),timeout=35)
     obj=inspect_one("container",SIDECAR)
-    if not owner_ok(obj):
+    if not owner_ok(obj) or obj["HostConfig"]["NetworkMode"] not in (
+            "container:"+canary_id,"container:"+CANARY):
         raise Stop("SIDECAR_OWNERSHIP_MISMATCH_AFTER_CREATE")
     cmd("docker","start",SIDECAR,timeout=30)
     obj=inspect_one("container",SIDECAR)
@@ -248,9 +249,10 @@ def trial():
     sidecar_cid=None
     result=5
     try:
-        # No mutations until exact image/local port/ownership checks pass.
-        ensure_writable_stage()
+        # Stage cleanup is armed BEFORE any on-disk creation, including
+        # partial mkdir/source-copy failures.
         stage_created=True
+        ensure_writable_stage()
         host=host_relay()
         wait_socket(host)
         sidecar_cid=start_sidecar(base_id)
