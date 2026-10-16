@@ -228,15 +228,13 @@ def classify_nextup(rows, imdb_by_series, owners):
             continue
         pairs += 1
         first, second = (entry[0] for entry in matches)
-        a, b = (int(x.get("UserData", {}).get("PlaybackPositionTicks") or 0)
+        a, b = (int((x.get("UserData") or {}).get("PlaybackPositionTicks") or 0)
                 for x in (first, second))
         if a > 0 and b > 0:
             ambiguous += 1
         elif (a > 0) != (b > 0):
             safe_potential += 1
         else:
-            x = first.get("UserData", {}).get("LastPlayedDate")
-            y = second.get("UserData", {}).get("LastPlayedDate")
             # No comparison of dates in this observational tool; Gate G1
             # qualification of the actual JS filter remains separate.
             ambiguous += 1
@@ -279,7 +277,7 @@ def live_inputs(legacy, mode):
                 stop("AIO_SERIES_METADATA_UNAVAILABLE")
             if detail.get("Type") != "Series" or detail.get("Id") != series:
                 stop("AIO_SERIES_METADATA_USER_OR_ID_MISMATCH")
-            spelling = detail.get("ProviderIds", {}).get("Imdb")
+            spelling = (detail.get("ProviderIds") or {}).get("Imdb")
             lookup[series] = (spelling.lower() if isinstance(spelling, str)
                               and IMDB.fullmatch(spelling.lower()) else None)
         unchanged = source == aio_request("/Shows/NextUp?Limit=20", token)
@@ -350,8 +348,8 @@ if __name__ == "__main__":
     try:
         main()
     except (Stop, sqlite3.Error, json.JSONDecodeError, OSError,
-            ValueError, subprocess.TimeoutExpired, EOFError,
-            KeyboardInterrupt) as exc:
+            ValueError, TypeError, KeyError, AttributeError,
+            subprocess.TimeoutExpired, EOFError, KeyboardInterrupt) as exc:
         # Never print arbitrary exception text or upstream response.
         print("G1A_STOP_" + (str(exc) if isinstance(exc, Stop)
                              and re.fullmatch(r"[A-Z0-9_]{3,90}", str(exc))
