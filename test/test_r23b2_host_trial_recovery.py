@@ -39,6 +39,12 @@ def sidecar(nonce=NONCE, image=IMAGE, mode=None):
 
 
 class CrashRecovery(unittest.TestCase):
+    def test_python_image_exact_manifest_and_id(self):
+        self.assertEqual(mod.IMAGE,
+            'python@sha256:1b668429b3511ab407d8e00648891631b0b1a4d7e15e3ca70f38ab5b91ad4ab4')
+        self.assertEqual(mod.EXPECTED_IMAGE_ID,
+            'sha256:979e5a8a56846771598d47ebf1f8a75b46155104e168a0b237c0783c1dedff8a')
+
     def test_schema_rejects_bad_nonce_image_version_pid(self):
         for altered in (dict(nonce='../../etc'), dict(image_id='fake'),
                         dict(version=2), dict(host_pid=10),
