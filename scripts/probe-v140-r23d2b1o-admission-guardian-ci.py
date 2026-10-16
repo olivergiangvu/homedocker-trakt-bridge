@@ -104,6 +104,23 @@ def arm(dev,peer,server):
     run("tc","filter","add","dev",dev,"ingress","chain","1",
         "protocol","all","pref","5","matchall","action","pass")
     if not tc_armed(dev):stop("B1O_TC_NOT_ARMED")
+def refresh_optional_kernel_lease(a):
+    # R23D-2B1P ONLY, isolated runner + hardcoded exact owned nft family/name.
+    # nft -f submits flush+add as a SINGLE netlink transaction, so a
+    # continuously refreshed 3s kernel timeout is the only permission.
+    # After SIGKILL (including guardian + watchdog), no renewer exists.
+    if not a.kernel_lease:
+        return
+    batch=(
+        "flush set bridge r23d2b1p_lease authorized\\n"
+        "add element bridge r23d2b1p_lease authorized "
+        "{ 172.31.252.2 timeout 3s }\\n"
+    )
+    p=subprocess.run(["nft","-f","-"],input=batch,text=True,
+                     capture_output=True,timeout=3,check=False)
+    if p.returncode:
+        stop("B1P_KERNEL_LEASE_REFRESH_FAILED")
+
 def guard_loop(a):
     # Guardian owns only exact-named, labeled fake Docker containers.
     while True:
@@ -125,6 +142,9 @@ def guard_loop(a):
             if not tc_armed(dev) and gateway["State"]["Running"]:
                 docker_stop(a.server)
             arm(dev,a.client_ip,a.server_ip)
+            # Renew only after BOTH watchdog freshness and real veth+Docker
+            # owner checks. A nonrenewable lease expires in the kernel.
+            refresh_optional_kernel_lease(a)
             if not gateway["State"]["Running"]:
                 if not fresh(a.watchdog_heartbeat): stop("B1O_NO_WATCHDOG_LEASE")
                 run("docker","start",a.server,timeout=25)
@@ -167,6 +187,7 @@ if __name__=="__main__":
     p.add_argument("--watchdog-heartbeat",required=True)
     p.add_argument("--guard-pidfile",required=True)
     p.add_argument("--watchdog-pid",type=int,default=0)
+    p.add_argument("--kernel-lease",action="store_true")
     args=p.parse_args()
     try:
         ensure_runner()
