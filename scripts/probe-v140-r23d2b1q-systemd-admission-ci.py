@@ -97,10 +97,16 @@ def verify(a):
     except Stop:
         raise Stop("NFT_ADMISSION_POLICY_MISSING")
     required=("hook forward", "iifname", "oifname", "@authorized",
-              "flags timeout", "drop", IP_CLIENT, IP_SERVER)
+              "drop", IP_CLIENT, IP_SERVER)
     missing=[str(i) for i,t in enumerate(required) if t not in policy]
     if missing:
         raise Stop("NFT_ADMISSION_POLICY_UNQUALIFIED_FIELDS_"+",".join(missing))
+    # nft versions differ in whether 'flags timeout' appears in table
+    # listing; ask for the exact owned set, not a formatting-dependent
+    # substring of the combined table listing.
+    timed=call("nft","list","set","bridge",TABLE,"authorized")
+    if not all(k in timed for k in ("type ipv4_addr", "timeout 20s")):
+        raise Stop("NFT_ADMISSION_TIMED_SET_NOT_PROVEN")
     return server,network
 
 def main():
