@@ -694,3 +694,29 @@ jobs:
           python3 -B -m unittest discover -s test \
             -p 'test_r23b2_unix_get_only_relay.py' -v
           python3 -B -m py_compile scripts/r23b2-experimental-aio-unix-get-relay.py
+
+  # Dedicated disposable GitHub runner: REAL Docker sidecar on shared
+  # canary netns, private UID65534 Unix socket, host-only fake AIO.
+  # NO HomeDocker or actual AIO credentials; teardown is exact-labeled.
+  r23b2-real-docker-netns-get-relay-lab:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check R23B2 disposable shared-network-namespace lab source
+        run: |
+          set -euo pipefail
+          command -v docker
+          command -v setpriv
+          command -v python3
+          bash -n scripts/probe-r23b2-real-docker-netns-unix-ci.sh
+      - name: Prove real rootless sidecar in canary netns and scoped Unix rollback
+        shell: bash
+        env:
+          RUNNER_ENVIRONMENT: github-hosted
+        run: |
+          set -euo pipefail
+          sudo --preserve-env=CI,GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT \
+            bash scripts/probe-r23b2-real-docker-netns-unix-ci.sh --ci-ephemeral-only
