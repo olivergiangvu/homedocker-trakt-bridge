@@ -142,11 +142,20 @@ class Contract(unittest.TestCase):
         p=subprocess.run([sys.executable,"-B",str(SCRIPT),"--compare"],
                          capture_output=True,text=True,timeout=4)
         self.assertEqual(p.returncode,5)
-        self.assertIn("EXPLICIT_LIVE_READONLY_CONFIRMATION_REQUIRED",p.stderr)
+        self.assertIn("EXPLICIT_LIVE_USERNAME_PASSWORD_LOGIN_CONFIRMATION_REQUIRED",p.stderr)
         p=subprocess.run([sys.executable,"-B",str(SCRIPT),"--include-resume"],
                          capture_output=True,text=True,timeout=4)
         self.assertEqual(p.returncode,5)
         self.assertIn("RESUME_REQUIRES_COMPARE",p.stderr)
+        p=subprocess.run([sys.executable,"-B",str(SCRIPT),"--compare",
+                          "--existing-token","--confirm","LIVE_AUTH_LOGIN_GET_ONLY"],
+                         capture_output=True,text=True,timeout=4)
+        self.assertEqual(p.returncode,5)
+        self.assertIn("EXPLICIT_LIVE_TOKEN_CONFIRMATION_REQUIRED",p.stderr)
+        p=subprocess.run([sys.executable,"-B",str(SCRIPT),"--existing-token"],
+                         capture_output=True,text=True,timeout=4)
+        self.assertEqual(p.returncode,5)
+        self.assertIn("EXISTING_TOKEN_REQUIRES_COMPARE",p.stderr)
     def test_all_report_flags_prevent_live_claim(self):
         source,_=self.src()
         gateway,_=self.gate()
