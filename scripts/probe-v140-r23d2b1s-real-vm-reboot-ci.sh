@@ -149,12 +149,10 @@ echo "R23D2B1S_REAL_QEMU_GUEST_INITIAL_KERNEL_BOOT_PASS"
 
 # No outside pull required: import a synthetic image with no runnable code.
 # docker create persists restart=no + network none across guest reboot.
-guest 'mkdir -p /tmp/b1s-image && printf ci > /tmp/b1s-image/marker &&
+guest 'set -e; mkdir -p /tmp/b1s-image && printf ci > /tmp/b1s-image/marker &&
   tar -C /tmp/b1s-image -cf /tmp/b1s-image.tar . &&
   sudo docker import /tmp/b1s-image.tar b1s-guest-image:ci >/dev/null &&
-  sudo docker create --name r23d2b1s-guest-gateway --network none
-    --restart no --read-only --cap-drop ALL
-    b1s-guest-image:ci /bin/false >/dev/null'
+  sudo docker create --name r23d2b1s-guest-gateway --network none --restart no --read-only --cap-drop ALL b1s-guest-image:ci /bin/false >/dev/null'
 
 # Real installed guest systemd unit only INSPECTS exact Docker state.
 # This is evidence of boot ordering, not a privileged API interlock.
