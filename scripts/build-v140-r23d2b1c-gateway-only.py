@@ -36,6 +36,8 @@ IGNORE=ROOT/"Dockerfile.gateway-canary.dockerignore"
 ROLE_LABEL="io.homedocker.r23d.role"
 SOURCE_LABEL="io.homedocker.r23d.source_sha"
 CONFIRM="R23D2B1C_BUILD_CACHED_GATEWAY_ONLY_IMAGE"
+EXISTING_SHA="3c08d06bf08154283d5b548d371729436f9ea392"
+EXISTING_IMAGE_ID="sha256:98b1e6dc7c235ba7381cd6f798f742a5ecc460580c2f408e8d256927199f300d"
 MAX_BYTES=131072
 IMAGE_ID=re.compile(r"sha256:[0-9a-f]{64}")
 LABEL_SOURCE_SHA=re.compile(r"[0-9a-f]{40}")
@@ -133,7 +135,7 @@ def attest_built_image(image, *, tag, sha, base_arch):
         or labels.get(SOURCE_LABEL)!=sha
         or c.get("User")!="node"
         or c.get("WorkingDir")!="/app"
-        or c.get("Entrypoint") not in (None,[])
+        or c.get("Entrypoint")!=["docker-entrypoint.sh"]
         or c.get("Cmd")!=["node","src/gateway-canary-entry.mjs"]
         or c.get("Volumes") not in (None,{})
         or c.get("ExposedPorts")!={"7101/tcp":{}}):
@@ -161,6 +163,49 @@ def attest_built_image(image, *, tag, sha, base_arch):
              "wget -q -O /dev/null http://127.0.0.1:7101/health || exit 1"]:
         raise Stop("GATEWAY_HEALTHCHECK_REJECTED")
     return True
+
+def verify_existing():
+    """Read-only recovery: exact old source artifact, new clean verifier checkout.
+
+    Does not call the tag-absence readiness check. Revalidates protected
+    host baseline, final network collision/nft syntax, local socket and
+    immutable original image/config against the exact approved base.
+    """
+    readiness=load(READY,"r23d2b1c_existing_readiness")
+    acquisition=load(ACQUIRE,"r23d2b1c_existing_acquisition")
+    acquisition.require_local_docker_socket()
+    planner=readiness.load_planner()
+    plan=planner.preflight()  # protected production + nft --check, no image-tag check
+    if not planner.check_gateway_source():
+        raise Stop("GATEWAY_ONLY_IMAGE_CONTRACT_CHANGED")
+    if readiness.BASE_RE.findall(planner.GATEWAY_IMAGE_FILE.read_text("utf8"))!=[acquisition.PINNED_BASE]:
+        raise Stop("SOURCE_IMAGE_DIGEST_CHANGED")
+    check_deny_by_default_context()
+    if not acquisition.image_inspect(acquisition.PINNED_BASE):
+        raise Stop("PINNED_BASE_DIGEST_UNVERIFIED")
+    base=inspected_image(acquisition.PINNED_BASE)
+    if (base.get("Config") or {}).get("Entrypoint")!=["docker-entrypoint.sh"]:
+        raise Stop("PINNED_BASE_ENTRYPOINT_MISMATCH")
+    tag="homedocker-trakt-bridge:v140-r23d-"+EXISTING_SHA[:12]
+    image=inspected_image(tag)
+    if image.get("Id")!=EXISTING_IMAGE_ID:
+        raise Stop("EXISTING_GATEWAY_IMAGE_ID_MISMATCH")
+    attest_built_image(image,tag=tag,sha=EXISTING_SHA,
+                       base_arch=base["Architecture"])
+    if inspected_image(tag).get("Id")!=EXISTING_IMAGE_ID:
+        raise Stop("GATEWAY_IMAGE_ID_CHANGED_AFTER_POSTFLIGHT")
+    return {
+        "audit":"R23D2B1C_EXISTING_IMAGE_RECOVERY",
+        "status":"EXISTING_IMAGE_ATTESTED_PROTECTED_BASELINE_PASS",
+        "original_image_sha_verified":True,
+        "original_image_id_verified":True,
+        "inherited_pinned_base_entrypoint_verified":True,
+        "protected_rc6_r23b_r23a_preflight_passed":True,
+        "gateway_container_started":False,
+        "network_nft_or_production_modified":False,
+        "authenticated_jellyfin_session_allowed":False,
+        "next":"REVIEW_GUARDED_SYNTHETIC_ONLY_RUNTIME",
+    }
 
 def apply(state):
     argv=state["build_command"][:2]+[
@@ -206,9 +251,16 @@ def apply(state):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply",action="store_true")
+    parser.add_argument("--verify-existing",action="store_true")
     parser.add_argument("--confirm",default="")
     args=parser.parse_args()
     try:
+        if args.verify_existing:
+            if args.apply or args.confirm:
+                raise Stop("VERIFY_EXISTING_REQUIRES_READ_ONLY_MODE")
+            print(json.dumps(verify_existing(),indent=2))
+            print("R23D2B1C_EXISTING_IMAGE_VERIFY_PASS")
+            return
         state=preflight()
         if not args.apply:
             print(json.dumps({
@@ -233,6 +285,11 @@ def main():
     except Exception as error:
         reason=error.args[0] if isinstance(error,Stop) and len(error.args)==1 else ""
         allowed={
+            "VERIFY_EXISTING_REQUIRES_READ_ONLY_MODE",
+            "SOURCE_IMAGE_DIGEST_CHANGED",
+            "GATEWAY_ONLY_IMAGE_CONTRACT_CHANGED",
+            "PINNED_BASE_ENTRYPOINT_MISMATCH",
+            "EXISTING_GATEWAY_IMAGE_ID_MISMATCH",
             "REVIEWED_SOURCE_MODULE_MISSING",
             "ISOLATED_DOCKER_CONTEXT_NOT_VERIFIED",
             "PINNED_BASE_NOT_CACHED_HOLD_BUILD",
