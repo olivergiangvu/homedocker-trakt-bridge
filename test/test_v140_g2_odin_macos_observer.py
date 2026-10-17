@@ -39,6 +39,13 @@ class OdinObserverTests(unittest.TestCase):
         self.assertFalse(r["client_modified"])
         self.assertFalse(r["real_gateway_client_qualified"])
 
+    def test_observer_explicitly_rejects_root_user(self):
+        with patch.object(o.os, "geteuid", return_value=0):
+            with self.assertRaises(o.Stop) as ctx:
+                o.observe_unprivileged_precheck()
+            self.assertEqual(str(ctx.exception),
+                             "OBSERVER_MUST_RUN_AS_NORMAL_USER")
+
     def test_only_loopback_listener_and_aio_port_are_built_into_config(self):
         with tempfile.TemporaryDirectory() as tmp:
             c = o.configuration(Path(tmp))
