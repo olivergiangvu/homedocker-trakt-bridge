@@ -61,7 +61,7 @@ class OdinObserverTests(unittest.TestCase):
     def test_log_is_categorical_status_only_never_raw_sensitive_traffic(self):
         with tempfile.TemporaryDirectory() as tmp:
             c = o.configuration(Path(tmp))
-        self.assertIn("log_format odin_groups '$odin_category $status $odin_family';", c)
+        self.assertIn("log_format odin_groups '$odin_category $status $odin_family $odin_items_subroute $odin_upstream_headers';", c)
         self.assertIn("access_log " + tmp + "/counts.log odin_groups;", c)
         for secret_var in ("$request_uri", "$args", "$remote_addr", "$http_authorization",
                            "$http_x_emby_token", "$http_cookie", "$user_agent",
@@ -82,8 +82,8 @@ class OdinObserverTests(unittest.TestCase):
 
     def test_counter_report_is_anonymous_and_does_not_claim_gateway(self):
         r = o.counter_report([
-            "nextup 200 shows", "nextup 200 shows", "resume 200 users",
-            "userdata 200 users", "auth 200 users", "other 405 images", "other 503 media"])
+            "nextup 200 shows not_items received", "nextup 200 shows not_items received", "resume 200 users not_items received",
+            "userdata 200 users not_items received", "auth 200 users not_items received", "other 405 images not_items missing", "other 503 media not_items received"])
         self.assertEqual(r["status"], "ODIN_OBSERVER_FINISHED_NO_GATEWAY_INTERCEPT")
         self.assertEqual(r["observed_requests"], 7)
         self.assertEqual(r["observed_nextup"], 2)
@@ -102,8 +102,8 @@ class OdinObserverTests(unittest.TestCase):
 
     def test_nextup_route_specific_http_200_and_3xx_4xx_are_aggregated(self):
         result = o.counter_report([
-            "nextup 302 shows", "nextup 200 shows", "resume 200 users", "auth 401 users",
-            "other 302 images", "other 404 media", "other 405 media", "other 200 items",
+            "nextup 302 shows not_items received", "nextup 200 shows not_items received", "resume 200 users not_items received", "auth 401 users not_items received",
+            "other 302 images not_items received", "other 404 media not_items received", "other 405 media not_items received", "other 200 items items_collection received",
         ])
         self.assertTrue(result["client_nextup_path_observed"])
         self.assertTrue(result["nextup_http_200_observed"])
@@ -128,7 +128,7 @@ class OdinObserverTests(unittest.TestCase):
 
     def test_nextup_get_observed_but_redirect_does_not_qualify_200(self):
         result = o.counter_report([
-            "nextup 302 shows", "nextup 404 shows", "resume 200 users", "other 200 items"])
+            "nextup 302 shows not_items received", "nextup 404 shows not_items received", "resume 200 users not_items received", "other 200 items items_collection received"])
         self.assertEqual(result["observed_nextup"], 2)
         self.assertTrue(result["client_nextup_path_observed"])
         self.assertEqual(result["nextup_http_200_count"], 0)
@@ -138,9 +138,9 @@ class OdinObserverTests(unittest.TestCase):
 
     def test_bounded_other_5xx_families_no_uri_or_user_data(self):
         result = o.counter_report([
-            "other 502 media", "other 503 items", "other 504 media",
-            "other 404 users", "other 304 images", "nextup 200 shows",
-            "resume 200 users",
+            "other 502 media not_items missing", "other 503 items item_detail received", "other 504 media not_items missing",
+            "other 404 users not_items received", "other 304 images not_items received", "nextup 200 shows not_items received",
+            "resume 200 users not_items received",
         ])
         self.assertEqual(result["observed_requests"], 7)
         self.assertEqual(result["nextup_http_200_count"], 1)
@@ -167,13 +167,65 @@ class OdinObserverTests(unittest.TestCase):
                           "$http_x_emby_token", "$http_cookie", "$request_body"):
             self.assertNotIn(forbidden, config)
         with self.assertRaises(o.Stop):
-            o.counter_report(["other 502 unauthorised_dynamic_family"])
+            o.counter_report(["other 502 unauthorised_dynamic_family not_items received"])
+
+    def test_items_5xx_origins_and_subroutes_are_only_constant_counters(self):
+        report = o.counter_report([
+            "nextup 200 shows not_items received",
+            "resume 200 users not_items received",
+            "other 500 items item_detail received",
+            "other 502 items item_subresource missing",
+            "other 503 items libraries received",
+            "other 304 images not_items received",
+        ])
+        self.assertEqual(report["observed_requests"], 6)
+        self.assertEqual(report["observed_nextup"], 1)
+        self.assertEqual(report["nextup_http_200_count"], 1)
+        self.assertEqual(report["items_5xx_by_subroute"]["item_detail"], 1)
+        self.assertEqual(report["items_5xx_by_subroute"]["item_subresource"], 1)
+        self.assertEqual(report["items_5xx_by_subroute"]["libraries"], 1)
+        self.assertEqual(report["items_5xx_upstream_response_headers"], {
+            "received": 2, "missing": 1,
+        })
+        self.assertEqual(report["other_errors_by_endpoint_family"]["items"]["5xx"], 3)
+        self.assertFalse(report["real_gateway_client_qualified"])
+        sanitized = json.dumps(report)
+        for banned in ("jellyfin/", "tt12345678", "UserId",
+                       "Authorization", "item_unique_id_abc", "http://"):
+            self.assertNotIn(banned, sanitized)
+
+    def test_rejects_family_or_subroute_mismatches_and_private_log_lines(self):
+        for line in (
+            "other 500 items not_items received",
+            "other 502 images item_detail received",
+            "other 500 items item_detail invalid",
+            "other 500 items item_detail received path/query",
+            "other 500 items item_detail",
+        ):
+            with self.subTest(line=line), self.assertRaises(o.Stop):
+                o.counter_report([line])
+
+    def test_nginx_origin_mapping_is_static_and_no_raw_upstream_timing_logged(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config = o.configuration(Path(temporary))
+        self.assertIn("map $uri $odin_items_subroute {", config)
+        self.assertIn("map $upstream_header_time $odin_upstream_headers {", config)
+        self.assertIn("item_detail;", config)
+        self.assertIn("item_subresource;", config)
+        self.assertIn("libraries;", config)
+        self.assertIn("default missing;", config)
+        self.assertIn("$odin_items_subroute $odin_upstream_headers", config)
+        self.assertNotIn("$upstream_header_time'", config)
+        for forbidden in ("$request_uri", "$args", "$upstream_addr",
+                          "$remote_addr", "$http_cookie",
+                          "$http_x_emby_token", "$http_authorization"):
+            self.assertNotIn(forbidden, config)
 
     def test_unknown_raw_log_line_fails_closed_and_cannot_show_request(self):
         with self.assertRaises(o.Stop):
-            o.counter_report(["other 500 /jellyfin/Shows/NextUp?token=SECRET"])
+            o.counter_report(["other 500 /jellyfin/Shows/NextUp?token=SECRET not_items received"])
         with self.assertRaises(o.Stop):
-            o.counter_report(["auth 200 users", "nextup invalidstatus shows"])
+            o.counter_report(["auth 200 users not_items received", "nextup invalidstatus shows"])
 
 
 if __name__ == "__main__":
