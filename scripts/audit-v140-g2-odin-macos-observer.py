@@ -138,13 +138,23 @@ http {
 def counter_report(lines):
     counts = Counter()
     statuses = Counter()
+    # Category X response-class evidence without raw paths, query, user info,
+    # request bodies or client identifiers. The temporary per-request log is
+    # still deleted at observer exit; only totals leave host.
+    category_status = {category: Counter() for category in VALID_GROUPS}
+    nextup_200 = 0
     for line in lines:
         items = line.strip().split()
         if len(items) != 2 or items[0] not in VALID_GROUPS \
            or not VALID_STATUS.fullmatch(items[1]):
             reject("OBSERVER_COUNTER_LOG_FORMAT_CHANGED")
-        counts[items[0]] += 1
-        statuses[items[1][0] + "xx"] += 1
+        category, status = items
+        group = status[0] + "xx"
+        counts[category] += 1
+        statuses[group] += 1
+        category_status[category][group] += 1
+        if category == "nextup" and status == "200":
+            nextup_200 += 1
     return {
         "audit": "G2_ODIN_MACOS_REAL_ROUTE_OBSERVE_ONLY",
         "status": "ODIN_OBSERVER_FINISHED_NO_GATEWAY_INTERCEPT",
@@ -158,6 +168,17 @@ def counter_report(lines):
             "2xx": statuses["2xx"], "3xx": statuses["3xx"],
             "4xx": statuses["4xx"], "5xx": statuses["5xx"],
         },
+        "response_class_by_route": {
+            category: {
+                "2xx": category_status[category]["2xx"],
+                "3xx": category_status[category]["3xx"],
+                "4xx": category_status[category]["4xx"],
+                "5xx": category_status[category]["5xx"],
+            }
+            for category in VALID_GROUPS
+        },
+        "nextup_http_200_count": nextup_200,
+        "nextup_http_200_observed": nextup_200 > 0,
         "client_nextup_path_observed": counts["nextup"] > 0,
         "gateway_forwarded_requests": 0,
         "production_nginx_reloaded": False,
