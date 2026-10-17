@@ -8,6 +8,6 @@ test('G2-1A Odin Mac ephemeral nginx observer has anonymous counters & default n
     { encoding: 'utf8', timeout: 15000 });
   assert.equal(p.error, undefined, p.error?.message);
   assert.equal(p.status, 0, p.stderr);
-  assert.match(p.stderr, /Ran 12 tests/);
+  assert.match(p.stderr, /Ran 15 tests/);
   assert.match(p.stderr, /\bOK\b/);
 });
