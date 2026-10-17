@@ -9,6 +9,6 @@ test('G1B offline Docker/authorization boundaries via Python without Docker use'
   });
   assert.equal(p.error, undefined, p.error?.message);
   assert.equal(p.status, 0, p.stderr);
-  assert.match(p.stderr, /Ran 6 tests/);
+  assert.match(p.stderr, /Ran 7 tests/);
   assert.match(p.stderr, /\bOK\b/);
 });
