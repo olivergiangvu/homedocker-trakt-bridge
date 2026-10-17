@@ -50,7 +50,11 @@ def g2_preflight():
     spec = importlib.util.spec_from_file_location("g2_readonly", target)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    return mod.main()
+    # Invoke the read-only G2 API directly; do not reparse observer flags.
+    g1a = mod.load("g1a", "audit-v140-g1-live-inputs.py")
+    g1b = mod.load("g1b", "audit-v140-g1b-isolated-replay.py")
+    g1c = mod.load("g1c", "audit-v140-g1c-direct-aio.py")
+    return mod.inspect_baseline(g1a, g1b, g1c)
 
 
 def nginx_path():
