@@ -39,6 +39,12 @@ VALID_FAMILIES = (
     "items", "shows", "users", "images", "media", "system",
     "jellyfin_other", "aio_other",
 )
+VALID_ITEM_SUBROUTES = (
+    "item_detail", "item_subresource", "items_collection",
+    "libraries", "items_other", "not_items",
+)
+VALID_UPSTREAM_HEADERS = ("received", "missing")
+
 VALID_STATUS = re.compile(r"[1-5][0-9]{2}\Z")
 
 
@@ -90,7 +96,26 @@ events { worker_connections 128; }
 http {
     # Allow no raw URL or request metadata in the ONLY access log.
     # The third field is a static route family, NEVER an original URL.
-    log_format odin_groups '$odin_category $status $odin_family';
+    # ALL logged tokens are small, fixed enums/HTTP code. Never log URI,
+    # query, item IDs, auth, upstream host, or timing values.
+    log_format odin_groups '$odin_category $status $odin_family $odin_items_subroute $odin_upstream_headers';
+    # Classify only the *shape* of an Items URL; do not log any actual ID.
+    map $uri $odin_items_subroute {
+        default not_items;
+        "~^/jellyfin/Items/[A-Za-z0-9_-]{1,128}$" item_detail;
+        "~^/jellyfin/Items/[A-Za-z0-9_-]{1,128}/" item_subresource;
+        "~^/jellyfin/Items$" items_collection;
+        "~^/jellyfin/Libraries(?:/|$)" libraries;
+        "~^/jellyfin/Items(?:/|$)" items_other;
+    }
+    # A numeric upstream *header-time* means nginx received response headers
+    # from the AIO listener. A 502/504 without headers remains ambiguous:
+    # AIO may have failed transport, or observer generated an HTTP error.
+    # Only the constant received/missing flag is ever stored or printed.
+    map $upstream_header_time $odin_upstream_headers {
+        default missing;
+        "~^[0-9]+(?:\\.[0-9]+)?$" received;
+    }
     map $uri $odin_family {
         default aio_other;
         "~^/jellyfin/(?:Items|Libraries)(?:/|$)" items;
@@ -162,13 +187,19 @@ def counter_report(lines):
     other_errors_by_family = {
         family: Counter() for family in VALID_FAMILIES
     }
+    items_5xx_by_subroute = Counter()
+    items_5xx_header_evidence = Counter()
     for line in lines:
         items = line.strip().split()
-        if len(items) != 3 or items[0] not in VALID_GROUPS \
+        if len(items) != 5 or items[0] not in VALID_GROUPS \
            or not VALID_STATUS.fullmatch(items[1]) \
-           or items[2] not in VALID_FAMILIES:
+           or items[2] not in VALID_FAMILIES \
+           or items[3] not in VALID_ITEM_SUBROUTES \
+           or items[4] not in VALID_UPSTREAM_HEADERS:
             reject("OBSERVER_COUNTER_LOG_FORMAT_CHANGED")
-        category, status, family = items
+        category, status, family, subroute, upstream_headers = items
+        if (family == "items") != (subroute != "not_items"):
+            reject("OBSERVER_ROUTE_FAMILY_INCONSISTENT")
         group = status[0] + "xx"
         counts[category] += 1
         statuses[group] += 1
@@ -177,6 +208,9 @@ def counter_report(lines):
             nextup_200 += 1
         if category == "other" and status[0] in ("4", "5"):
             other_errors_by_family[family][status[0] + "xx"] += 1
+        if category == "other" and family == "items" and status[0] == "5":
+            items_5xx_by_subroute[subroute] += 1
+            items_5xx_header_evidence[upstream_headers] += 1
     return {
         "audit": "G2_ODIN_MACOS_REAL_ROUTE_OBSERVE_ONLY",
         "status": "ODIN_OBSERVER_FINISHED_NO_GATEWAY_INTERCEPT",
@@ -207,6 +241,15 @@ def counter_report(lines):
                 "5xx": other_errors_by_family[family]["5xx"],
             }
             for family in VALID_FAMILIES
+        },
+        "items_5xx_by_subroute": {
+            subroute: items_5xx_by_subroute[subroute]
+            for subroute in VALID_ITEM_SUBROUTES
+            if subroute != "not_items"
+        },
+        "items_5xx_upstream_response_headers": {
+            evidence: items_5xx_header_evidence[evidence]
+            for evidence in VALID_UPSTREAM_HEADERS
         },
         "nextup_http_200_count": nextup_200,
         "nextup_http_200_observed": nextup_200 > 0,
