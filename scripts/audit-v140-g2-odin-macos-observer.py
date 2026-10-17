@@ -54,7 +54,12 @@ def g2_preflight():
     g1a = mod.load("g1a", "audit-v140-g1-live-inputs.py")
     g1b = mod.load("g1b", "audit-v140-g1b-isolated-replay.py")
     g1c = mod.load("g1c", "audit-v140-g1c-direct-aio.py")
-    return mod.inspect_baseline(g1a, g1b, g1c)
+    try:
+        return mod.inspect_baseline(g1a, g1b, g1c)
+    except Exception:
+        # Upstream imported audit exceptions may contain sensitive file paths
+        # or Docker details. Never expose them through a Python traceback.
+        reject("G2_ROUTE_BASELINE_FAILED")
 
 
 def nginx_path():
