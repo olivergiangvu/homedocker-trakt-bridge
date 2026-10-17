@@ -108,12 +108,15 @@ def snapshot(db, g1a):
         if expiry is None or int(expiry) < int(time.time()):
             stop("LEGACY_IDENTITY_EXPIRED")
         original = json.loads(raw)
-        shows, groups, _ = g1a.load_legacy(original)
+        shows, pairs, _ = g1a.load_legacy(original)
+        # G1A returns a private {Trakt ID: frozenset(Imdb aliases)} mapping.
+        # Never print or JSON-serialize that identity mapping in preflight.
+        # The operator output needs only the numeric verified-group count.
         return {
             "profile": profile,
             "legacy": original,
             "shows": shows,
-            "groups": groups,
+            "groups": len(pairs),
         }
 
 
