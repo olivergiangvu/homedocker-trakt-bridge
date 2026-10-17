@@ -14,6 +14,8 @@ import importlib.util
 import json
 from pathlib import Path
 import re
+import sqlite3
+import subprocess
 import sys
 
 sys.dont_write_bytecode = True
@@ -110,14 +112,19 @@ def main():
     g1a = load("g1a", "audit-v140-g1-live-inputs.py")
     g1b = load("g1b", "audit-v140-g1b-isolated-replay.py")
     g1c = load("g1c", "audit-v140-g1c-direct-aio.py")
-    return inspect_baseline(g1a, g1b, g1c)
+    try:
+        return inspect_baseline(g1a, g1b, g1c)
+    except (g1a.Stop, g1b.Stop, g1c.Stop):
+        # Prior audit imports use their own Stop classes; do not surface
+        # arbitrary Docker / SQLite paths or identities in this operator UI.
+        raise Stop("UPSTREAM_G1_BASELINE_CHANGED") from None
 
 
 if __name__ == "__main__":
     try:
         print(json.dumps(main(), indent=2, sort_keys=True))
     except (Stop, OSError, ValueError, TypeError, KeyError,
-            AssertionError) as exc:
+            AssertionError, sqlite3.Error, subprocess.TimeoutExpired) as exc:
         detail = str(exc) if isinstance(exc, Stop) else ""
         safe = (detail if re.fullmatch(r"[A-Z0-9_]{3,100}", detail)
                 else "G2_PREFLIGHT_UNAVAILABLE")
