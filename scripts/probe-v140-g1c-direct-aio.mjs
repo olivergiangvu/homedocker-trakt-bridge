@@ -28,6 +28,7 @@ const VALID_USER = /^[A-Za-z0-9_-]{8,128}$/;
 const VALID_PROFILE = /^[a-f0-9]{24}$/;
 const SERIES = /^[A-Za-z0-9_-]{1,128}$/;
 const TOKEN = /^[^\s\x00-\x1f\x7f]{16,1024}$/;
+const AIO_AUTH = 'MediaBrowser Client="HomeDockerG1CReadOnly",Device="SSH",DeviceId="g1c-direct",Version="1.0"';
 const LIMIT = 5 * 1024 * 1024;
 
 function validate(payload) {
@@ -132,14 +133,14 @@ export async function runDirectAioCandidate(data, {
   };
   const user = await boundedJson(await allowedFetch(base + '/Users/Me', {
     method: 'GET', redirect: 'manual',
-    headers: { 'X-Emby-Token': data.token },
+    headers: { 'X-Emby-Token': data.token, 'X-Emby-Authorization': AIO_AUTH },
     signal: AbortSignal.timeout(8000),
   }), 128 * 1024);
   assert.equal(user.Id, data.user, 'AIO_USER_ID_MISMATCH');
 
   const getSource = () => allowedFetch(base + QUERY, {
     method: 'GET', redirect: 'manual',
-    headers: { 'X-Emby-Token': data.token },
+    headers: { 'X-Emby-Token': data.token, 'X-Emby-Authorization': AIO_AUTH },
     signal: AbortSignal.timeout(15000),
   }).then(r => boundedJson(r));
 
@@ -168,7 +169,7 @@ export async function runDirectAioCandidate(data, {
     });
     const url = 'http://127.0.0.1:' + gateway.address().port + QUERY;
     const response = await fetch(url, {
-      method: 'GET', headers: { 'X-Emby-Token': data.token },
+      method: 'GET', headers: { 'X-Emby-Token': data.token, 'X-Emby-Authorization': AIO_AUTH },
       signal: AbortSignal.timeout(25000),
     });
     through = await boundedJson(response);
