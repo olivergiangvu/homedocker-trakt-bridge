@@ -34,6 +34,11 @@ PORT = 17431
 AIO = "127.0.0.1:3240"
 CONFIRM = "V140_ODIN_MACOS_EPHEMERAL_OBSERVE_ONLY"
 VALID_GROUPS = ("nextup", "resume", "userdata", "auth", "other")
+# Fixed privacy-preserving endpoint FAMILIES, not URLs/IDs/titles/query strings.
+VALID_FAMILIES = (
+    "items", "shows", "users", "images", "media", "system",
+    "jellyfin_other", "aio_other",
+)
 VALID_STATUS = re.compile(r"[1-5][0-9]{2}\Z")
 
 
@@ -84,7 +89,18 @@ error_log /dev/null crit;
 events { worker_connections 128; }
 http {
     # Allow no raw URL or request metadata in the ONLY access log.
-    log_format odin_groups '$odin_category $status';
+    # The third field is a static route family, NEVER an original URL.
+    log_format odin_groups '$odin_category $status $odin_family';
+    map $uri $odin_family {
+        default aio_other;
+        "~^/jellyfin/(?:Items|Libraries)(?:/|$)" items;
+        "~^/jellyfin/(?:Shows|Seasons|Episodes)(?:/|$)" shows;
+        "~^/jellyfin/(?:Users|UserItems)(?:/|$)" users;
+        "~^/jellyfin/(?:Images)(?:/|$)" images;
+        "~^/jellyfin/(?:Videos|Audio|PlaybackInfo|Subtitles)(?:/|$)" media;
+        "~^/jellyfin/(?:System|Sessions)(?:/|$)" system;
+        "~^/jellyfin(?:/|$)" jellyfin_other;
+    }
     map "$request_method:$uri" $odin_category {
         default other;
         "~^GET:/jellyfin/Shows/NextUp$" nextup;
@@ -143,18 +159,24 @@ def counter_report(lines):
     # still deleted at observer exit; only totals leave host.
     category_status = {category: Counter() for category in VALID_GROUPS}
     nextup_200 = 0
+    other_errors_by_family = {
+        family: Counter() for family in VALID_FAMILIES
+    }
     for line in lines:
         items = line.strip().split()
-        if len(items) != 2 or items[0] not in VALID_GROUPS \
-           or not VALID_STATUS.fullmatch(items[1]):
+        if len(items) != 3 or items[0] not in VALID_GROUPS \
+           or not VALID_STATUS.fullmatch(items[1]) \
+           or items[2] not in VALID_FAMILIES:
             reject("OBSERVER_COUNTER_LOG_FORMAT_CHANGED")
-        category, status = items
+        category, status, family = items
         group = status[0] + "xx"
         counts[category] += 1
         statuses[group] += 1
         category_status[category][group] += 1
         if category == "nextup" and status == "200":
             nextup_200 += 1
+        if category == "other" and status[0] in ("4", "5"):
+            other_errors_by_family[family][status[0] + "xx"] += 1
     return {
         "audit": "G2_ODIN_MACOS_REAL_ROUTE_OBSERVE_ONLY",
         "status": "ODIN_OBSERVER_FINISHED_NO_GATEWAY_INTERCEPT",
@@ -176,6 +198,15 @@ def counter_report(lines):
                 "5xx": category_status[category]["5xx"],
             }
             for category in VALID_GROUPS
+        },
+        # Anonymous aggregate of ONLY the 4xx/5xx among 'other' routes.
+        # No raw request targets or identifiers are retained.
+        "other_errors_by_endpoint_family": {
+            family: {
+                "4xx": other_errors_by_family[family]["4xx"],
+                "5xx": other_errors_by_family[family]["5xx"],
+            }
+            for family in VALID_FAMILIES
         },
         "nextup_http_200_count": nextup_200,
         "nextup_http_200_observed": nextup_200 > 0,
