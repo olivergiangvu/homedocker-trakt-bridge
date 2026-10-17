@@ -100,6 +100,42 @@ class OdinObserverTests(unittest.TestCase):
                       "movie_title", "/jellyfin/Shows/NextUp"):
             self.assertNotIn(token, serialized)
 
+    def test_nextup_route_specific_http_200_and_3xx_4xx_are_aggregated(self):
+        result = o.counter_report([
+            "nextup 302", "nextup 200", "resume 200", "auth 401",
+            "other 302", "other 404", "other 405", "other 200",
+        ])
+        self.assertTrue(result["client_nextup_path_observed"])
+        self.assertTrue(result["nextup_http_200_observed"])
+        self.assertEqual(result["nextup_http_200_count"], 1)
+        self.assertEqual(result["response_class_by_route"]["nextup"]["3xx"], 1)
+        self.assertEqual(result["response_class_by_route"]["nextup"]["2xx"], 1)
+        self.assertEqual(result["response_class_by_route"]["auth"]["4xx"], 1)
+        self.assertEqual(result["response_class_by_route"]["resume"]["2xx"], 1)
+        self.assertEqual(result["response_class_by_route"]["other"]["4xx"], 2)
+        for category, amount in [
+            ("nextup", result["observed_nextup"]),
+            ("resume", result["observed_resume"]),
+            ("userdata", result["observed_userdata"]),
+            ("auth", result["observed_authentication"]),
+            ("other", result["observed_other"]),
+        ]:
+            self.assertEqual(sum(result["response_class_by_route"][category].values()), amount)
+        summary = json.dumps(result)
+        for private in ("Authorization", "/jellyfin/", "Imdb",
+                        "UserId", "tt44051354", "secret"):
+            self.assertNotIn(private, summary)
+
+    def test_nextup_get_observed_but_redirect_does_not_qualify_200(self):
+        result = o.counter_report([
+            "nextup 302", "nextup 404", "resume 200", "other 200"])
+        self.assertEqual(result["observed_nextup"], 2)
+        self.assertTrue(result["client_nextup_path_observed"])
+        self.assertEqual(result["nextup_http_200_count"], 0)
+        self.assertFalse(result["nextup_http_200_observed"])
+        self.assertEqual(result["gateway_forwarded_requests"], 0)
+        self.assertFalse(result["real_gateway_client_qualified"])
+
     def test_unknown_raw_log_line_fails_closed_and_cannot_show_request(self):
         with self.assertRaises(o.Stop):
             o.counter_report(["GET /jellyfin/Shows/NextUp?token=SECRET 200"])
