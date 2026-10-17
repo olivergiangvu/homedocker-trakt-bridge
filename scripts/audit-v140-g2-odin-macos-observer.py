@@ -25,6 +25,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+from urllib import request, error
 import time
 
 sys.dont_write_bytecode = True
@@ -167,11 +168,33 @@ def counter_report(lines):
     }
 
 
+def observe_unprivileged_precheck():
+    """One public loopback GET and kernel listener check, no SQLite or sudo."""
+    if os.geteuid() == 0:
+        reject("OBSERVER_MUST_RUN_AS_NORMAL_USER")
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "g2_sockonly", ROOT / "audit-v140-g2-route-preflight.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    if PORT in module.listening_ports():
+        reject("PREVIEW_LOOPBACK_PORT_BUSY")
+    # Public AIO health only, no secret or authenticated request.
+    op = request.build_opener(
+        request.ProxyHandler({}),
+        request.HTTPHandler())
+    try:
+        with op.open("http://" + AIO + "/jellyfin/System/Info/Public",
+                     timeout=5) as response:
+            if response.status != 200:
+                reject("AIO_PUBLIC_HEALTH_NOT_READY")
+            response.read(4096)
+    except (error.HTTPError, error.URLError, TimeoutError, OSError):
+        reject("AIO_LOOPBACK_UNAVAILABLE")
+
+
 def run_observer(nginx):
-    # Fixed scope sanity: no preexisting temporary preview before binding.
-    baseline = g2_preflight()
-    if baseline.get("status") != "G2_ROUTE_BASELINE_READY_NO_APPLY":
-        reject("G2_ROUTE_PREFLIGHT_NOT_READY")
+    observe_unprivileged_precheck()
 
     with tempfile.TemporaryDirectory(prefix="v140_odin_observer_") as directory:
         folder = Path(directory)
@@ -227,9 +250,9 @@ def main():
         reject("EXPLICIT_TEMPORARY_OBSERVER_APPROVAL_REQUIRED")
     if args.mode == "preflight" and args.confirm:
         reject("NO_AUTH_OR_APPLY_CONFIRMATION_ALLOWED_IN_PREFLIGHT")
-    baseline = g2_preflight()
     nginx = nginx_path()
     if args.mode == "preflight":
+        baseline = g2_preflight()
         return {
             "audit": "G2_ODIN_MACOS_OBSERVER_PREFLIGHT",
             "status": "ODIN_OBSERVER_PREPARED_NOT_RUNNING",
