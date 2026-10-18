@@ -25,8 +25,13 @@ class StablePromotionRegressionTests(unittest.TestCase):
     def test_runtime_metadata_and_source_version_match(self):
         pkg = json.loads((ROOT / "package.json").read_text())
         src = (ROOT / "src/config.mjs").read_text()
-        self.assertEqual(pkg["version"], "1.3.0")
-        self.assertIn("export const APP_VERSION = '1.3.0';", src)
+        # Published v1.3.0 remains fixed in the stable deploy/publish scripts.
+        # Development source may identify itself as an untagged RC.1 candidate.
+        # Keep the list explicit: no implicit authorization for future tags.
+        self.assertIn(pkg["version"], ("1.3.0", "1.4.0-rc.1"))
+        self.assertIn(
+            "export const APP_VERSION = '" + pkg["version"] + "';", src
+        )
 
     def test_release_notes_document_nonwriting_guards(self):
         s = (ROOT / "docs/releases/v1.3.0.md").read_text()
