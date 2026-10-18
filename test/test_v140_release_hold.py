@@ -16,7 +16,14 @@ class V140ReleaseHold(unittest.TestCase):
         self.assertIn("exit 1",workflow[gate:workflow.index("actions/setup-node@v4")])
     def test_qualified_stable_history_remains_immutable(self):
         pkg=(ROOT/"package.json").read_text("utf8")
-        self.assertIn('"version": "1.3.0"',pkg)
+        self.assertIn(
+            '"version": "1.4.0-rc.1"', pkg,
+            "RC source version is allowed only under the existing v1.4 tag HOLD"
+        )
+        self.assertTrue((ROOT/"scripts/publish-v1.3.0-tag.py").is_file())
+        self.assertTrue((ROOT/"scripts/deploy-v1.3.0-homedocker.py").is_file())
+        self.assertIn("V140_STABLE_RELEASE_HOLD",
+                      (ROOT/".github/workflows/release.yml").read_text("utf8"))
         from pathlib import Path
         self.assertTrue((ROOT/"docs/releases/v1.3.0.md").is_file())
         self.assertIn("v1.3.0", (ROOT/"docs/STABLE-DEPLOYMENT.md").read_text("utf8"))
