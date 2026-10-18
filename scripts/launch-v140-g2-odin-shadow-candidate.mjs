@@ -85,8 +85,18 @@ function validateLoopbackBase(base) {
 export function makeRestrictedAioFetch(base, delegate = fetch) {
   const origin = validateLoopbackBase(base);
   const permittedPrefix = '/jellyfin';
+  const families = ['nextup', 'users_me', 'metadata'];
   const counters = { get_only: 0, disallowed: 0 };
-  const guardedFetch = (raw, opts = {}) => {
+  for (const name of families) {
+    counters[name + '_attempted'] = 0;
+    counters[name + '_http_2xx'] = 0;
+    counters[name + '_http_4xx'] = 0;
+    counters[name + '_http_5xx'] = 0;
+    counters[name + '_http_other'] = 0;
+    counters[name + '_transport_error'] = 0;
+    counters[name + '_aborted'] = 0;
+  }
+  const guardedFetch = async (raw, opts = {}) => {
     let u;
     try { u = new URL(raw); } catch {
       counters.disallowed++;
@@ -105,7 +115,24 @@ export function makeRestrictedAioFetch(base, delegate = fetch) {
       throw new Error('SHADOW_STOP_AIO_GET_BOUNDARY');
     }
     counters.get_only++;
-    return delegate(raw, opts);
+    const family = route === '/Shows/NextUp' ? 'nextup'
+      : route === '/Users/Me' ? 'users_me' : 'metadata';
+    counters[family + '_attempted']++;
+    try {
+      const response = await delegate(raw, opts);
+      const classification = response.status >= 200 && response.status < 300
+        ? '2xx' : response.status >= 400 && response.status < 500
+          ? '4xx' : response.status >= 500 && response.status < 600
+            ? '5xx' : 'other';
+      counters[family + '_http_' + classification]++;
+      return response;
+    } catch (error) {
+      // Only scalar counters: no path, ID, media, token, query, error name
+      // or message is retained, emitted or logged.
+      counters[family + '_transport_error']++;
+      if (opts.signal?.aborted) counters[family + '_aborted']++;
+      throw error;
+    }
   };
   return { guardedFetch, counters };
 }
@@ -154,7 +181,9 @@ export async function startOdinShadowCandidate(data, {
       gatewayBase: 'http://127.0.0.1:' + port,
       trustedGatewayServer: gateway,
       shadowApproved,
-      shadowTimeoutMs: 5000,
+      // Independent absolute shadow deadline; only GET copied to Gateway.
+      // Odin's original AIO response is NEVER delayed by this timer.
+      shadowTimeoutMs: 25000,
     });
     await listen(ingress, ingressPort);
   } catch {
@@ -185,6 +214,23 @@ export async function startOdinShadowCandidate(data, {
         gateway_alias_removed_items: g.nextUpRemovedItems,
         gateway_fail_open_normalization: g.failOpenNormalizationErrors,
         gateway_upstream_transport_failures: g.upstreamTransportFailures,
+        gateway_nextup_responses_completed: g.nextUpCompletedResponses,
+        gateway_nextup_upstream_samples: g.nextUpUpstreamSamples,
+        gateway_nextup_upstream_max_ms: g.nextUpUpstreamMaxMs,
+        gateway_nextup_response_max_ms: g.nextUpResponseMaxMs,
+        gateway_fail_open_normalization_errors: g.failOpenNormalizationErrors,
+        aio_nextup_attempted: aioread.nextup_attempted,
+        aio_nextup_http_2xx: aioread.nextup_http_2xx,
+        aio_nextup_http_4xx: aioread.nextup_http_4xx,
+        aio_nextup_http_5xx: aioread.nextup_http_5xx,
+        aio_nextup_transport_error: aioread.nextup_transport_error,
+        aio_nextup_aborted: aioread.nextup_aborted,
+        aio_users_me_attempted: aioread.users_me_attempted,
+        aio_users_me_http_2xx: aioread.users_me_http_2xx,
+        aio_users_me_transport_error: aioread.users_me_transport_error,
+        aio_metadata_attempted: aioread.metadata_attempted,
+        aio_metadata_http_2xx: aioread.metadata_http_2xx,
+        aio_metadata_transport_error: aioread.metadata_transport_error,
         aio_get_only: aioread.get_only,
         disallowed_gateway_aio_requests: aioread.disallowed,
         verified_legacy_show_count: showCount,
