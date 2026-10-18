@@ -222,6 +222,29 @@ function hasVerifiedAliases(graph) {
 
 // Static, anonymous eligibility reasons. No user, item, title, query or token
 // is returned or retained. Pure classification only; NEVER changes filtering.
+/**
+ * The source response remains untouched for all excluded queries.
+ * Only fixed categories are counted; never store or emit parameter values.
+ * StartIndex '0' is NOT automatically qualified to filter or rewrite.
+ */
+function excludedNextUpQueryCategory(params) {
+  const series = params.has('SeriesId');
+  const parent = params.has('ParentId');
+  const start = params.has('StartIndex');
+  if (Number(series) + Number(parent) + Number(start) > 1) {
+    return 'nextUpExcludedMultipleKeys';
+  }
+  if (series) return 'nextUpExcludedSeriesIdOnly';
+  if (parent) return 'nextUpExcludedParentIdOnly';
+  if (start) {
+    const values = params.getAll('StartIndex');
+    return values.length === 1 && values[0] === '0'
+      ? 'nextUpExcludedStartIndexZeroOnly'
+      : 'nextUpExcludedStartIndexOtherOnly';
+  }
+  return null;
+}
+
 function nextUpIdentityEligibility(req, body, graph) {
   if (!hasToken(req)) return 'missing_auth';
   if (!hasVerifiedAliases(graph)) return 'no_aliases';
@@ -335,6 +358,12 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
     nextUpRemovedItems: 0,
     // Counts only fixed categories; never source item counts, IDs or profile.
     nextUpIdentityExcludedQuery: 0,
+    // Counts mutually exclusive fixed key-shape categories, never values.
+    nextUpExcludedSeriesIdOnly: 0,
+    nextUpExcludedParentIdOnly: 0,
+    nextUpExcludedStartIndexZeroOnly: 0,
+    nextUpExcludedStartIndexOtherOnly: 0,
+    nextUpExcludedMultipleKeys: 0,
     nextUpIdentityMissingAuth: 0,
     nextUpIdentityNoAliases: 0,
     nextUpIdentityInvalidItems: 0,
@@ -460,6 +489,8 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
         }
       } else if (nextUp) {
         metrics.nextUpIdentityExcludedQuery++;
+        const category = excludedNextUpQueryCategory(requested.searchParams);
+        if (category) metrics[category]++;
       }
       if (filtered !== json) {
         metrics.nextUpNormalizedResponses++;
