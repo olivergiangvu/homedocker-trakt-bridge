@@ -170,6 +170,9 @@ export async function startOdinShadowCandidate(data, {
       jellyfinGatewayUserId: data.user,
       jellyfinGatewayProfileId: data.profile,
       jellyfinGatewayResumePassThrough: false,
+      // This short-lived pilot cannot serve a filtered first-page response:
+      // Gateway audits only, and the Odin-facing ingress always relays AIO.
+      jellyfinGatewayFirstPageShadowAudit: true,
       jellyfinGatewayNextUpTimeoutMs: 15000,
     }, db, fetchImpl: guardedFetch,
   });
