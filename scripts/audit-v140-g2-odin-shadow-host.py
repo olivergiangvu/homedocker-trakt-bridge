@@ -17,6 +17,7 @@ import getpass
 import importlib.util
 import json
 import os
+import pwd
 from pathlib import Path
 import re
 import selectors
@@ -61,26 +62,70 @@ def load(name, path):
     return mod
 
 
-def find_node():
-    node = shutil.which("node")
-    if not node:
-        reject("HOST_NODE_NOT_INSTALLED_NO_DOCKER_HOST_NETWORK_FALLBACK")
-    node = Path(node).resolve(strict=True)
-    if not node.is_file():
-        reject("NODE_EXECUTABLE_NOT_REGULAR")
-    # When running under sudo, never invoke a binary residing in any world
-    # writable path. The child will be dropped to the calling user first.
-    if node.stat().st_mode & 0o022:
-        reject("NODE_EXECUTABLE_WRITABLE_BY_GROUP_OR_WORLD")
+def _drop_privileges():
+    """Shared early drop for version check and real pilot Node child."""
+    uid, gid = drop_to_operator()
+    os.setgroups([])
+    os.setgid(gid)
+    os.setuid(uid)
+
+
+def _operator_home():
+    uid, _ = drop_to_operator()
     try:
-        output = subprocess.run([str(node), "--version"], text=True,
-                                capture_output=True, timeout=5, check=True)
-        v = re.fullmatch(r"v(\d+)\.\d+\.\d+\s*", output.stdout)
-        if not v or int(v.group(1)) < 24:
-            reject("HOST_NODE_24_REQUIRED")
-    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        reject("HOST_NODE_VERSION_UNAVAILABLE")
-    return str(node)
+        record = pwd.getpwuid(uid)
+    except KeyError:
+        reject("SUDO_OPERATOR_HOME_UNAVAILABLE")
+    home = Path(record.pw_dir)
+    if not home.is_absolute() or not home.is_dir():
+        reject("SUDO_OPERATOR_HOME_UNAVAILABLE")
+    return home
+
+
+def find_node():
+    """Find operator's private nvm Node 24; NEVER execute a user binary as root.
+
+    sudo uses /usr/bin/node (often old) while interactive SSH resolves nvm's
+    Node 14. Candidate --version checks and the final Node process both
+    ALWAYS drop privileges to SUDO_UID/SUDO_GID first.
+    """
+    home = _operator_home()
+    versions = home / ".nvm" / "versions" / "node"
+    candidates = []
+    if versions.is_dir():
+        for version in versions.iterdir():
+            match = re.fullmatch(r"v24\\.(\\d+)\\.(\\d+)", version.name)
+            if match and version.is_dir():
+                candidates.append((int(match.group(1)), int(match.group(2)),
+                                   version / "bin" / "node"))
+    candidates.sort(reverse=True)
+    paths = [node for _, _, node in candidates]
+    system_node = shutil.which("node")
+    if system_node:
+        paths.append(Path(system_node))
+    for candidate in paths:
+        if not candidate.is_file() or candidate.is_symlink():
+            continue
+        # No group/world-writable binaries, even though they will execute
+        # ONLY as the invoking normal user.
+        if candidate.stat().st_mode & 0o022:
+            continue
+        try:
+            checked = subprocess.run(
+                [str(candidate), "--version"], text=True,
+                capture_output=True, timeout=5, check=True,
+                preexec_fn=_drop_privileges,
+                cwd=str(home),
+                env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"},
+            )
+        except (OSError, subprocess.CalledProcessError,
+                subprocess.TimeoutExpired, subprocess.SubprocessError):
+            continue
+        version = re.fullmatch(r"v(\\d+)\\.(\\d+)\\.(\\d+)\\s*",
+                               checked.stdout)
+        if version and int(version.group(1)) >= 24:
+            return str(candidate)
+    reject("HOST_NODE_24_REQUIRED_INSTALL_IN_OPERATOR_NVM")
 
 
 def baseline():
@@ -174,16 +219,15 @@ def run_operator(node, source, uid, gid):
     if len(input_value.encode("utf8")) > LIMIT:
         reject("SHADOW_IDENTITY_SNAPSHOT_TOO_LARGE")
 
-    def drop():
-        os.setgroups([])
-        os.setgid(gid)
-        os.setuid(uid)
+    # The same audited unprivileged drop used by node --version preflight.
+    if (uid, gid) != drop_to_operator():
+        reject("SHADOW_OPERATOR_ID_CHANGED")
 
     child = subprocess.Popen(
         [node, str(RUNNER)],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL, text=True, bufsize=1,
-        cwd=str(ROOT.parent), preexec_fn=drop,
+        cwd=str(ROOT.parent), preexec_fn=_drop_privileges,
         env={"PATH": "/usr/bin:/bin", "NODE_ENV": "production",
              "LANG": "C.UTF-8"},
     )
