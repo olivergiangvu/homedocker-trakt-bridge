@@ -193,6 +193,11 @@ test('SeriesId-constrained NextUp stays upstream-defined and reports only exclud
   await waitFor(() => h.ingress.shadowMetricsSnapshot().shadow_completed === 1);
   const g = h.gateway.gatewayMetricsSnapshot();
   assert.equal(g.nextUpIdentityExcludedQuery, 1);
+  assert.equal(g.nextUpExcludedSeriesIdOnly, 1);
+  assert.equal(g.nextUpExcludedParentIdOnly, 0);
+  assert.equal(g.nextUpExcludedStartIndexZeroOnly, 0);
+  assert.equal(g.nextUpExcludedStartIndexOtherOnly, 0);
+  assert.equal(g.nextUpExcludedMultipleKeys, 0);
   assert.equal(g.nextUpIdentityEligible, 0);
   assert.equal(g.nextUpIdentityUserVerified, 0);
   assert.equal(h.state.metadata, 0);
@@ -201,4 +206,56 @@ test('SeriesId-constrained NextUp stays upstream-defined and reports only exclud
   assert.equal(report.includes('synthetic_series'), false);
   assert.equal(report.includes(USER), false);
   assert.equal(report.includes(TOKEN), false);
+});
+
+test('NextUp query-key anonymous categories preserve the exact fail-open behavior', async t => {
+  const cases = [
+    ['ParentId only', 'ParentId=safe-parent',
+      'nextUpExcludedParentIdOnly'],
+    ['StartIndex 0 only', 'StartIndex=0',
+      'nextUpExcludedStartIndexZeroOnly'],
+    ['StartIndex nonzero', 'StartIndex=5',
+      'nextUpExcludedStartIndexOtherOnly'],
+    ['StartIndex malformed', 'StartIndex=not_a_number',
+      'nextUpExcludedStartIndexOtherOnly'],
+    ['StartIndex duplicated', 'StartIndex=0&StartIndex=0',
+      'nextUpExcludedStartIndexOtherOnly'],
+    ['mixed query keys', 'SeriesId=synthetic&StartIndex=0',
+      'nextUpExcludedMultipleKeys'],
+  ];
+  const labels = [
+    'nextUpExcludedSeriesIdOnly',
+    'nextUpExcludedParentIdOnly',
+    'nextUpExcludedStartIndexZeroOnly',
+    'nextUpExcludedStartIndexOtherOnly',
+    'nextUpExcludedMultipleKeys',
+  ];
+  for (const [scenario, query, counter] of cases) {
+    await t.test(scenario, async sub => {
+      const h = await chain();
+      sub.after(() => h.shutdown());
+      const response = await fetch(h.ingressUrl +
+        '/jellyfin/Shows/NextUp?' + query + '&Limit=20',
+        { headers: { 'x-emby-token': TOKEN } });
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), h.original);
+      await waitFor(() =>
+        h.ingress.shadowMetricsSnapshot().shadow_completed === 1);
+      const g = h.gateway.gatewayMetricsSnapshot();
+      assert.equal(g.nextUpIdentityExcludedQuery, 1);
+      assert.equal(labels.reduce((sum, key) => sum + g[key], 0), 1);
+      assert.equal(g[counter], 1);
+      assert.equal(g.nextUpIdentityEligible, 0);
+      assert.equal(g.nextUpIdentityUserVerified, 0);
+      assert.equal(g.nextUpRemovedItems, 0);
+      assert.equal(h.state.metadata, 0);
+      assert.equal(h.ingress.shadowMetricsSnapshot().gateway_client_responses, 0);
+      assert.equal(h.ingress.shadowMetricsSnapshot().playback_writes_forwarded, 0);
+      const serialized = JSON.stringify(g);
+      for (const blocked of [
+        TOKEN, USER, PROFILE, ALIAS, CANONICAL,
+        'safe-parent', 'not_a_number', 'synthetic',
+      ]) assert.equal(serialized.includes(blocked), false);
+    });
+  }
 });
