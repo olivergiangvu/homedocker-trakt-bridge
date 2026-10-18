@@ -220,14 +220,29 @@ function hasVerifiedAliases(graph) {
     Array.isArray(row.aliases) && row.aliases.length > 0);
 }
 
-async function normalizeForUser(body, req, graph, options, fetchImpl, seriesCache, metadataInFlight, limiter, now) {
+// Static, anonymous eligibility reasons. No user, item, title, query or token
+// is returned or retained. Pure classification only; NEVER changes filtering.
+function nextUpIdentityEligibility(req, body, graph) {
+  if (!hasToken(req)) return 'missing_auth';
+  if (!hasVerifiedAliases(graph)) return 'no_aliases';
+  if (!Array.isArray(body?.Items)) return 'invalid_items';
+  if (body.Items.length < 2) return 'below_two_items';
+  if (body.Items.length > MAX_METADATA_SERIES) return 'over_limit';
+  return 'eligible';
+}
+
+async function normalizeForUser(body, req, graph, options, fetchImpl, seriesCache, metadataInFlight, limiter, now, metrics) {
   if (!hasToken(req) || !hasVerifiedAliases(graph)
       || !Array.isArray(body?.Items) || body.Items.length < 2
       || body.Items.length > MAX_METADATA_SERIES) return body;
   const incoming = outboundHeaders(req);
   const user = await upstreamJson(upstreamPath(options.base, '/Users/Me'),
     incoming, fetchImpl);
-  if (user?.Id !== options.userId) return body;
+  if (user?.Id !== options.userId) {
+    metrics.nextUpIdentityUserMismatch++;
+    return body;
+  }
+  metrics.nextUpIdentityUserVerified++;
 
   const ids = [...new Set(body.Items.map((row) => row?.SeriesId))];
   if (ids.some((id) => typeof id !== 'string' || !id
@@ -318,6 +333,16 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
     nextUpNormalizedResponses: 0,
     nextUpUnchangedResponses: 0,
     nextUpRemovedItems: 0,
+    // Counts only fixed categories; never source item counts, IDs or profile.
+    nextUpIdentityExcludedQuery: 0,
+    nextUpIdentityMissingAuth: 0,
+    nextUpIdentityNoAliases: 0,
+    nextUpIdentityInvalidItems: 0,
+    nextUpIdentityBelowTwoItems: 0,
+    nextUpIdentityOverLimit: 0,
+    nextUpIdentityEligible: 0,
+    nextUpIdentityUserVerified: 0,
+    nextUpIdentityUserMismatch: 0,
     failOpenNormalizationErrors: 0,
     upstreamTransportFailures: 0,
     upstreamNon200Responses: 0,
@@ -417,11 +442,24 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
           && !requested.searchParams.has('StartIndex')) {
         try {
           const graph = loadVerifiedIdentityGraph(db, options.profileId);
-          filtered = await normalizeForUser(json, req, graph, options, fetchImpl, seriesCache, metadataInFlight, limiter, now);
+          const eligibility = nextUpIdentityEligibility(req, json, graph);
+          const counter = {
+            missing_auth: 'nextUpIdentityMissingAuth',
+            no_aliases: 'nextUpIdentityNoAliases',
+            invalid_items: 'nextUpIdentityInvalidItems',
+            below_two_items: 'nextUpIdentityBelowTwoItems',
+            over_limit: 'nextUpIdentityOverLimit',
+            eligible: 'nextUpIdentityEligible',
+          }[eligibility];
+          metrics[counter]++;
+          filtered = await normalizeForUser(json, req, graph, options, fetchImpl,
+            seriesCache, metadataInFlight, limiter, now, metrics);
         } catch {
           metrics.failOpenNormalizationErrors++;
           filtered = json; // Fail open; never hide an ambiguous episode.
         }
+      } else if (nextUp) {
+        metrics.nextUpIdentityExcludedQuery++;
       }
       if (filtered !== json) {
         metrics.nextUpNormalizedResponses++;
