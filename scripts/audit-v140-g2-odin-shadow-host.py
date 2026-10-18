@@ -94,7 +94,7 @@ def find_node():
     candidates = []
     if versions.is_dir():
         for version in versions.iterdir():
-            match = re.fullmatch(r"v24\\.(\\d+)\\.(\\d+)", version.name)
+            match = re.fullmatch(r"v24\.(\d+)\.(\d+)", version.name)
             if match and version.is_dir():
                 candidates.append((int(match.group(1)), int(match.group(2)),
                                    version / "bin" / "node"))
@@ -121,7 +121,7 @@ def find_node():
         except (OSError, subprocess.CalledProcessError,
                 subprocess.TimeoutExpired, subprocess.SubprocessError):
             continue
-        version = re.fullmatch(r"v(\\d+)\\.(\\d+)\\.(\\d+)\\s*",
+        version = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)\s*",
                                checked.stdout)
         if version and int(version.group(1)) >= 24:
             return str(candidate)
