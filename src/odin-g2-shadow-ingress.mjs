@@ -96,7 +96,7 @@ export function createOdinShadowIngress({
     throw new Error('SHADOW_STOP_GATEWAY_OWNERSHIP_UNVERIFIED');
   }
   if (aio.port === gateway.port || !Number.isSafeInteger(shadowTimeoutMs)
-    || shadowTimeoutMs < 500 || shadowTimeoutMs > 8000) {
+    || shadowTimeoutMs < 500 || shadowTimeoutMs > 30000) {
     throw new Error('SHADOW_STOP_INVALID_RUNTIME_CONFIG');
   }
 
@@ -130,9 +130,17 @@ export function createOdinShadowIngress({
     activeShadow++;
     let settled = false;
     let bytes = 0;
+    // Bound the entire shadow request, not merely idle socket time.
+    // This timer never influences the AIO response delivered to Odin.
+    const hardDeadline = setTimeout(() => {
+      finish('timeout');
+      request.destroy();
+    }, shadowTimeoutMs);
+    hardDeadline.unref();
     const finish = (errorType, status) => {
       if (settled) return;
       settled = true;
+      clearTimeout(hardDeadline);
       activeShadow--;
       if (errorType === 'timeout') metrics.shadow_timeouts++;
       else if (errorType) metrics.shadow_errors++;

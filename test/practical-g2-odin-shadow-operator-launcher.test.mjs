@@ -106,6 +106,14 @@ test('restricted Gateway fetch permits ONLY bounded same-origin GET paths', asyn
     assert.equal(result.status, 200);
   }
   assert.equal(counters.get_only, 3);
+  assert.equal(counters.nextup_attempted, 1);
+  assert.equal(counters.nextup_http_2xx, 1);
+  assert.equal(counters.users_me_attempted, 1);
+  assert.equal(counters.users_me_http_2xx, 1);
+  assert.equal(counters.metadata_attempted, 1);
+  assert.equal(counters.metadata_http_2xx, 1);
+  assert.equal(counters.nextup_transport_error, 0);
+  assert.equal(counters.metadata_transport_error, 0);
   for (const bad of [
     'http://127.0.0.1:3240/jellyfin/Sessions/Playing',
     'http://127.0.0.1:3240/jellyfin/Users/Me?token=SECRET',
@@ -114,13 +122,31 @@ test('restricted Gateway fetch permits ONLY bounded same-origin GET paths', asyn
     'https://127.0.0.1:3240/jellyfin/Users/Me',
     'http://example.com/jellyfin/Users/Me',
   ]) {
-    assert.throws(() => guardedFetch(bad,
+    await assert.rejects(guardedFetch(bad,
       { method: 'GET', redirect: 'manual' }));
   }
-  assert.throws(() => guardedFetch(
+  await assert.rejects(guardedFetch(
     'http://127.0.0.1:3240/jellyfin/Users/Me', { method: 'POST' }));
   assert.equal(observed.length, 3);
   assert.equal(counters.disallowed, 7);
+});
+
+test('bounded Gateway GET transport exceptions increment anonymous stage only', async () => {
+  const secret = 'HIDDEN_DO_NOT_REPORT_ANYWHERE';
+  const { guardedFetch, counters } = makeRestrictedAioFetch(
+    'http://127.0.0.1:3240/jellyfin',
+    async () => { throw new Error(secret); });
+  const ctrl = new AbortController();
+  ctrl.abort();
+  await assert.rejects(guardedFetch(
+    'http://127.0.0.1:3240/jellyfin/Shows/NextUp?Limit=20',
+    { method: 'GET', redirect: 'manual', signal: ctrl.signal }));
+  assert.equal(counters.nextup_attempted, 1);
+  assert.equal(counters.nextup_transport_error, 1);
+  assert.equal(counters.nextup_aborted, 1);
+  assert.equal(counters.users_me_attempted, 0);
+  assert.equal(counters.metadata_attempted, 0);
+  assert.equal(JSON.stringify(counters).includes(secret), false);
 });
 
 test('no listener or network side effect by simply importing launcher module', () => {
@@ -179,6 +205,13 @@ test('full real Gateway + ingress spawned together, synthetic 2→1 in shadow, c
   await waitFor(() => candidate.snapshot().shadow_completed === 1);
   const m = candidate.snapshot();
   assert.equal(m.gateway_nextup_gets, 1);
+  assert.equal(m.aio_nextup_attempted, 1);
+  assert.equal(m.aio_nextup_http_2xx, 1);
+  assert.equal(m.aio_users_me_attempted, 1);
+  assert.equal(m.aio_users_me_http_2xx, 1);
+  assert.equal(m.aio_metadata_attempted, 2);
+  assert.equal(m.aio_metadata_http_2xx, 2);
+  assert.equal(m.gateway_nextup_responses_completed, 1);
   assert.equal(m.gateway_alias_removed_items, 1);
   assert.equal(m.gateway_fail_open_normalization, 0);
   assert.equal(m.verified_legacy_alias_groups, 1);
