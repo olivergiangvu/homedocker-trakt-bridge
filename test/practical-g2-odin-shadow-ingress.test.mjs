@@ -208,6 +208,22 @@ test('shadow bounded to three GETs per process and at most one outstanding', asy
   assert.ok(env.ingress.shadowMetricsSnapshot().shadow_skipped_capacity >= 3);
 });
 
+test('shadow deadline is absolute, while client still gets AIO response', async t => {
+  const env = await setup({ gatewayDelay: 900 });
+  t.after(() => env.shutdown());
+  const start = Date.now();
+  const res = await fetch(env.ingressUrl + '/jellyfin/Shows/NextUp?Limit=20');
+  assert.equal(res.status, 200);
+  await res.arrayBuffer().catch(() => {});
+  assert.ok(Date.now() - start < 450, 'client path must not await slow shadow');
+  await waitFor(() => env.ingress.shadowMetricsSnapshot().shadow_timeouts === 1, 1800);
+  const m = env.ingress.shadowMetricsSnapshot();
+  assert.equal(m.shadow_completed, 0);
+  assert.equal(m.gateway_client_responses, 0);
+  assert.equal(m.playback_writes_forwarded, 0);
+  assert.equal(m.production_database_writes, 0);
+});
+
 test('no shadow when query tries to include explicit API tokens', async (t) => {
   const env = await setup();
   t.after(() => env.shutdown());
@@ -239,7 +255,7 @@ test('reject remote, credentialed, same-port upstreams and invalid timeout', () 
   assert.throws(() => createOdinShadowIngress({
     aioBase: 'http://127.0.0.1:3240/jellyfin',
     gatewayBase: 'http://127.0.0.1:17432',
-    shadowTimeoutMs: 30000,
+    shadowTimeoutMs: 30001,
   }));
 });
 
