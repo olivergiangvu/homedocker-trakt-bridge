@@ -45,6 +45,11 @@ jobs:
       - name: Build production container
         run: docker build -t homedocker-trakt-bridge:ci .
 
+      # Only the RC.1 Draft pull request exports a short-lived transportable
+      # image. Never publish GHCR or change the tag release HOLD from CI.
+      # This archive is a runner-built candidate, not a registry manifest digest.
+
+
       - name: Enforce runtime image-size budget
         shell: bash
         run: |
@@ -94,3 +99,43 @@ jobs:
           test "$code" = "503"
           grep -q '"status":"setup_required"' /tmp/readiness.json
           grep -q "\"schemaVersion\":${expected_schema}" /tmp/readiness.json
+
+      - name: Package RC.1 reviewed Docker image as checksum-verified CI artifact
+        if: ${{ github.event_name == 'pull_request' && github.head_ref == 'feat/v140-rc1-source-candidate-20261018' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node -p "require('./package.json').version")" = "1.4.0-rc.1"
+          grep -q 'V140_STABLE_RELEASE_HOLD' .github/workflows/release.yml
+          mkdir -p /tmp/v140-rc1-ci-image
+          short_sha="$(git rev-parse --short=12 HEAD)"
+          image="homedocker-trakt-bridge:v1.4.0-rc.1-ci-${short_sha}"
+          docker tag homedocker-trakt-bridge:ci "$image"
+          docker save -o /tmp/v140-rc1-ci-image/bridge-rc1.docker.tar "$image"
+          (
+            cd /tmp/v140-rc1-ci-image
+            sha256sum bridge-rc1.docker.tar > SHA256SUMS
+            sha256sum -c SHA256SUMS
+          )
+          {
+            echo 'artifact_kind=docker-save-ci-image'
+            echo 'publication=NONE'
+            echo 'stable_release_hold=ACTIVE'
+            echo "source_checkout_sha=$(git rev-parse HEAD)"
+            echo "source_pr_head_sha=${{ github.event.pull_request.head.sha }}"
+            echo "image_tag=$image"
+            echo "local_image_id=$(docker image inspect "$image" --format '{{.Id}}')"
+            echo 'registry_manifest_digest=NOT_AVAILABLE_UNPUBLISHED'
+            echo 'credentials_included=NONE_IN_DOCKERFILE'
+          } > /tmp/v140-rc1-ci-image/IMAGE-METADATA.txt
+          test "$(du -m /tmp/v140-rc1-ci-image/bridge-rc1.docker.tar | cut -f1)" -lt 200
+
+      - name: Upload 7-day RC.1 CI image artifact, never GHCR
+        if: ${{ github.event_name == 'pull_request' && github.head_ref == 'feat/v140-rc1-source-candidate-20261018' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: v140-rc1-ci-image-${{ github.run_id }}
+          path: /tmp/v140-rc1-ci-image/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
