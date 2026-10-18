@@ -58,6 +58,7 @@ async function setup({ approved = true, gatewayStatus = 200,
   const ingress = createOdinShadowIngress({
     aioBase: aioUrl + '/jellyfin', gatewayBase: gatewayUrl,
     shadowApproved: approved, shadowTimeoutMs: 500,
+    trustedGatewayServer: gateway,
   });
   const ingressUrl = await listen(ingress);
   return { aio, gateway, ingress, ingressUrl, seen, original,
@@ -240,6 +241,32 @@ test('reject remote, credentialed, same-port upstreams and invalid timeout', () 
     gatewayBase: 'http://127.0.0.1:17432',
     shadowTimeoutMs: 30000,
   }));
+});
+
+test('shadow requires an owned, same-process loopback Gateway server', async (t) => {
+  const gateway = http.createServer((_req, res) => res.end('ok'));
+  const gatewayUrl = await listen(gateway);
+  t.after(() => close(gateway));
+  const aioBase = 'http://127.0.0.1:3240/jellyfin';
+  assert.throws(() => createOdinShadowIngress({
+    aioBase, gatewayBase: gatewayUrl, shadowApproved: true,
+  }), /SHADOW_STOP_GATEWAY_OWNERSHIP_UNVERIFIED/);
+  const wrongServer = http.createServer((_req, res) => res.end('not owner'));
+  await listen(wrongServer);
+  t.after(() => close(wrongServer));
+  assert.throws(() => createOdinShadowIngress({
+    aioBase, gatewayBase: gatewayUrl, shadowApproved: true,
+    trustedGatewayServer: wrongServer,
+  }), /SHADOW_STOP_GATEWAY_OWNERSHIP_UNVERIFIED/);
+  const legitimate = createOdinShadowIngress({
+    aioBase, gatewayBase: gatewayUrl, shadowApproved: true,
+    trustedGatewayServer: gateway,
+  });
+  assert.equal(legitimate.shadowMetricsSnapshot().shadow_enabled, true);
+  assert.throws(() => legitimate.listen(17431, '0.0.0.0'),
+    /SHADOW_STOP_NON_LOOPBACK_BIND/);
+  assert.throws(() => legitimate.listen(17431),
+    /SHADOW_STOP_NON_LOOPBACK_BIND/);
 });
 
 test('oversized auth POST is rejected, secret not forwarded', async (t) => {
