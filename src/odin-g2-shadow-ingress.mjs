@@ -249,6 +249,17 @@ export function createOdinShadowIngress({
     req.once('error', reject);
   });
 
+  // Prevent accidental 0.0.0.0 / :: binds in later host runner code.
+  // Explicit TCP loopback only, including port 0 for offline unit tests.
+  const originalListen = server.listen.bind(server);
+  server.listen = (port, host, callback) => {
+    if (!Number.isSafeInteger(port) || port < 0 || port > 65535
+      || host !== '127.0.0.1') {
+      throw new Error('SHADOW_STOP_NON_LOOPBACK_BIND');
+    }
+    return originalListen(port, host, callback);
+  };
+
   // Only aggregate, non-identifying counters. No HTTP admin route.
   server.shadowMetricsSnapshot = () => ({ ...metrics, shadow_active: activeShadow,
     shadow_enabled: shadowApproved === true,
