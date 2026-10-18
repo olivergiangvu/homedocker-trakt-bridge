@@ -5,7 +5,9 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -101,6 +103,58 @@ class OdinShadowLauncherTests(unittest.TestCase):
             corrupt[key] = value
             with self.subTest(key=key), self.assertRaises(g2.Stop):
                 g2.checked_report(json.dumps(corrupt))
+
+    def test_finds_user_nvm_node24_under_sudo_without_running_binary_as_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            binary = home / ".nvm" / "versions" / "node" / "v24.13.1" / "bin" / "node"
+            binary.parent.mkdir(parents=True)
+            binary.write_text("fake-node-version-test", encoding="utf8")
+            binary.chmod(0o700)
+            fallback = home / "system-node"
+            fallback.write_text("old-system-node", encoding="utf8")
+            fallback.chmod(0o755)
+            observed = []
+
+            def safe_version_command(args, **kwargs):
+                observed.append((args, kwargs))
+                self.assertIs(kwargs.get("preexec_fn"), g2._drop_privileges)
+                self.assertEqual(kwargs["cwd"], str(home))
+                self.assertEqual(kwargs["env"]["PATH"], "/usr/bin:/bin")
+                version = "v24.13.1\\n" if args[0] == str(binary) else "v18.19.1\\n"
+                return SimpleNamespace(stdout=version)
+
+            with patch.object(g2, "_operator_home", return_value=home), \\
+                 patch.object(g2.shutil, "which", return_value=str(fallback)), \\
+                 patch.object(g2.subprocess, "run", side_effect=safe_version_command):
+                self.assertEqual(g2.find_node(), str(binary))
+            self.assertEqual(len(observed), 1)
+
+    def test_rejects_old_user_node14_and_system_node18(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            old_node = home / ".nvm" / "versions" / "node" / "v14.21.3" / "bin" / "node"
+            old_node.parent.mkdir(parents=True)
+            old_node.write_text("old user node")
+            old_node.chmod(0o700)
+            fallback = home / "system-node"
+            fallback.write_text("old system node")
+            fallback.chmod(0o755)
+            observed = []
+
+            def old_version(args, **kwargs):
+                self.assertIs(kwargs.get("preexec_fn"), g2._drop_privileges)
+                observed.append(args[0])
+                return SimpleNamespace(stdout="v18.19.1\\n")
+
+            with patch.object(g2, "_operator_home", return_value=home), \\
+                 patch.object(g2.shutil, "which", return_value=str(fallback)), \\
+                 patch.object(g2.subprocess, "run", side_effect=old_version):
+                with self.assertRaises(g2.Stop) as ctx:
+                    g2.find_node()
+            self.assertEqual(str(ctx.exception),
+                             "HOST_NODE_24_REQUIRED_INSTALL_IN_OPERATOR_NVM")
+            self.assertEqual(observed, [str(fallback)])
 
     def test_never_accepts_raw_serialized_source_as_report(self):
         for text in [
