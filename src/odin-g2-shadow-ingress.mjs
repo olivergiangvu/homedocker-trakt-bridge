@@ -79,9 +79,22 @@ export function createOdinShadowIngress({
   gatewayBase,
   shadowApproved = false,
   shadowTimeoutMs = 3000,
+  trustedGatewayServer = null,
 } = {}) {
   const aio = requireLoopbackUrl(aioBase, '/jellyfin');
   const gateway = requireLoopbackUrl(gatewayBase, '');
+  // A localhost port alone is NOT proof of peer identity. When enabled,
+  // insist on a live Node HTTP server reference owned by this same process,
+  // exactly bound to the expected port/address. No externally started or
+  // port-hijacked service is eligible to receive AIO session headers.
+  const trustedAddress = trustedGatewayServer?.listening === true
+    && typeof trustedGatewayServer?.address === 'function'
+    ? trustedGatewayServer.address() : null;
+  if (shadowApproved === true
+    && (!trustedAddress || trustedAddress.address !== '127.0.0.1'
+      || trustedAddress.port !== Number(gateway.port))) {
+    throw new Error('SHADOW_STOP_GATEWAY_OWNERSHIP_UNVERIFIED');
+  }
   if (aio.port === gateway.port || !Number.isSafeInteger(shadowTimeoutMs)
     || shadowTimeoutMs < 500 || shadowTimeoutMs > 8000) {
     throw new Error('SHADOW_STOP_INVALID_RUNTIME_CONFIG');
