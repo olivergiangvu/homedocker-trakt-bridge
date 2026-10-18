@@ -401,6 +401,15 @@ test('Gateway metrics are in-memory, aggregate-only, and not public HTTP routes'
     nextUpNormalizedResponses: 0,
     nextUpUnchangedResponses: 0,
     nextUpRemovedItems: 0,
+    nextUpIdentityExcludedQuery: 0,
+    nextUpIdentityMissingAuth: 0,
+    nextUpIdentityNoAliases: 0,
+    nextUpIdentityInvalidItems: 0,
+    nextUpIdentityBelowTwoItems: 0,
+    nextUpIdentityOverLimit: 0,
+    nextUpIdentityEligible: 0,
+    nextUpIdentityUserVerified: 0,
+    nextUpIdentityUserMismatch: 0,
     failOpenNormalizationErrors: 0,
     upstreamTransportFailures: 0,
     upstreamNon200Responses: 0,
@@ -440,6 +449,9 @@ test('Gateway metrics are in-memory, aggregate-only, and not public HTTP routes'
   assert.equal(stats.resumePassthroughRequests, 2);
   assert.equal(stats.nextUpNormalizedResponses, 1);
   assert.equal(stats.nextUpRemovedItems, 1);
+  assert.equal(stats.nextUpIdentityEligible, 1);
+  assert.equal(stats.nextUpIdentityUserVerified, 1);
+  assert.equal(stats.nextUpIdentityBelowTwoItems, 0);
   assert.equal(stats.upstreamNon200Responses, 1);
   assert.equal(stats.failOpenNormalizationErrors, 0);
   const raw = JSON.stringify(stats);
