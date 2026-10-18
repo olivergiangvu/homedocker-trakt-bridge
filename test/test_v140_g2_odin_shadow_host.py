@@ -121,11 +121,11 @@ class OdinShadowLauncherTests(unittest.TestCase):
                 self.assertIs(kwargs.get("preexec_fn"), g2._drop_privileges)
                 self.assertEqual(kwargs["cwd"], str(home))
                 self.assertEqual(kwargs["env"]["PATH"], "/usr/bin:/bin")
-                version = "v24.13.1\\n" if args[0] == str(binary) else "v18.19.1\\n"
+                version = "v24.13.1\n" if args[0] == str(binary) else "v18.19.1\n"
                 return SimpleNamespace(stdout=version)
 
-            with patch.object(g2, "_operator_home", return_value=home), \\
-                 patch.object(g2.shutil, "which", return_value=str(fallback)), \\
+            with patch.object(g2, "_operator_home", return_value=home), \
+                 patch.object(g2.shutil, "which", return_value=str(fallback)), \
                  patch.object(g2.subprocess, "run", side_effect=safe_version_command):
                 self.assertEqual(g2.find_node(), str(binary))
             self.assertEqual(len(observed), 1)
@@ -145,10 +145,10 @@ class OdinShadowLauncherTests(unittest.TestCase):
             def old_version(args, **kwargs):
                 self.assertIs(kwargs.get("preexec_fn"), g2._drop_privileges)
                 observed.append(args[0])
-                return SimpleNamespace(stdout="v18.19.1\\n")
+                return SimpleNamespace(stdout="v18.19.1\n")
 
-            with patch.object(g2, "_operator_home", return_value=home), \\
-                 patch.object(g2.shutil, "which", return_value=str(fallback)), \\
+            with patch.object(g2, "_operator_home", return_value=home), \
+                 patch.object(g2.shutil, "which", return_value=str(fallback)), \
                  patch.object(g2.subprocess, "run", side_effect=old_version):
                 with self.assertRaises(g2.Stop) as ctx:
                     g2.find_node()
