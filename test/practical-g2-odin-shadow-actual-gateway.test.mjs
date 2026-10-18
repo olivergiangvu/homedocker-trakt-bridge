@@ -34,7 +34,9 @@ async function waitFor(check) {
   }
 }
 
-async function chain({ wrongUser = false, singleItem = false } = {}) {
+async function chain({
+  wrongUser = false, singleItem = false, firstPageShadowAudit = false,
+} = {}) {
   const state = { aioMethods: [], metadata: 0 };
   const original = {
     Items: [
@@ -95,6 +97,7 @@ async function chain({ wrongUser = false, singleItem = false } = {}) {
       jellyfinGatewayUserId: USER,
       jellyfinGatewayProfileId: PROFILE,
       jellyfinGatewayResumePassThrough: false,
+      jellyfinGatewayFirstPageShadowAudit: firstPageShadowAudit,
     }, db,
   });
   const gatewayUrl = await listen(gateway);
@@ -256,6 +259,117 @@ test('NextUp query-key anonymous categories preserve the exact fail-open behavio
         TOKEN, USER, PROFILE, ALIAS, CANONICAL,
         'safe-parent', 'not_a_number', 'synthetic',
       ]) assert.equal(serialized.includes(blocked), false);
+    });
+  }
+});
+
+test('StartIndex zero shadow-only audit may verify user and hypothetical alias 2-to-1 but NEVER filters Odin or Gateway response', async t => {
+  const h = await chain({ firstPageShadowAudit: true });
+  t.after(() => h.shutdown());
+  const response = await fetch(h.ingressUrl +
+    '/jellyfin/Shows/NextUp?StartIndex=0&Limit=20',
+    { headers: { 'x-emby-token': TOKEN } });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('etag'), '"AIO_DIRECT_SOURCE"');
+  assert.deepEqual(await response.json(), h.original);
+  await waitFor(() => h.ingress.shadowMetricsSnapshot().shadow_completed === 1);
+  const g = h.gateway.gatewayMetricsSnapshot();
+  assert.equal(g.nextUpRequests, 1);
+  assert.equal(g.nextUpIdentityExcludedQuery, 1);
+  assert.equal(g.nextUpExcludedStartIndexZeroOnly, 1);
+  assert.equal(g.firstPageAuditAttempts, 1);
+  assert.equal(g.firstPageAuditQualifiedRequests, 1);
+  assert.equal(g.nextUpIdentityEligible, 1);
+  assert.equal(g.nextUpIdentityUserVerified, 1);
+  assert.equal(g.firstPageAuditWouldNormalizeResponses, 1);
+  assert.equal(g.firstPageAuditCandidatesRemoved, 1);
+  assert.equal(g.nextUpRemovedItems, 0);
+  assert.equal(g.nextUpNormalizedResponses, 0);
+  assert.equal(g.nextUpUnchangedResponses, 1);
+  assert.equal(h.state.metadata, 2);
+  assert.ok(h.state.aioMethods.every(method => method === 'GET'));
+  assert.equal(h.ingress.shadowMetricsSnapshot().gateway_client_responses, 0);
+  assert.equal(h.ingress.shadowMetricsSnapshot().playback_writes_forwarded, 0);
+  const serialized = JSON.stringify(g);
+  for (const secret of [TOKEN, USER, PROFILE, ALIAS, CANONICAL]) {
+    assert.equal(serialized.includes(secret), false);
+  }
+});
+
+test('StartIndex zero remains pass-through unless explicit shadow-only flag enabled', async t => {
+  const h = await chain();
+  t.after(() => h.shutdown());
+  const response = await fetch(h.ingressUrl +
+    '/jellyfin/Shows/NextUp?StartIndex=0&Limit=20',
+    { headers: { 'x-emby-token': TOKEN } });
+  assert.deepEqual(await response.json(), h.original);
+  await waitFor(() => h.ingress.shadowMetricsSnapshot().shadow_completed === 1);
+  const g = h.gateway.gatewayMetricsSnapshot();
+  assert.equal(g.nextUpExcludedStartIndexZeroOnly, 1);
+  assert.equal(g.firstPageAuditAttempts, 0);
+  assert.equal(g.firstPageAuditQualifiedRequests, 0);
+  assert.equal(g.nextUpIdentityUserVerified, 0);
+  assert.equal(h.state.metadata, 0);
+  assert.equal(g.nextUpRemovedItems, 0);
+});
+
+test('StartIndex zero audit never bypasses user mismatch or insufficient Items', async t => {
+  for (const args of [
+    { firstPageShadowAudit: true, wrongUser: true },
+    { firstPageShadowAudit: true, singleItem: true },
+  ]) {
+    await t.test(args.wrongUser ? 'wrong AIO UserID' : 'one source item',
+      async sub => {
+        const h = await chain(args);
+        sub.after(() => h.shutdown());
+        const response = await fetch(h.ingressUrl +
+          '/jellyfin/Shows/NextUp?StartIndex=0&Limit=20',
+          { headers: { 'x-emby-token': TOKEN } });
+        assert.deepEqual(await response.json(), h.original);
+        await waitFor(() => h.ingress.shadowMetricsSnapshot().shadow_completed === 1);
+        const g = h.gateway.gatewayMetricsSnapshot();
+        assert.equal(g.firstPageAuditQualifiedRequests, 1);
+        assert.equal(g.firstPageAuditCandidatesRemoved, 0);
+        assert.equal(g.nextUpRemovedItems, 0);
+        assert.equal(h.state.metadata, 0);
+        if (args.wrongUser) {
+          assert.equal(g.nextUpIdentityUserMismatch, 1);
+          assert.equal(g.nextUpIdentityUserVerified, 0);
+        } else {
+          assert.equal(g.nextUpIdentityBelowTwoItems, 1);
+          assert.equal(g.nextUpIdentityUserVerified, 0);
+        }
+      });
+  }
+});
+
+test('later pages, scoped NextUp and malformed first-page controls refuse audit', async t => {
+  const queries = [
+    'StartIndex=20&Limit=20',
+    'StartIndex=0&SeriesId=private&Limit=20',
+    'StartIndex=0&ParentId=private&Limit=20',
+    'StartIndex=0&StartIndex=0&Limit=20',
+    'StartIndex=00&Limit=20',
+    'StartIndex=0&Limit=999',
+    'StartIndex=0&Limit=0',
+    'StartIndex=0&Limit=20&Limit=20',
+  ];
+  for (const query of queries) {
+    await t.test('synthetic protected-query variant', async sub => {
+      const h = await chain({ firstPageShadowAudit: true });
+      sub.after(() => h.shutdown());
+      const r = await fetch(h.ingressUrl + '/jellyfin/Shows/NextUp?' + query,
+        { headers: { 'x-emby-token': TOKEN } });
+      assert.deepEqual(await r.json(), h.original);
+      await waitFor(() => h.ingress.shadowMetricsSnapshot().shadow_completed === 1);
+      const g = h.gateway.gatewayMetricsSnapshot();
+      assert.equal(g.firstPageAuditAttempts, 1);
+      assert.equal(g.firstPageAuditQualifiedRequests, 0);
+      assert.equal(g.firstPageAuditCandidatesRemoved, 0);
+      assert.equal(g.nextUpIdentityUserVerified, 0);
+      assert.equal(g.nextUpRemovedItems, 0);
+      assert.equal(h.state.metadata, 0);
+      assert.equal(h.ingress.shadowMetricsSnapshot().gateway_client_responses, 0);
     });
   }
 });

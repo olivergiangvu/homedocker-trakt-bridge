@@ -110,6 +110,9 @@ export function validateGatewayConfig(config) {
     userId: config.jellyfinGatewayUserId,
     profileId: config.jellyfinGatewayProfileId,
     resumePassThrough: config.jellyfinGatewayResumePassThrough === true,
+    // A Gateway in shadow-audit mode ALWAYS returns the original AIO bytes;
+    // never interpret this flag as permission for client-side filtering.
+    firstPageShadowAudit: config.jellyfinGatewayFirstPageShadowAudit === true,
     nextUpTimeoutMs: validatedNextUpTimeoutMs(
       config.jellyfinGatewayNextUpTimeoutMs === undefined
         ? NETWORK_TIMEOUT_MS : config.jellyfinGatewayNextUpTimeoutMs
@@ -245,6 +248,22 @@ function excludedNextUpQueryCategory(params) {
   return null;
 }
 
+// Only a single literal StartIndex=0 can enter the separate SHADOW AUDIT
+// branch; never qualify other offsets, SeriesId/ParentId scoped requests,
+// duplicate StartIndex keys, invalid Limit or unusually large requested pages.
+function isFirstPageShadowAudit(params) {
+  if (params.getAll('StartIndex').length !== 1
+      || params.get('StartIndex') !== '0'
+      || params.has('SeriesId') || params.has('ParentId')) return false;
+  const limits = params.getAll('Limit');
+  if (limits.length > 1) return false;
+  if (limits.length === 1 && (!/^[1-9][0-9]{0,2}$/.test(limits[0])
+      || Number(limits[0]) > MAX_METADATA_SERIES)) return false;
+  // This is NOT a pagination-completeness proof: only shadow hypothesis
+  // checks are permitted, and the original HTTP payload stays unchanged.
+  return true;
+}
+
 function nextUpIdentityEligibility(req, body, graph) {
   if (!hasToken(req)) return 'missing_auth';
   if (!hasVerifiedAliases(graph)) return 'no_aliases';
@@ -364,6 +383,12 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
     nextUpExcludedStartIndexZeroOnly: 0,
     nextUpExcludedStartIndexOtherOnly: 0,
     nextUpExcludedMultipleKeys: 0,
+    firstPageAuditAttempts: 0,
+    firstPageAuditQualifiedRequests: 0,
+    firstPageAuditCandidatesRemoved: 0,
+    firstPageAuditWouldNormalizeResponses: 0,
+    firstPageAuditNoChange: 0,
+    firstPageAuditError: 0,
     nextUpIdentityMissingAuth: 0,
     nextUpIdentityNoAliases: 0,
     nextUpIdentityInvalidItems: 0,
@@ -491,6 +516,41 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
         metrics.nextUpIdentityExcludedQuery++;
         const category = excludedNextUpQueryCategory(requested.searchParams);
         if (category) metrics[category]++;
+        if (options.firstPageShadowAudit) {
+          metrics.firstPageAuditAttempts++;
+          if (isFirstPageShadowAudit(requested.searchParams)) {
+            metrics.firstPageAuditQualifiedRequests++;
+            try {
+              const graph = loadVerifiedIdentityGraph(db, options.profileId);
+              const eligibility = nextUpIdentityEligibility(req, json, graph);
+              const counter = {
+                missing_auth: 'nextUpIdentityMissingAuth',
+                no_aliases: 'nextUpIdentityNoAliases',
+                invalid_items: 'nextUpIdentityInvalidItems',
+                below_two_items: 'nextUpIdentityBelowTwoItems',
+                over_limit: 'nextUpIdentityOverLimit',
+                eligible: 'nextUpIdentityEligible',
+              }[eligibility];
+              metrics[counter]++;
+              // This is a COUNTERFACTUAL diagnostic only. Never assign the
+              // filtered result to the response variable, even if it would
+              // have removed an alias. Odin and direct Gateway callers both
+              // receive the untouched AIO NextUp bytes, ETag and paging.
+              const proposed = await normalizeForUser(json, req, graph, options,
+                fetchImpl, seriesCache, metadataInFlight, limiter, now, metrics);
+              if (proposed !== json) {
+                metrics.firstPageAuditWouldNormalizeResponses++;
+                metrics.firstPageAuditCandidatesRemoved += Math.max(0,
+                  json.Items.length - proposed.Items.length);
+              } else {
+                metrics.firstPageAuditNoChange++;
+              }
+            } catch {
+              metrics.firstPageAuditError++;
+              metrics.failOpenNormalizationErrors++;
+            }
+          }
+        }
       }
       if (filtered !== json) {
         metrics.nextUpNormalizedResponses++;

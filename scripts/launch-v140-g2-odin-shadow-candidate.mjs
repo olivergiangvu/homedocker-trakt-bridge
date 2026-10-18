@@ -170,6 +170,9 @@ export async function startOdinShadowCandidate(data, {
       jellyfinGatewayUserId: data.user,
       jellyfinGatewayProfileId: data.profile,
       jellyfinGatewayResumePassThrough: false,
+      // This short-lived pilot cannot serve a filtered first-page response:
+      // Gateway audits only, and the Odin-facing ingress always relays AIO.
+      jellyfinGatewayFirstPageShadowAudit: true,
       jellyfinGatewayNextUpTimeoutMs: 15000,
     }, db, fetchImpl: guardedFetch,
   });
@@ -217,6 +220,12 @@ export async function startOdinShadowCandidate(data, {
         gateway_excluded_series_id_only: g.nextUpExcludedSeriesIdOnly,
         gateway_excluded_parent_id_only: g.nextUpExcludedParentIdOnly,
         gateway_excluded_start_index_zero_only: g.nextUpExcludedStartIndexZeroOnly,
+        first_page_audit_attempts: g.firstPageAuditAttempts,
+        first_page_audit_qualified: g.firstPageAuditQualifiedRequests,
+        first_page_audit_would_normalize: g.firstPageAuditWouldNormalizeResponses,
+        first_page_audit_candidate_removed: g.firstPageAuditCandidatesRemoved,
+        first_page_audit_no_change: g.firstPageAuditNoChange,
+        first_page_audit_errors: g.firstPageAuditError,
         gateway_excluded_start_index_other_only: g.nextUpExcludedStartIndexOtherOnly,
         gateway_excluded_multiple_keys: g.nextUpExcludedMultipleKeys,
         gateway_identity_missing_auth: g.nextUpIdentityMissingAuth,
