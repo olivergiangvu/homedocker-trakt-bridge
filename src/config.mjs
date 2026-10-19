@@ -86,6 +86,9 @@ export function loadConfig() {
     // StartIndex=0 may be projected only for a demonstrably short complete page.
     // Never rewrite full or later pages; AIO pagination remains authoritative.
     jellyfinGatewayFirstPageMode: enumEnv('JELLYFIN_GATEWAY_FIRST_PAGE_MODE', 'short_first_page_only', ['off', 'short_first_page_only']),
+    // One explicitly mapped Jellyfin-compatible upstream per listener. AIO is primary.
+    // Remux or native Jellyfin may be selected separately after same-user API validation.
+    jellyfinGatewaySourceKind: enumEnv('JELLYFIN_GATEWAY_SOURCE_KIND', 'aiostreams', ['aiostreams', 'remux', 'jellyfin']),
     jellyfinGatewayUpstreamUrl: (process.env.JELLYFIN_GATEWAY_UPSTREAM_URL || '').trim(),
     jellyfinGatewayUserId: (process.env.JELLYFIN_GATEWAY_AIO_USER_ID || '').trim(),
     jellyfinGatewayProfileId: (process.env.JELLYFIN_GATEWAY_PROFILE_ID || '').trim(),
