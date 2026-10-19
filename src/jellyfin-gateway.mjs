@@ -319,6 +319,34 @@ export function eligibleCompleteFirstPage(searchParams, body, mode = 'short_firs
   return true;
 }
 
+/**
+ * A Limit-only NextUp request is still pagination-sensitive. Some Jellyfin
+ * facades report fetched-prefix totals rather than global totals, so a full
+ * page cannot safely be rewritten even when TotalRecordCount matches Items.
+ * Require an explicitly complete, short page before changing counts.
+ *
+ * Requests without Limit are also required to carry coherent result counts;
+ * do not turn unknown/partial upstream responses into a fabricated total.
+ */
+export function eligibleCompleteUnpagedNextUp(searchParams, body) {
+  if ([...searchParams.keys()].some(key => key !== 'Limit')
+      || searchParams.getAll('Limit').length > 1) return false;
+  const items = body?.Items;
+  if (!Array.isArray(items) || items.length < 2
+      || items.length > MAX_METADATA_SERIES
+      || !Number.isSafeInteger(body?.TotalRecordCount)
+      || body.TotalRecordCount !== items.length
+      || (body.StartIndex !== undefined && body.StartIndex !== 0)
+      || (Object.hasOwn(body, 'Count') && body.Count !== items.length)) {
+    return false;
+  }
+  if (!searchParams.has('Limit')) return true;
+  const raw = searchParams.get('Limit');
+  if (!/^[1-9][0-9]?$/.test(raw ?? '')) return false;
+  const limit = Number(raw);
+  return limit >= 2 && limit <= MAX_METADATA_SERIES && items.length < limit;
+}
+
 function sendJson(res, status, payload) {
   const bytes = Buffer.from(JSON.stringify(payload));
   res.statusCode = status;
@@ -346,6 +374,7 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
     nextUpUnchangedResponses: 0,
     nextUpRemovedItems: 0,
     nextUpPagedPassThrough: 0,
+    nextUpUnpagedUnsafePassThrough: 0,
     failOpenNormalizationErrors: 0,
     upstreamTransportFailures: 0,
     upstreamNon200Responses: 0,
@@ -455,10 +484,10 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
       // Never project arbitrary upstream selectors (especially UserId) even
       // without a paging key. The /Users/Me probe proves the token's owner,
       // not that an explicit query did not select somebody else's library.
-      const simpleUnpaged = !hasPaging
-        && [...requested.searchParams.keys()].every(key => key === 'Limit')
-        && requested.searchParams.getAll('Limit').length <= 1;
-      if (simpleUnpaged || firstPage) {
+      const completeUnpaged = !hasPaging
+        && eligibleCompleteUnpagedNextUp(requested.searchParams, json);
+      if (!hasPaging && !completeUnpaged) metrics.nextUpUnpagedUnsafePassThrough++;
+      if (completeUnpaged || firstPage) {
         try {
           const graph = loadVerifiedIdentityGraph(db, options.profileId);
           filtered = await normalizeForUser(json, req, graph, options, fetchImpl, seriesCache, metadataInFlight, limiter, now);

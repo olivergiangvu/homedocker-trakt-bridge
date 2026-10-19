@@ -45,7 +45,7 @@ jobs:
       - name: Build production container
         run: docker build -t homedocker-trakt-bridge:ci .
 
-      # Only the RC.2 Unified Draft pull request exports a short-lived transportable
+      # Only the two reviewed RC.2 Draft pull requests export a short-lived transportable
       # image. Never publish GHCR or change the tag release HOLD from CI.
       # This archive is a runner-built candidate, not a registry manifest digest.
 
@@ -101,7 +101,7 @@ jobs:
           grep -q "\"schemaVersion\":${expected_schema}" /tmp/readiness.json
 
       - name: Package RC.2 unified Docker image as checksum-verified CI artifact
-        if: ${{ github.event_name == 'pull_request' && github.head_ref == 'feat/v140-rc2-unified-gateway-ui-20261019' }}
+        if: ${{ github.event_name == 'pull_request' && (github.head_ref == 'feat/v140-rc2-unified-gateway-ui-20261019' || github.head_ref == 'feat/v140-rc2-safe-complete-nextup-ui-20261019') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -131,7 +131,7 @@ jobs:
           test "$(du -m /tmp/v140-rc2-ci-image/bridge-rc2.docker.tar | cut -f1)" -lt 200
 
       - name: Upload 7-day RC.2 unified CI image artifact, never GHCR
-        if: ${{ github.event_name == 'pull_request' && github.head_ref == 'feat/v140-rc2-unified-gateway-ui-20261019' }}
+        if: ${{ github.event_name == 'pull_request' && (github.head_ref == 'feat/v140-rc2-unified-gateway-ui-20261019' || github.head_ref == 'feat/v140-rc2-safe-complete-nextup-ui-20261019') }}
         uses: actions/upload-artifact@v4
         with:
           name: v140-rc2-ci-image-${{ github.run_id }}

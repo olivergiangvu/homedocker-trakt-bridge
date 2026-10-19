@@ -65,7 +65,7 @@ export function renderUnifiedGatewayPanel(status, { diagnosticsUrl = null, contr
       ${cell('Gateway listener', s(listening ? 'Listening' : 'Not listening'), 'Listening is not Odin qualification')}
       ${cell('User identity mapping', s(status.userMappingConfigured ? 'Configured' : 'Not confirmed'), 'Same Jellyfin user required')}
       ${cell('Jellyfin API source', s(source), status.upstreamConfigured ? 'Configured backend' : 'Backend not configured')}
-      ${cell('NextUp response policy', s(mode === 'short_first_page_only' ? 'Conservative first page' : 'Unpaged only'), 'Other pagination is AIO passthrough')}
+      ${cell('NextUp response policy', s(mode === 'short_first_page_only' ? 'Conservative first page' : 'Unpaged only'), 'Only complete unpaged/short first page; otherwise original source')}
       ${cell('Resume', s(status.resumeMode === 'raw_passthrough' ? 'Raw passthrough' : 'Off'), 'Never normalized or merged')}
     </div>
     <div class="gateway-subhead">02 · Verified identity</div>
@@ -82,6 +82,7 @@ export function renderUnifiedGatewayPanel(status, { diagnosticsUrl = null, contr
       ${cell('Removed duplicate cards', metric('nextUpRemovedItems'), 'Never a database deletion')}
       ${cell('Upstream unchanged responses', metric('nextUpUnchangedResponses'))}
       ${cell('Paged requests passed through', metric('nextUpPagedPassThrough'), 'Paging safety policy')}
+      ${cell('Unsafe unpaged passed through', metric('nextUpUnpagedUnsafePassThrough'), 'Full Limit page, incomplete count or unknown response')}
       ${cell('Fail-open normalizations', metric('failOpenNormalizationErrors'))}
       ${cell('Upstream transport failures', metric('upstreamTransportFailures'))}
       ${cell('Upstream non-200', metric('upstreamNon200Responses'))}

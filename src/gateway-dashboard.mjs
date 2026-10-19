@@ -39,6 +39,7 @@ export function buildGatewayDashboardStatus({ db, config, profileId, gateway = n
     nextUpUnchangedResponses: safeCount('nextUpUnchangedResponses'),
     nextUpRemovedItems: safeCount('nextUpRemovedItems'),
     nextUpPagedPassThrough: safeCount('nextUpPagedPassThrough'),
+    nextUpUnpagedUnsafePassThrough: safeCount('nextUpUnpagedUnsafePassThrough'),
     failOpenNormalizationErrors: safeCount('failOpenNormalizationErrors'),
     upstreamTransportFailures: safeCount('upstreamTransportFailures'),
     upstreamNon200Responses: safeCount('upstreamNon200Responses'),
