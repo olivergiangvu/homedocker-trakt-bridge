@@ -104,17 +104,16 @@ class NamespaceTests(unittest.TestCase):
         ]:
             self.assertIn(required,source)
         for forbidden in [
-            "/Shows/NextUp", "/Shows/{", "/PlaybackInfo",
             "UPDATE watch_state","DELETE FROM","INSERT INTO",
             "method='POST'","docker compose",
             "print(snapshot)","print(first)","print(recent)",
         ]:
-            # The script docstring may mention AIO NextUp concept, but must
-            # not call the route; only exact quote patterns are HTTP calls.
-            if forbidden=="/Shows/NextUp":
-                self.assertNotIn('read("/Shows/NextUp',source)
-            else:
-                self.assertNotIn(forbidden,source)
+            self.assertNotIn(forbidden,source)
+        # Mentions of upstream routes in a docstring are permitted. A
+        # genuine route invocation with source-derived IDs is NOT.
+        self.assertNotIn('read("/Shows/',source)
+        self.assertNotIn('read("/Items/',source)
+        self.assertNotIn('read("/PlaybackInfo',source)
 
 
 if __name__=="__main__":
