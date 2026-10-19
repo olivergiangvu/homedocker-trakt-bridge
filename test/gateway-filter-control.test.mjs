@@ -87,6 +87,66 @@ test('control refuses cross-origin, absent origin, wrong bearer, GET and malform
   assert.equal(counters.writes, 0);
 });
 
+test('Safari same-origin POST without Origin uses only a strictly matching Referer', async t => {
+  const { db, config, url, counters } = await httpFixture(t);
+  // Browser form navigation: valid setup page Referer, Origin genuinely absent.
+  const key = deriveProfileKey(config.bridgeSecret, 'setup', PROFILE);
+  const action = url + '/u/' + PROFILE + '/gateway/filter?key=' + encodeURIComponent(key);
+  const send = (headers, state = 'on') => fetch(action, {
+    method: 'POST', redirect: 'manual',
+    headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers },
+    body: 'state=' + state,
+  });
+  const setupReferer = origin + '/u/' + PROFILE + '/setup?key=synthetic-test';
+  const valid = await send({ referer: setupReferer, 'sec-fetch-site': 'same-origin' });
+  assert.equal(valid.status, 302);
+  assert.equal(gatewayFilteringEnabled({ db, config, profileId: PROFILE }), true);
+  assert.equal(counters.writes, 1);
+  // Ensure all rejections leave the durable preference unchanged.
+  for (const headers of [
+    {},
+    { referer: '' },
+    { referer: 'malformed-url' },
+    { referer: 'https://evil.invalid/u/' + PROFILE + '/setup' },
+    { referer: origin + '.evil.invalid/path' },
+    { referer: setupReferer, origin: 'null' },
+    { referer: setupReferer, origin: 'https://evil.invalid' },
+    { referer: setupReferer, 'sec-fetch-site': 'cross-site' },
+  ]) {
+    assert.equal((await send(headers, 'off')).status, 403);
+    assert.equal(gatewayFilteringEnabled({ db, config, profileId: PROFILE }), true);
+  }
+  assert.equal((await send({
+    referer: setupReferer, 'content-type': 'text/plain',
+  }, 'off')).status, 403);
+  assert.equal(gatewayFilteringEnabled({ db, config, profileId: PROFILE }), true);
+  assert.equal((await send({ referer: setupReferer }, 'off')).status, 302);
+  assert.equal(gatewayFilteringEnabled({ db, config, profileId: PROFILE }), false);
+  assert.equal(counters.writes, 2);
+  assert.equal(counters.events, 0);
+});
+
+test('strict Referer fallback also applies to admin switch on HTTPS nonstandard port', async t => {
+  const { db, config, url, counters } = await httpFixture(t);
+  config.publicBaseUrl = 'https://example.test:18449';
+  const adminUrl = url + '/setup/gateway/filter?key=' + encodeURIComponent(config.adminKey);
+  const request = (referer, origin) => fetch(adminUrl, {
+    method: 'POST', redirect: 'manual',
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded',
+      ...(referer === undefined ? {} : { referer }),
+      ...(origin === undefined ? {} : { origin }),
+    },
+    body: 'state=on',
+  });
+  assert.equal((await request('https://example.test/setup')).status, 403);
+  assert.equal((await request('http://example.test:18449/setup')).status, 403);
+  assert.equal((await request('https://example.test:18449/setup')).status, 302);
+  assert.equal(counters.writes, 1);
+  assert.equal(counters.events, 0);
+  assert.equal(gatewayFilteringEnabled({ db, config, profileId: PROFILE }), true);
+});
+
 test('admin can toggle mapped source but another profile cannot', async t => {
   const { db, config, url, counters } = await httpFixture(t);
   const other = deriveProfileKey(config.bridgeSecret, 'setup', OTHER);
