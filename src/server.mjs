@@ -6,6 +6,7 @@ import { BridgeError } from './errors.mjs';
 import { page, escapeHtml } from './html.mjs';
 import { buildGatewayDashboardStatus } from './gateway-dashboard.mjs';
 import { renderUnifiedGatewayPanel } from './unified-gateway-panel.mjs';
+import { gatewayFilterControlAvailable, setGatewayFilteringEnabled } from './gateway-control.mjs';
 import { buildManifest, planEvent, validatePushEvent } from './watch-state.mjs';
 import { formatEventTime, summarizeRecentEvents } from './diagnostics.mjs';
 import { cachedPullPayload, makePullCacheEntry, stalePullPayload } from './pull-cache.mjs';
@@ -91,6 +92,23 @@ async function route(req, res, ctx) {
     `));
   }
 
+  // Authenticated UI changes only this gateway's filtering preference.
+  if (path === '/setup/gateway/filter') {
+    requireAdmin(url, config);
+    if (req.method !== 'POST') return methodNotAllowed(res);
+    requireSameOriginForm(req, config);
+    const profileId = config.jellyfinGatewayProfileId;
+    const state = await parseGatewayForm(req);
+    if (!gatewayFilterControlAvailable({ config, gateway: ctx.gateway, profileId })) {
+      throw new BridgeError('Gateway source/listener must be configured first', {
+        status: 409, code: 'gateway_not_provisioned',
+      });
+    }
+    setGatewayFilteringEnabled({ db, config, gateway: ctx.gateway, profileId,
+      enabled: state === 'on' });
+    return redirect(res, '/setup?key=' + encodeURIComponent(url.searchParams.get('key')) + '#aio-identity-gateway');
+  }
+
   if (path === '/setup') {
     requireAdmin(url, config);
     if (req.method === 'GET') return renderAdmin(res, ctx, url.searchParams.get('key'));
@@ -127,6 +145,24 @@ async function route(req, res, ctx) {
     return sendJson(res, 200, buildGatewayDashboardStatus({
       db, config, profileId, gateway: ctx.gateway,
     }));
+  }
+
+  const filterMatch = path.match(/^\/u\/([a-f0-9]{24})\/gateway\/filter$/);
+  if (filterMatch) {
+    const profileId = filterMatch[1];
+    requireSetupKey(url, config, db, profileId);
+    if (req.method !== 'POST') return methodNotAllowed(res);
+    requireSameOriginForm(req, config);
+    const state = await parseGatewayForm(req);
+    if (!gatewayFilterControlAvailable({ config, gateway: ctx.gateway, profileId })) {
+      throw new BridgeError('Gateway source/listener must be configured first', {
+        status: 409, code: 'gateway_not_provisioned',
+      });
+    }
+    setGatewayFilteringEnabled({ db, config, gateway: ctx.gateway, profileId,
+      enabled: state === 'on' });
+    return redirect(res, '/u/' + profileId + '/setup?key='
+      + encodeURIComponent(url.searchParams.get('key')) + '#aio-identity-gateway');
   }
 
   const setupMatch = path.match(/^\/u\/([a-f0-9]{24})\/setup$/);
@@ -420,6 +456,29 @@ export function invalidatesPullCache(result) {
   return ['history:add', 'history:remove', 'history:bulk-add', 'history:bulk-remove', 'watchlist:add', 'watchlist:remove', 'scrobble:pause', 'scrobble:stop'].includes(result?.action);
 }
 
+// Same-origin POST is mandatory even for a bearer-authorized dashboard.
+function requireSameOriginForm(req, config) {
+  const origin = req.headers.origin;
+  const expected = new URL(config.publicBaseUrl).origin;
+  const type = String(req.headers['content-type'] || '').split(';', 1)[0].trim().toLowerCase();
+  if (origin !== expected || type !== 'application/x-www-form-urlencoded'
+      || req.headers['sec-fetch-site'] === 'cross-site') {
+    throw new BridgeError('Invalid gateway control origin', {
+      status: 403, code: 'gateway_control_origin_denied',
+    });
+  }
+}
+
+async function parseGatewayForm(req) {
+  const form = await readForm(req);
+  if (form.getAll('state').length !== 1
+      || [...form.keys()].some(key => key !== 'state')
+      || !['on', 'off'].includes(form.get('state'))) {
+    throw new BridgeError('Invalid filter state', { status: 400, code: 'gateway_filter_invalid' });
+  }
+  return form.get('state');
+}
+
 function requireAdmin(url, config) {
   const key = url.searchParams.get('key');
   if (!key || !safeEqual(key, config.adminKey)) throw new BridgeError('Not found', { status: 404, code: 'not_found' });
@@ -454,7 +513,10 @@ function renderAdmin(res, { config, db, gateway }, adminKey) {
       <div class="row"><span class="badge">v${APP_VERSION}</span><span class="badge ${readiness.ready ? 'ok' : 'warn'}">${escapeHtml(readiness.status)}</span><span class="badge">DB schema ${escapeHtml(readiness.schemaVersion)}</span></div>
     </div>
     <div class="card"><h2>Profiles</h2><table><thead><tr><th>Name</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
-    ${renderUnifiedGatewayPanel(gatewayStatus, { compact: true })}
+    ${renderUnifiedGatewayPanel(gatewayStatus, {
+      compact: true,
+      controlUrl: '/setup/gateway/filter?key=' + encodeURIComponent(adminKey),
+    })}
     <div class="card"><h2>Create profile</h2><form method="post" action="/setup?key=${encodeURIComponent(adminKey)}"><label>Name</label><input name="name" value="Trakt" maxlength="80"><button class="btn" type="submit">Create profile</button></form></div>
   `));
 }
@@ -531,7 +593,8 @@ function renderProfile(res, { config, db, gateway }, profileId, setupKey, eventF
     </div>
 
     ${renderUnifiedGatewayPanel(gatewayStatus, {
-      diagnosticsUrl: `/u/${profileId}/gateway/status.json?key=${encodeURIComponent(setupKey)}`
+      diagnosticsUrl: `/u/${profileId}/gateway/status.json?key=${encodeURIComponent(setupKey)}`,
+      controlUrl: `/u/${profileId}/gateway/filter?key=${encodeURIComponent(setupKey)}`
     })}
     <div class="card" id="unified-sync-health">
       <h2>Sync health</h2>
