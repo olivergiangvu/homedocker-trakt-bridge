@@ -521,6 +521,9 @@ function renderAdmin(res, { config, db, gateway }, adminKey) {
     const setupKey = deriveProfileKey(config.bridgeSecret, 'setup', p.id);
     return `<tr><td>${escapeHtml(p.name)}</td><td>${p.connected_at ? '<span class="ok">Connected</span>' : '<span class="bad">Not connected</span>'}</td><td><a class="btn secondary" href="/u/${p.id}/setup?key=${encodeURIComponent(setupKey)}">Open</a></td></tr>`;
   }).join('') || '<tr><td colspan="3" class="muted">No profiles yet.</td></tr>';
+  // Same-origin Safari fallback needs only origin, never the ?key= bearer.
+  // All non-setup responses keep global Referrer-Policy: no-referrer.
+  res.setHeader('Referrer-Policy', 'strict-origin');
   return sendHtml(res, 200, page('Bridge setup', `
     <div class="card">
       <h1>${APP_NAME}</h1>
@@ -578,6 +581,8 @@ function renderProfile(res, { config, db, gateway }, profileId, setupKey, eventF
     ? `${latestPoll.source}${latestPoll.cacheLayer ? `/${latestPoll.cacheLayer}` : ''}`
     : '—';
 
+  // Do not send a profile setup key in Referer; only the origin is needed.
+  res.setHeader('Referrer-Policy', 'strict-origin');
   return sendHtml(res, 200, page(`${p.name} - Trakt Bridge`, `
     <div class="row unified-nav" aria-label="Profile sections"><a href="#aio-identity-gateway">Gateway</a><a href="#unified-sync-health">Sync health</a><a href="#unified-recent-events">Recent events</a></div>
     <div class="card hero">
