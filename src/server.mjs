@@ -5,6 +5,7 @@ import { deriveProfileKey, randomToken, safeEqual } from './crypto.mjs';
 import { BridgeError } from './errors.mjs';
 import { page, escapeHtml } from './html.mjs';
 import { buildGatewayDashboardStatus } from './gateway-dashboard.mjs';
+import { renderUnifiedGatewayPanel } from './unified-gateway-panel.mjs';
 import { buildManifest, planEvent, validatePushEvent } from './watch-state.mjs';
 import { formatEventTime, summarizeRecentEvents } from './diagnostics.mjs';
 import { cachedPullPayload, makePullCacheEntry, stalePullPayload } from './pull-cache.mjs';
@@ -453,19 +454,7 @@ function renderAdmin(res, { config, db, gateway }, adminKey) {
       <div class="row"><span class="badge">v${APP_VERSION}</span><span class="badge ${readiness.ready ? 'ok' : 'warn'}">${escapeHtml(readiness.status)}</span><span class="badge">DB schema ${escapeHtml(readiness.schemaVersion)}</span></div>
     </div>
     <div class="card"><h2>Profiles</h2><table><thead><tr><th>Name</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
-    <div class="card">
-      <div class="row"><h2 style="margin-right:auto">AIO Identity Gateway</h2><span class="badge">v1.4 target</span></div>
-      <p class="muted">Managed Trakt Bridge module. Read-only dashboard preview; live client routing is not qualified.</p>
-      <div class="grid">
-        <div class="stat"><span class="label">Runtime state</span><span class="value">${escapeHtml(gatewayStatus.state)}</span></div>
-        <div class="stat"><span class="label">Verified alias groups</span><span class="value">${escapeHtml(gatewayStatus.identity.aliasGroups)}</span></div>
-        <div class="stat"><span class="label">Conflicts quarantined</span><span class="value">${escapeHtml(gatewayStatus.identity.quarantinedConflicts)}</span></div>
-        <div class="stat"><span class="label">Resume</span><span class="value">${escapeHtml(gatewayStatus.resumeMode)}</span></div>
-        <div class="stat"><span class="label">NextUp requests</span><span class="value">${escapeHtml(gatewayStatus.telemetry?.nextUpRequests ?? '—')}</span></div>
-        <div class="stat"><span class="label">Filtered responses</span><span class="value">${escapeHtml(gatewayStatus.telemetry?.nextUpNormalizedResponses ?? '—')}</span></div>
-      </div>
-      <p class="hint">Configuration remains opt-in and OFF by default. This dashboard does not switch nginx, write to AIO history, or enable a live gateway.</p>
-    </div>
+    ${renderUnifiedGatewayPanel(gatewayStatus, { compact: true })}
     <div class="card"><h2>Create profile</h2><form method="post" action="/setup?key=${encodeURIComponent(adminKey)}"><label>Name</label><input name="name" value="Trakt" maxlength="80"><button class="btn" type="submit">Create profile</button></form></div>
   `));
 }
@@ -514,6 +503,7 @@ function renderProfile(res, { config, db, gateway }, profileId, setupKey, eventF
     : '—';
 
   return sendHtml(res, 200, page(`${p.name} - Trakt Bridge`, `
+    <div class="row unified-nav" aria-label="Profile sections"><a href="#aio-identity-gateway">Gateway</a><a href="#unified-sync-health">Sync health</a><a href="#unified-recent-events">Recent events</a></div>
     <div class="card hero">
       <div class="row"><h1 style="margin-right:auto">${escapeHtml(p.name)}</h1><span class="badge">v${APP_VERSION}</span><span class="badge ${healthy ? 'ok' : 'warn'}">${healthy ? 'Healthy' : 'Attention'}</span></div>
       <div class="hero-meta"><span class="${connected ? 'ok' : 'bad'}">● ${connected ? 'Trakt connected' : 'Trakt disconnected'}</span><span class="muted">·</span><span class="muted">AIOStreams watch_state v2</span></div>
@@ -540,26 +530,10 @@ function renderProfile(res, { config, db, gateway }, profileId, setupKey, eventF
       </div>
     </div>
 
-    <div class="card" id="aio-identity-gateway">
-      <div class="row"><h2 style="margin-right:auto">AIO Identity Gateway</h2><span class="badge">v1.4 target</span><span class="badge ${gatewayStatus.listening ? 'warn' : 'muted'}">${escapeHtml(gatewayStatus.state)}</span></div>
-      <p class="muted">Read-only identity continuity view, managed inside Trakt Bridge. Production client routing is not qualified.</p>
-      <div class="grid">
-        <div class="stat"><span class="label">Verified shows</span><span class="value">${escapeHtml(gatewayStatus.identity.verifiedShows)}</span></div>
-        <div class="stat"><span class="label">Alias groups</span><span class="value">${escapeHtml(gatewayStatus.identity.aliasGroups)}</span></div>
-        <div class="stat"><span class="label">Verified aliases</span><span class="value">${escapeHtml(gatewayStatus.identity.verifiedAliases)}</span></div>
-        <div class="stat"><span class="label">Conflicts quarantined</span><span class="value">${escapeHtml(gatewayStatus.identity.quarantinedConflicts)}</span></div>
-        <div class="stat"><span class="label">Resume mode</span><span class="value">${escapeHtml(gatewayStatus.resumeMode)}</span></div>
-        <div class="stat"><span class="label">Gateway listener</span><span class="value">${gatewayStatus.listening ? 'Listening (not client-qualified)' : 'Inactive'}</span></div>
-        <div class="stat"><span class="label">NextUp requests</span><span class="value">${escapeHtml(gatewayStatus.telemetry?.nextUpRequests ?? '—')}</span></div>
-        <div class="stat"><span class="label">Normalized responses</span><span class="value">${escapeHtml(gatewayStatus.telemetry?.nextUpNormalizedResponses ?? '—')}</span></div>
-        <div class="stat"><span class="label">Fail-open errors</span><span class="value">${escapeHtml(gatewayStatus.telemetry?.failOpenNormalizationErrors ?? '—')}</span></div>
-        <div class="stat"><span class="label">Upstream transport failures</span><span class="value">${escapeHtml(gatewayStatus.telemetry?.upstreamTransportFailures ?? '—')}</span></div>
-      </div>
-      <p class="hint">Counters cover the entire gateway listener and reset on restart. NextUp fails open on ambiguity; Resume is passthrough only. No live routing switch, watch-state writes or alias merges.</p>
-      <div class="row"><a class="btn secondary" href="/u/${profileId}/gateway/status.json?key=${encodeURIComponent(setupKey)}">Read-only JSON diagnostics</a></div>
-    </div>
-
-    <div class="card">
+    ${renderUnifiedGatewayPanel(gatewayStatus, {
+      diagnosticsUrl: `/u/${profileId}/gateway/status.json?key=${encodeURIComponent(setupKey)}`
+    })}
+    <div class="card" id="unified-sync-health">
       <h2>Sync health</h2>
       <div class="grid">
         <div class="stat"><span class="label">Last authoritative sync</span><span class="value">${escapeHtml(authoritativeTime)}</span></div>
@@ -572,7 +546,7 @@ function renderProfile(res, { config, db, gateway }, profileId, setupKey, eventF
     </div>
 
     <div class="card">
-      <div class="row"><h2 style="margin-right:auto">Recent events</h2><span class="hint">Raw payloads stay collapsed</span></div>
+      <div class="row" id="unified-recent-events"><h2 style="margin-right:auto">Recent events</h2><span class="hint">Raw payloads stay collapsed</span></div>
       <div class="filters">${filterLink('all', 'All')}${filterLink('errors', 'Errors')}${filterLink('pull', 'Pull')}${filterLink('playback', 'Playback')}${filterLink('ignored', 'Ignored')}</div>
       <div class="events-wrap"><table class="events-table"><thead><tr><th class="col-time">Time</th><th class="col-event">Event / ID</th><th class="col-status">Status</th><th>Summary</th></tr></thead><tbody>${events}</tbody></table></div>
     </div>
