@@ -65,6 +65,10 @@ export function renderUnifiedGatewayPanel(status, { diagnosticsUrl = null, compa
       ${cell('Fail-open normalizations', metric('failOpenNormalizationErrors'))}
       ${cell('Upstream transport failures', metric('upstreamTransportFailures'))}
       ${cell('Upstream non-200', metric('upstreamNon200Responses'))}
+      ${cell('Response failures', metric('responseFailures'))}
+      ${cell('Gateway mean latency', status.telemetry?.nextUpAverageMs == null ? '—' : s(status.telemetry.nextUpAverageMs) + ' ms', 'Completed local responses; not p95')}
+      ${cell('AIO mean latency', status.telemetry?.aioUpstreamAverageMs == null ? '—' : s(status.telemetry.aioUpstreamAverageMs) + ' ms', 'Upstream first response; not p95')}
+      ${cell('Metadata active / queued', status.telemetry ? s(status.telemetry.metadataActive ?? 0) + ' / ' + s(status.telemetry.metadataQueued ?? 0) : '—', 'Bounded lookups')}
     </div>
     <div class="gateway-footer">
       <span class="hint">View-only · No watch-history edits · AIO remains autonomous · No live routing switch · V140_STABLE_RELEASE_HOLD</span>
