@@ -31,7 +31,9 @@ class AuditStop(Exception):
 def ro(path):
     try:
         info = path.lstat()
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0:
+        # AIO may own its Docker volume with an unprivileged container UID.
+        # Trust only the fixed path and require a regular, non-symlink file.
+        if not stat.S_ISREG(info.st_mode):
             raise AuditStop("DATABASE_PATH_UNSAFE")
         db = sqlite3.connect(
             path.resolve().as_uri() + "?mode=ro", uri=True, timeout=3)
