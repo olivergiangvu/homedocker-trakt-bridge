@@ -13,6 +13,12 @@ function fixture() {
   const counters = { writes: 0, events: 0 };
   const db = {
     getProfile(id) { return id === PROFILE || id === OTHER ? { id, name: 'Synthetic' } : null; },
+    listProfiles() { return [{ id: PROFILE, name: 'Synthetic', connected_at: 1 }]; },
+    ping() { return true; },
+    schemaVersion() { return 1; },
+    countConnectedProfiles() { return 1; },
+    recentEvents() { return []; },
+    cacheGet() { return null; },
     cachePeek(key) { return structuredClone(map.get(key) ?? null); },
     cacheSet(key, value) {
       if (!key.startsWith('gateway-filter:v1:')) throw new Error('NON_GATEWAY_WRITE');
@@ -85,6 +91,25 @@ test('control refuses cross-origin, absent origin, wrong bearer, GET and malform
   assert.equal((await fetch(url + '/u/' + PROFILE + '/gateway/filter?key=' + key)).status, 405);
   assert.equal(gatewayFilteringEnabled({ db, config, profileId: PROFILE }), false);
   assert.equal(counters.writes, 0);
+});
+
+test('setup HTML sends strict-origin only; health and invalid keys stay no-referrer', async t => {
+  const { config, url } = await httpFixture(t);
+  const key = deriveProfileKey(config.bridgeSecret, 'setup', PROFILE);
+  const admin = await fetch(url + '/setup?key=' + encodeURIComponent(config.adminKey));
+  assert.equal(admin.status, 200);
+  assert.equal(admin.headers.get('referrer-policy'), 'strict-origin');
+  const profile = await fetch(url + '/u/' + PROFILE + '/setup?key=' + encodeURIComponent(key));
+  assert.equal(profile.status, 200);
+  assert.equal(profile.headers.get('referrer-policy'), 'strict-origin');
+  // Policy must never ask Safari to send a full URL that includes ?key=.
+  assert.notEqual(profile.headers.get('referrer-policy'), 'same-origin');
+  assert.notEqual(profile.headers.get('referrer-policy'), 'unsafe-url');
+  const health = await fetch(url + '/health');
+  assert.equal(health.headers.get('referrer-policy'), 'no-referrer');
+  const invalid = await fetch(url + '/setup?key=invalid');
+  assert.equal(invalid.status, 404);
+  assert.equal(invalid.headers.get('referrer-policy'), 'no-referrer');
 });
 
 test('Safari same-origin POST without Origin uses only a strictly matching Referer', async t => {
