@@ -71,6 +71,57 @@ class AdaptiveAuditTests(unittest.TestCase):
         with self.assertRaisesRegex(module.core.StopAudit, "WINDOW_PREFIX_UNSTABLE"):
             module.analyze(p, w, meta, graph)
 
+    def test_decision_gate_diagnostic_explains_verified_one_winner(self):
+        _, w, meta, graph = pages()
+        report = module.diagnose_candidate_gates(w["Items"], meta, graph)
+        self.assertEqual(report["metadata_imdb_present"], 2)
+        self.assertEqual(report["metadata_imdb_missing"], 48)
+        self.assertEqual(report["verified_graph_matched_cards"], 2)
+        self.assertEqual(report["two_distinct_spelling_pairs"], 1)
+        self.assertEqual(report["eligible_winner_pairs"], 1)
+        self.assertEqual(report["both_active_resume_pairs"], 0)
+        self.assertEqual(report["uncertain_winner_pairs"], 0)
+        self.assertNotIn("tt44051354", str(report))
+        self.assertNotIn("263102", str(report))
+
+    def test_decision_gate_explains_zero_candidate_different_causes(self):
+        _, w, meta, graph = pages(both_active=True)
+        diag = module.diagnose_candidate_gates(w["Items"], meta, graph)
+        self.assertEqual(diag["both_active_resume_pairs"], 1)
+        self.assertEqual(diag["eligible_winner_pairs"], 0)
+
+        _, w, meta, graph = pages()
+        meta.pop("canonical")
+        diag = module.diagnose_candidate_gates(w["Items"], meta, graph)
+        self.assertEqual(diag["single_card_groups"], 1)
+        self.assertEqual(diag["metadata_imdb_missing"], 49)
+        self.assertEqual(diag["two_distinct_spelling_pairs"], 0)
+
+        _, w, meta, graph = pages()
+        w["Items"][1]["UserData"]["PlaybackPositionTicks"] = 0
+        diag = module.diagnose_candidate_gates(w["Items"], meta, graph)
+        self.assertEqual(diag["uncertain_winner_pairs"], 1)
+        self.assertEqual(diag["eligible_winner_pairs"], 0)
+
+        _, w, meta, graph = pages()
+        meta["canonical"] = "tt44094505"
+        diag = module.diagnose_candidate_gates(w["Items"], meta, graph)
+        self.assertEqual(diag["same_spelling_pairs"], 1)
+        self.assertEqual(diag["two_distinct_spelling_pairs"], 0)
+
+        _, w, meta, graph = pages()
+        graph["tt44094505"] = {"263102", "888"}
+        diag = module.diagnose_candidate_gates(w["Items"], meta, graph)
+        self.assertEqual(diag["ambiguous_graph_cards"], 1)
+        self.assertEqual(diag["eligible_winner_pairs"], 0)
+
+    def test_decision_gate_handles_null_userdata_without_exposing_source(self):
+        _, w, meta, graph = pages()
+        w["Items"][0]["UserData"] = None
+        report = module.diagnose_candidate_gates(w["Items"], meta, graph)
+        self.assertEqual(report["eligible_winner_pairs"], 1)
+        self.assertTrue(all(type(v) is int for v in report.values()))
+
     def test_only_root_only_get_and_read_only_sqlite_in_script(self):
         script = FILE.read_text()
         self.assertIn('?mode=ro', script)
