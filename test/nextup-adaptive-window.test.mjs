@@ -93,7 +93,7 @@ test('50-card full AIO window supports *visible shadow* dedup even with unknown 
   assert.equal(first.Items.length,20);
 });
 
-test('verified duplicate outside client's first20 has no visible candidate change', async () => {
+test('verified duplicate outside the client first20 has no visible candidate change', async () => {
   const rows=[...Array.from({length:50},(_,i)=>row(i))];
   rows[30]=row(30,{series:'series-A'});
   rows[31]=row(31,{series:'series-C',ticks:8000});
