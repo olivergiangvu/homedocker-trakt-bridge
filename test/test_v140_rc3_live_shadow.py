@@ -62,6 +62,24 @@ class ShadowAuditTest(unittest.TestCase):
         with self.assertRaisesRegex(audit.StopAudit, "STARTINDEX_NOT_HONORED"):
             audit.scan_pages(reader)
 
+    def test_missing_startindex_is_distinguished_from_ignored_offset(self):
+        reader, _ = sample(30)
+        def no_echo(path):
+            reply = reader(path)
+            reply.pop("StartIndex")
+            return reply
+        with self.assertRaisesRegex(audit.StopAudit, "STARTINDEX_FIELD_ABSENT"):
+            audit.scan_pages(no_echo)
+
+    def test_startindex_type_bool_never_counts_as_zero(self):
+        reader, _ = sample(30)
+        def invalid_echo(path):
+            reply = reader(path)
+            reply["StartIndex"] = False
+            return reply
+        with self.assertRaisesRegex(audit.StopAudit, "STARTINDEX_ECHO_INVALID"):
+            audit.scan_pages(invalid_echo)
+
     def test_full_page_replay_drift(self):
         reader, _ = sample(25, drift=True)
         with self.assertRaisesRegex(audit.StopAudit, "PAGINATION_SNAPSHOT_DRIFT"):
