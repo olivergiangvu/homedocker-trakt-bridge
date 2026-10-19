@@ -132,7 +132,8 @@ test('tie-breaking follows source SQLite series_key ordering',()=>{
   assert.equal(discover(arg).qualified,true);
   const bad=input(4);
   bad.recentCandidates[0].lastSortAt=bad.recentCandidates[1].lastSortAt;
-  bad.recentCandidates[0].seriesKey='s|tt90000000';
+  // Use a key that exists in the scoped source index, but sorts after alias.
+  bad.recentCandidates[0].seriesKey=bad.recentCandidates[2].seriesKey;
   assert.equal(discover(bad).reason,'RECENT_CANDIDATE_ORDER_INVALID');
 });
 
