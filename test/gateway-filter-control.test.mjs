@@ -107,6 +107,20 @@ test('admin can toggle mapped source but another profile cannot', async t => {
   assert.equal(counters.writes, 1);
 });
 
+test('an ON preference never follows AIO to Remux or another Jellyfin user', () => {
+  const { db, config, gateway } = fixture();
+  setGatewayFilteringEnabled({ db, config, gateway, profileId: PROFILE, enabled: true });
+  assert.equal(gatewayFilteringEnabled({ db, config, profileId: PROFILE }), true);
+  const remux = { ...config, jellyfinGatewaySourceKind: 'remux',
+    jellyfinGatewayUpstreamUrl: 'http://remux:3000/jellyfin' };
+  assert.equal(gatewayFilteringEnabled({ db, config: remux, profileId: PROFILE }), false);
+  const otherUser = { ...config, jellyfinGatewayUserId: 'different-user-999' };
+  assert.equal(gatewayFilteringEnabled({ db, config: otherUser, profileId: PROFILE }), false);
+  const native = { ...config, jellyfinGatewaySourceKind: 'jellyfin' };
+  assert.equal(gatewayFilteringEnabled({ db, config: native, profileId: PROFILE }), false);
+  assert.equal(gatewayFilteringEnabled({ db, config, profileId: PROFILE }), true);
+});
+
 test('unprovisioned transport fails closed with no persistent writes', async t => {
   const { db, config, counters, url } = await httpFixture(t, { gateway: null });
   const key = deriveProfileKey(config.bridgeSecret, 'setup', PROFILE);
