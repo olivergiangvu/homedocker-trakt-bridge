@@ -219,8 +219,10 @@ def apply(artifact, previous, command, envfile, aio_id):
     # backup or another Restic/OneDrive audit.
     mutated = False
     try:
-        old.set_image(envfile, artifact["tag"])
+        # Mark rollback eligible BEFORE updating the root-owned .env; if a
+        # post-rename error occurs inside set_image(), still restore RC6.
         mutated = True
+        old.set_image(envfile, artifact["tag"])
         rendered = json.loads(old.run(*command, "config", "--format", "json"))
         if rendered["services"]["trakt-bridge"]["image"] != artifact["tag"]:
             raise Stop("COMPOSE_RC_IMAGE_MISMATCH")
