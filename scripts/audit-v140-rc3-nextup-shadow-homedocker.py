@@ -145,7 +145,12 @@ def inspect_page(page, offset):
     rows = page.get("Items")
     if not isinstance(rows, list) or len(rows) > LIMIT:
         raise StopAudit("PAGE_CONTRACT_INVALID")
-    if page.get("StartIndex") != offset:
+    if "StartIndex" not in page:
+        raise StopAudit("STARTINDEX_FIELD_ABSENT")
+    if (not isinstance(page["StartIndex"], int)
+        or isinstance(page["StartIndex"], bool)):
+        raise StopAudit("STARTINDEX_ECHO_INVALID")
+    if page["StartIndex"] != offset:
         raise StopAudit("STARTINDEX_NOT_HONORED")
     total = page.get("TotalRecordCount")
     if not isinstance(total, int) or isinstance(total, bool) \
