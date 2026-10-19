@@ -308,6 +308,22 @@ test('series-specific and paging requests are upstream passthrough', async t => 
 });
 
 
+
+test('unpaged UserId, parent and unknown filters never normalize another user selection', async t => {
+  const { base, hits } = await fixture(t);
+  for (const query of ['UserId=some-other-user', 'ParentId=some-folder',
+    'SeriesId=seriesOld', 'SortBy=Random', 'Limit=20&Limit=40',
+    'IncludeItemTypes=Episode']) {
+    const r = await fetch(base + '/Shows/NextUp?' + query, {
+      headers: { 'X-Emby-Token': AIO_TOKEN },
+    });
+    assert.equal(r.status, 200);
+    assert.deepEqual(await r.json(), reply);
+  }
+  assert.equal(hits.filter(x => x.path === '/Users/Me').length, 0);
+  assert.equal(hits.filter(x => x.path.startsWith('/Items/series')).length, 0);
+});
+
 test('Odin first short StartIndex=0 page can normalize only with exact count evidence', async t => {
   const { base, hits, gateway } = await fixture(t);
   const r = await fetch(base + '/Shows/NextUp?StartIndex=0&Limit=20', {
