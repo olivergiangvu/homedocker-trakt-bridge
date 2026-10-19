@@ -132,6 +132,66 @@ class InventoryTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_snapshot_accepts_exact_empty_persona_and_keeps_scope(self):
+        import json
+        aio=sqlite3.connect(":memory:")
+        bridge=sqlite3.connect(":memory:")
+        try:
+            aio.executescript("""
+                CREATE TABLE watch_sinks (
+                  uuid TEXT, persona TEXT, addon_name TEXT,
+                  addon_instance_id TEXT, retired_at INTEGER);
+                CREATE TABLE watch_state (
+                  uuid TEXT,persona TEXT,series_key TEXT,
+                  episode INTEGER,played INTEGER,position_ms REAL,
+                  sort_at REAL);
+            """)
+            aio.execute("INSERT INTO watch_sinks VALUES(?,?,?,?,NULL)",
+                        ("uuid-test", "", audit.identity.SINK_NAME,
+                         audit.identity.SINK_INSTANCE))
+            aio.execute("INSERT INTO watch_state VALUES(?,?,?,?,?,?,?)",
+                        ("uuid-test","","s|"+CANON,1,1,0,13))
+            bridge.executescript("""
+                CREATE TABLE profiles (id TEXT, access_token_enc TEXT);
+                CREATE TABLE media_cache (
+                  cache_key TEXT, payload_json TEXT, expires_at INTEGER);
+            """)
+            bridge.execute("INSERT INTO profiles VALUES(?,?)",
+                           ("profile-example", "encrypted"))
+            graph=json.dumps({"shows":{
+                "263102":{"canonicalImdb":CANON,"aliases":[ALIAS]}},
+                "conflicts":[]})
+            bridge.execute("INSERT INTO media_cache VALUES(?,?,?)",(
+                "identity-graph:v1:profile-example",graph,9999999999))
+            aio.commit();bridge.commit()
+            aio.execute("PRAGMA query_only=ON")
+            bridge.execute("PRAGMA query_only=ON")
+
+            def fake_ro(path):
+                return aio if path==audit.identity.AIO_DB else bridge
+
+            with patch.object(audit.identity,"ro",side_effect=fake_ro):
+                snap=audit.snapshot()
+            self.assertEqual(snap["scope"],("uuid-test",""))
+            self.assertEqual(snap["history"],[("s|"+CANON,1)])
+            self.assertEqual(snap["recent"],[("s|"+CANON,13)])
+            self.assertEqual(audit.aggregate(snap)["full_history_series_keys"],1)
+        finally:
+            # The snapshot closes its read-only connections itself.
+            aio.close()
+            bridge.close()
+
+    def test_sink_scope_predicate_separates_no_sink_from_invalid_persona(self):
+        # Regression guard: don't conflate a single default persona "" with
+        # multiple active sinks, and do not convert NULL persona to "".
+        source=PATH.read_text()
+        self.assertIn('if len(scopes)!=1:',source)
+        self.assertIn('stop("WATCH_SINK_NOT_UNIQUE")',source)
+        self.assertIn('if not all(isinstance(x,str) for x in scopes[0]):',
+                      source)
+        self.assertIn('stop("WATCH_SINK_SCOPE_INVALID")',source)
+        self.assertNotIn("isinstance(x,str) and bool(x)",source)
+
     def test_source_uses_only_readonly_and_no_raw_identifier_output(self):
         src=PATH.read_text()
         for need in [
