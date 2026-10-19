@@ -464,6 +464,7 @@ test('Gateway metrics are in-memory, aggregate-only, and not public HTTP routes'
     nextUpNormalizedResponses: 0,
     nextUpUnchangedResponses: 0,
     nextUpRemovedItems: 0,
+    nextUpPagedPassThrough: 0,
     failOpenNormalizationErrors: 0,
     upstreamTransportFailures: 0,
     upstreamNon200Responses: 0,
