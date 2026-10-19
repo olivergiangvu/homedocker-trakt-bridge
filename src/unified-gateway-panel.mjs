@@ -37,7 +37,7 @@ export function renderUnifiedGatewayPanel(status, { diagnosticsUrl = null, compa
       <span class="badge">v1.4 target</span>
       <span class="badge ${badge}">${s(readiness)}</span>
     </div>
-    <p class="muted">One integrated product: verified identity continuity, NextUp policy, safety and runtime telemetry. Production client routing is not qualified.</p>
+    <p class="muted">Read-only control center for one integrated product: verified identity continuity, NextUp policy, safety and runtime telemetry. Production client routing is not qualified.</p>
     ${compact ? '' : pipeline}
     <div class="gateway-subhead">01 · Activation & safety</div>
     <div class="grid">
