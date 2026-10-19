@@ -457,12 +457,26 @@ export function invalidatesPullCache(result) {
 }
 
 // Same-origin POST is mandatory even for a bearer-authorized dashboard.
+// Safari/WebKit may omit Origin on a same-origin form navigation. Only when
+// Origin is ABSENT do we accept an exact-origin Referer, never a blank/"null"
+// or mismatched Origin. Do not trust Host/X-Forwarded-* or a same-site suffix.
+// The authenticated setup key and form content-type checks remain mandatory.
 function requireSameOriginForm(req, config) {
   const origin = req.headers.origin;
   const expected = new URL(config.publicBaseUrl).origin;
   const type = String(req.headers['content-type'] || '').split(';', 1)[0].trim().toLowerCase();
-  if (origin !== expected || type !== 'application/x-www-form-urlencoded'
+  let sameOrigin = origin === expected;
+  if (origin === undefined) {
+    try {
+      const referer = new URL(req.headers.referer || '');
+      sameOrigin = referer.origin === expected && !referer.username && !referer.password;
+    } catch {
+      sameOrigin = false;
+    }
+  }
+  if (!sameOrigin || type !== 'application/x-www-form-urlencoded'
       || req.headers['sec-fetch-site'] === 'cross-site') {
+    // Never log Origin, Referer, setup keys or any full client URL.
     throw new BridgeError('Invalid gateway control origin', {
       status: 403, code: 'gateway_control_origin_denied',
     });
