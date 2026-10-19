@@ -20,7 +20,11 @@ HERE = Path(__file__).parent
 MAX_METADATA = 50
 CATALOG_PAGE = 100
 CATALOG_MAX_PAGES = 4
-DEADLINE_SECONDS = 90
+# RC3-J HomeDocker: 6s NextUp timed out; single 12s retry completed in 11.377s.
+# Extend ONLY this offline catalog audit's two NextUp GETs, not its other
+# endpoint budgets and never the production Gateway.
+NEXTUP_TIMEOUT_SECONDS = 18
+DEADLINE_SECONDS = 150
 
 # Never emit the body of an unexpected exception, credential, URL or raw IDs.
 # Only fixed source-code error constants and finite state names may be printed.
@@ -46,6 +50,7 @@ SAFE_STOP_CODES = frozenset({
     "CATALOG_PARTIAL_TOTAL", "CATALOG_EXCEEDS_AUDIT_BUDGET",
     "CATALOG_SNAPSHOT_DRIFT", "NEXTUP_ITEM_NOT_IN_CATALOG",
     "EXISTING_EPISODE_NOT_RESOLVABLE",
+    "NEXTUP_18S_TIMEOUT", "NEXTUP_18S_TRANSPORT_UNAVAILABLE",
 })
 PHASE = "BEFORE_START"
 PHASES = frozenset({
@@ -79,6 +84,50 @@ visibility=module("audit-v140-rc3-nextup-visibility-homedocker.py",
                   "rc3i_visibility")
 core=visibility.core
 adaptive=visibility.adaptive
+
+
+def read_bounded_nextup(token, deadline):
+    """Only the fixed 50-card local NextUp route gets the 18s allowance.
+
+    Reuses RC3 core's explicit local base URL, no proxies/redirects, bounded
+    body, same user token and GET-only headers. Never prints raw exceptions.
+    This function does NOT alter core.MAX_CALL_SECONDS or production Gateway.
+    """
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise core.StopAudit("AUDIT_DEADLINE_EXCEEDED")
+    opener = core.build_opener(core.ProxyHandler({}), core.NoRedirect())
+    path = "/Shows/NextUp?StartIndex=0&Limit=50"
+    req = core.Request(
+        core.AIO + path, method="GET",
+        headers={
+            "X-Emby-Token": token,
+            "Accept": "application/json",
+            "Accept-Encoding": "identity",
+            "User-Agent": "homedocker-rc3i3-catalog-readonly/1",
+        },
+    )
+    try:
+        with opener.open(req, timeout=min(NEXTUP_TIMEOUT_SECONDS, remaining)) as response:
+            if response.status != 200:
+                raise core.StopAudit("AIO_GET_NON_200")
+            raw = response.read(core.MAX_BODY + 1)
+            if len(raw) > core.MAX_BODY:
+                raise core.StopAudit("AIO_RESPONSE_TOO_LARGE")
+            value = core.json.loads(raw)
+            if not isinstance(value, dict):
+                raise core.StopAudit("AIO_JSON_CONTRACT")
+            return value
+    except core.HTTPError:
+        raise core.StopAudit("AIO_GET_NON_200") from None
+    except core.URLError as err:
+        if isinstance(err.reason, TimeoutError):
+            raise core.StopAudit("NEXTUP_18S_TIMEOUT") from None
+        raise core.StopAudit("NEXTUP_18S_TRANSPORT_UNAVAILABLE") from None
+    except TimeoutError:
+        raise core.StopAudit("NEXTUP_18S_TIMEOUT") from None
+    except (OSError, UnicodeError, ValueError):
+        raise core.StopAudit("NEXTUP_18S_TRANSPORT_UNAVAILABLE") from None
 
 
 def candidate_from_window(rows, metadata, groups):
@@ -149,13 +198,14 @@ def main():
     PHASE = "CHECK_GATE_AND_GRAPH"
     core.bridge_gate()
     groups=visibility.verified_groups_from_bridge()
-    read=core.make_reader(token,time.monotonic()+DEADLINE_SECONDS)
+    deadline = time.monotonic()+DEADLINE_SECONDS
+    read=core.make_reader(token,deadline)
     PHASE = "AUTHENTICATED_USER_PROBE"
     if read("/Users/Me").get("Id")!=mapped:
         raise core.StopAudit("MAPPED_USER_MISMATCH")
-    url="/Shows/NextUp?StartIndex=0&Limit=50"
     PHASE = "READ_DOUBLE_NEXTUP"
-    window1=read(url);window2=read(url)
+    window1=read_bounded_nextup(token,deadline)
+    window2=read_bounded_nextup(token,deadline)
     if window1!=window2:
         raise core.StopAudit("NEXTUP_SOURCE_DRIFT")
     PHASE = "VERIFY_NEXTUP_SHAPE"
@@ -213,6 +263,8 @@ def main():
     print("RC3I_AUDIT=REAL_SERIES_CATALOG_CONTRACT")
     print("RC3I_USER=MAPPED")
     print("RC3I_NEXTUP_WINDOW=DOUBLE_READ_STABLE")
+    print("RC3I_NEXTUP_AUDIT_CALL_TIMEOUT_S="+str(NEXTUP_TIMEOUT_SECONDS))
+    print("RC3I_OTHER_GET_CALL_TIMEOUT_S="+str(core.MAX_CALL_SECONDS))
     print("RC3I_VERIFIED_CANONICAL_ONLY=YES")
     print("RC3I_SERIES_METADATA_LOOKUPS="+str(len(series_ids)))
     print("RC3I_SERIES_EPISODE_PAGES="+str(len(first_pages)))
