@@ -91,6 +91,22 @@ All three are **pure**, bounded, shadow-only: no production import, no Trakt wri
 
 **Next engineering milestone:** separately qualify a backend-provided *complete, user-scoped history source* and a *playable catalog resolver*, then construct a consistent shelf/cursor and exact one-client opt-in test. Nothing in RC3-H or the pure adapters proves user-wide Jellyfin paging or authorizes exposing port 7101.
 
+## RC3-P5 — independently usable paged episode catalog (offline prototype + bounded host proof)
+
+Official AIO source at pinned upstream 6ca32ed has **different** paging implementations:
+- `/Shows/NextUp`: Limit capped 50, ignores StartIndex, returns fetched-prefix total. Not safe as a global paginated shelf.
+- `/Shows/:seriesId/Episodes`: reads StartIndex and Limit (capped at 2000), slices a catalog-derived episode array and reports `TotalRecordCount=eps.length`. This is a *per-series catalog*, not a watched-history feed, and its data may change between requests.
+- `/Items/:itemId`: resolves the actual ID supplied by the backend, not a fabricated cross-IMDb ID. A successful item GET proves item resolution, **not actual media playback availability**.
+
+Added isolated `src/nextup-episode-catalog-binding.mjs`:
+1. Require same authenticated user, verified SeriesId→IMDb, real Episode rows for precisely that SeriesId, contiguous StartIndex and stable exact TotalRecordCount, bounded 1..6 pages * up to 100 items. Incomplete or offset-ignoring responses fail closed.
+2. Bind already-qualified canonical read-model history to existing catalog coordinates (Season/Episode) and return **source-provided IDs**. Incomplete joins fail closed; do not create missing episodes, overwrite their UserData or infer global NextUp counts.
+3. Presently pure, offline only; no calls to Gateway/Trakt/AIO Docker and no production import.
+
+Added `scripts/audit-v140-rc3-series-catalog-homedocker.py` (RC3-I): optional authenticated, GET-only HomeDocker proof using **one** canonical SeriesId discovered in the real stable 50-item NextUp window and Bridge's verified multi-spelling identity graph. It checks Series detail, bounded double-read `/Shows/{SeriesId}/Episodes?StartIndex=...&Limit=100` (up to four pages/400 episodes) and resolves the **existing** NextUp episode by one authenticated `/Items/{EpisodeId}` GET. Only numeric counts and pass/stop codes printed; no IDs, titles, progress, credentials, streaming tests or writes. It rejects incomplete catalogs and reports `FULL_NEXTUP_QUALIFIED=NO` regardless of success.
+
+**Important limitation:** Catalog enumeration may demonstrate that the backend can resolve an existing NextUp card without upstream NextUp pagination. It is not proof that *other watched series* can all be discovered from a NextUp=50 prefix, or that missing catalog IDs can be reconstructed. Subsequent work requires a stable **source series index** spanning all relevant user-history series, authenticated mapping to playable catalog IDs, and a coherent user-scoped shelf/snapshot before any client-facing response change. Avoid relying solely on AIO container file paths for arbitrary Jellyfin or Remux installations.
+
 ## What would make it a safe *usable* feature
 
 **Gate A (implemented, CI):** Pure source-agnostic adapter and synthetic tests for 20/20, 50/50, AIO offset-ignored, native-offset, wrong users, partial metadata, two active resumes, replay drift and no injected watch writes. It is deliberately not linked into the Gateway.
