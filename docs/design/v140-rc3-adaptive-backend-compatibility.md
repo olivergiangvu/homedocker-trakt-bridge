@@ -206,6 +206,23 @@ Root cause hypothesis is a stricter validation newly introduced in RC3-M:
 - Regression tests create a pair of SQLite databases in-memory, set `PRAGMA query_only=ON`, insert one active watch-sink with `persona=""` and scoped watch history, then prove the full snapshot and candidate query include that exact scope without writing.
 - Production Gateway Filter, RC2 and client routing remain unchanged. Run one new pinned read-only audit after both workflows pass. If the new code still reports `WATCH_SINK_NOT_UNIQUE`, it is an actual active-sink count mismatch and must be diagnosed without guessing a sink UUID or modifying watch_sinks.
 
+## RC3-M2 live PASS and RC3-N1 namespace feasibility
+
+HomeDocker RC3-M2 real read-only snapshot on 2026-10-20:
+- Exact mapped Jellyfin user, two identical scoped SQLite snapshots, Gateway Filter OFF, zero production/history/client changes.
+- **906** distinct source series keys containing episode rows, **861** raw watched/resume candidate keys, **45** history-only keys.
+- Candidate source positions 1–50=50, 51–200=150 and **beyond position 200=661**. These positions are based on a raw SQL GROUP BY MAX(sort_at) listing, **not** cards emitted by AIO NextUp after match_key/drop/caught-up/metadata checks.
+- **756** episode-history source keys match canonical IMDb syntax; **150** do not. The raw candidate subset has **711** canonical IMDb-form keys and **150** other-syntax keys. Only one Bridge verified multi-spelling group (17 graph show records total), giving a one-key reduction **hint**, not 905 canonical/unique playable shows.
+
+Upstream IdParser (pinned SHA 6ca32ed21e3036d87c35c49b24f2cf507d065ed1) accepts several NON-IMDb identifiers, including TVDB, TMDB, MAL, Kitsu, AniList and anime-specific provider namespaces. **The 150 non-IMDb-form source keys cannot be called corrupt or unrelated history.** Their actual namespace distribution is not known until classification against the raw fixed-scope index; syntactic recognition is NOT proof of ID equivalence or media availability.
+
+RC3-N1 (source-only follow-up, no catalog storm):
+- `scripts/audit-v140-rc3-source-namespaces-homedocker.py` reuses the same strictly mapped user/unique AIO sink/verified profile and double-read read-only SQLite transaction from RC3-M2. It prints aggregate counts by known upstream identifier syntax: canonical IMDb, alternate IMDb, TVDB, TMDB, MAL, Kitsu, AniList, AniDB, other recognized anime formats and opaque/unknown keys.
+- Output breaks down history key count, raw recent-candidate key count and candidate count beyond position 200 **per syntax class**; no source key/ID, title, timestamp, episode coordinate or watch progress is printed.
+- Only one existing authenticated local GET /Users/Me; **zero** Jellyfin NextUp, /Items, /Shows/Episodes, PlaybackInfo or Trakt calls. No DB write, no local service restarts or Route/Gateway changes.
+- All counters are checked against the independently verified 906/861/661-like RC3-M source totals **as read now**, never hard-coded to the previous run. Raw source-key syntax is a **resolver-planning aid**, not a source of cross-ID canonical mappings, playable Item IDs, global pagination or proof that NextUp contains all candidates.
+- RC3-N2 can be designed only after the above real syntax distribution, then use a bounded representative, authenticated contract probe of source-specific catalog mapping rather than 861 network calls at once.
+
 ## What would make it a safe *usable* feature
 
 **Gate A (implemented, CI):** Pure source-agnostic adapter and synthetic tests for 20/20, 50/50, AIO offset-ignored, native-offset, wrong users, partial metadata, two active resumes, replay drift and no injected watch writes. It is deliberately not linked into the Gateway.
