@@ -242,15 +242,15 @@ class SeriesCatalogTests(unittest.TestCase):
         # main() is still fully read-only and calls no production gateway writes
         with patch.object(audit.core,"credential",
                           return_value=("token","mapped")), \
-             patch.object(audit.core,"bridge_gate",return_value=True), \\
+             patch.object(audit.core,"bridge_gate",return_value=True), \
              patch.object(audit.visibility,"verified_groups_from_bridge",
-                          return_value=[[CANON,ALIAS]]), \\
+                          return_value=[[CANON,ALIAS]]), \
              patch.object(audit.core,"make_reader",
-                          return_value=read_metadata), \\
+                          return_value=read_metadata), \
              patch.object(audit,"read_bounded_nextup",
                           return_value={"Items":[nextup],
                                         "StartIndex":0,
-                                        "TotalRecordCount":1}), \\
+                                        "TotalRecordCount":1}), \
              patch.object(audit,"scan_pages",
                           return_value=(catalog,[
                               {"Items":catalog,"StartIndex":0,
