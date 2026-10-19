@@ -147,6 +147,22 @@ RC3-I4 source-only correction:
 - All other GET calls keep their established budget (18s *only* for NextUp, 6s for metadata/catalog), no production Gateway timeout change, no replay/watched writes, no Trakt writes, no downstream client changes. CI synthetic tests cover the independent evidence gate and error budget.
 - Even if RC3-I4 fully passes, complete per-user history enumeration, binding *all* watched series and streaming availability remain unqualified; R5 production ingress and Gateway Filter stay HOLD.
 
+## RC3-I4 PASS and RC3-K scoped episode-coordinate audit
+
+HomeDocker operator RC3-I4 PASS (2026-10-20):
+- Identity: mapped Jellyfin user, verified canonical-only entry in stable 50-card NextUp, and **50** series metadata lookups.
+- Canonical series catalog: **12** episode objects in **one** page; two identical fully checked reads, exact existing NextUp Episode ID found in catalog; GET /Items/{EpisodeId} returned the matched episode using the dedicated 18s timeout.
+- No writes, Filter OFF, no production Gateway changes. This proves **one** authenticated real episode catalog and one separately resolved item. It does NOT prove media PlaybackInfo, global NextUp paging, or a user-wide catalog.
+
+Earlier RC3-F physical watch-state evidence: 11 canonical coordinate rows + eight alias coordinate rows, eight overlaps = **11 logical coordinate positions**. RC3-I4's catalog has 12 episodes; **do not infer that the extra 12th is unwatched** until there is an explicit season/episode coordinate join.
+
+RC3-K source-only GET/SQLite audit: scripts/audit-v140-rc3-history-catalog-coordinates-homedocker.py
+- Uses fixed mapped-user Jellyfin credential (root-only /run), verified Bridge graph and unique homedocker-trakt-bridge AIO sink. Reopens both DB files with SQLite mode=ro and PRAGMA query_only=ON.
+- Reads watch-state exact group coordinates (season, episode, played, position), rejecting duplicates per spelling, incompatible played flags and multiple active resumes. Re-reads after authenticated stable NextUp and exact canonical per-series catalog double-read to reject data drift.
+- **Matches logical history to catalog by exact Season/Episode coordinates only**, never ordinal position, titles, string similarity, or episode IndexNumber alone. Returns only aggregate counts of history found/missing in the catalog and catalog coordinates without an AIO history row, without exposing raw IDs, episodes, timestamps or titles.
+- Scope is strictly **one verified cross-IMDb alias group**. An unmatched history coordinate leads to SCOPED_HISTORY_COORDINATES_ALL_BOUND=NO. This neither fabricates an episode nor constructs NextUp, modifies watched history, checks media streaming or qualifies client ingress. **A catalog episode without a history row is not proof it was never watched on Trakt or another client.**
+- GET budgets match RC3-I4; bounded to 4 pages / 400 episodes and a 150s audit deadline. No playback endpoint, Docker/container restart or Trakt calls.
+
 ## What would make it a safe *usable* feature
 
 **Gate A (implemented, CI):** Pure source-agnostic adapter and synthetic tests for 20/20, 50/50, AIO offset-ignored, native-offset, wrong users, partial metadata, two active resumes, replay drift and no injected watch writes. It is deliberately not linked into the Gateway.
