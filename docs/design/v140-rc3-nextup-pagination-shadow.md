@@ -13,6 +13,12 @@
 - R4-C live shadow audit, mapped-user token and Filter OFF: STOP:STARTINDEX_NOT_HONORED. Source inspected: the RC3-P1 script required `page.get("StartIndex") == offset`; a **missing StartIndex field** also triggers that result. **Do not claim the upstream ignores offset yet.** The follow-up diagnostic separates absent echo, wrong echo, repeated page content, overlap and snapshot drift without exposing raw episode IDs.
 
 
+## RC3-P2 root cause confirmed from official AIOStreams source
+
+HomeDocker offset diagnostic confirmed page 0 vs page 20 return **the same sequence of 20 episode IDs**; second page's `StartIndex` does not equal 20, and page zero replay is stable. The current official upstream AIO NextUp route, at main commit `6ca32ed21e3036d87c35c49b24f2cf507d065ed1`, caps Limit at 50, never reads StartIndex, and calls send with hard-coded 0. Underlying recentSeries() uses SQL pagination internally, but the HTTP NextUp route never exposes it. See [source-backed remediation and test contract](v140-rc3-aio-nextup-upstream-offset-contract.md).
+
+**Decision:** Do not implement Gateway lookahead/pagination reconstruction against today's AIO source. Without an upstream API change there is no trustworthy page 2 and no safe global NextUp total. An upstream fix, alternative complete bounded source, or separate non-client research contract must precede R5. RC3 shadow code stays isolated; production RC2 Filter remains OFF.
+
 ## Critical distinction
 
 AIO may use a **fetched-prefix** TotalRecordCount rather than a true global total. A full Limit=20 or Limit=50 page is therefore insufficient to prove completeness. Raising Limit alone is not a fix. A single lookahead request does not prove the second page has consistent indexes or that the list will remain stable across client requests.
