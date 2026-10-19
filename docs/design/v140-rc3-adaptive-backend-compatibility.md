@@ -120,6 +120,20 @@ RC3-J isolated, bounded transport diagnostic `scripts/diagnose-v140-rc3-nextup-g
 - At most 3 total GET calls including /Users/Me, no metadata fanout, no catalog, Trakt, SQLite writes, Docker changes, Odin ingress or AIO configuration change. Recheck OFF after success/failure.
 - DO NOT increase RC3-I global timeout, disable fail-open, or reroute client based on a single unstable GET. Await RC3-J evidence first; on sustained latency optimize the call/caching budget with source-specific controls and verify no accidental data loss.
 
+## RC3-J actual operator measurement and RC3-I3 selective audit timeout
+
+Live HomeDocker 2026-10-19 authenticated GET-only RC3-J:
+- `/Users/Me` mapped successfully in **271 ms**.
+- NextUp `Limit=50` at 6s: `TIMEOUT` after 6009 ms. The *one allowed* 12s retry succeeded with all **50** items in **11,377 ms**; method GET-only; Filter OFF, no writes.
+- Thus the earlier RC3-I2 `READ_DOUBLE_NEXTUP/AIO_GET_UNAVAILABLE` is **consistent with its hard 6s per-call timeout being too short** under live AIO response load. Do not claim a lasting AIO outage, and do not infer that series catalog paging failed (not reached).
+- The 11.377s measured latency is high enough to threaten interactive first-page UX. It is not a reason to turn on the production Filter or globally increase Gateway timeouts without an independently approved performance/canary plan.
+
+RC3-I3 modifies **only the standalone host-side read-only catalog audit**:
+- Bounded NextUp GETs use 18s/call for exactly two double-read snapshots under a 150s whole-audit deadline. Same root-only token, same local AIO base, disabled proxy/redirect and 1 MiB response bound; source remains read-only.
+- All other GETs (`/Users/Me`, series metadata, per-series episode catalog and one `/Items/{EpisodeId}`) keep the existing **6s per-call** budget. Metadata concurrency remains four. This is NOT a Gateway runtime timeout change.
+- On timeout/network/invalid JSON, emit a **fixed allowlisted** reason and phase without leaking token, ID, HTTP body, item metadata or URL. On STOP, separately verify Filter OFF.
+- CI regression fixtures check long-timeout isolation, immutable 6s core GET budget, timeout classification, no response-body disclosure and existing catalog fail-closed conditions. Actual HomeDocker catalog qualification awaits a subsequent operator GET-only audit.
+
 ## What would make it a safe *usable* feature
 
 **Gate A (implemented, CI):** Pure source-agnostic adapter and synthetic tests for 20/20, 50/50, AIO offset-ignored, native-offset, wrong users, partial metadata, two active resumes, replay drift and no injected watch writes. It is deliberately not linked into the Gateway.
