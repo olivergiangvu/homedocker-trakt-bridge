@@ -195,6 +195,17 @@ Bounded read-only host script scripts/audit-v140-rc3-full-series-inventory-homed
 
 Operational gate: after Push and PR CI are BOTH green on one immutable commit, run the pinned root-owned host-only RC3-M audit once. Evaluate exact counts and source drift before designing a **separate** authenticated catalog resolver for missing series and complete user-facing pagination. Do not enable Filter or route Odin based solely on an inventory.
 
+## RC3-M1 live STOP — exact AIO persona validation (2026-10-20)
+
+Operator installed pinned source 0fce4a49a02cfab8b756756e474f64fcab4c9dbf. The first snapshot STOP reported `WATCH_SINK_NOT_UNIQUE` (Filter OFF, 0 production changes). **No history/recent series queries were run**: this stop is not evidence of missing series or flawed pagination.
+
+Root cause hypothesis is a stricter validation newly introduced in RC3-M:
+- Previous RC3-K/RC3-E explicitly accepted the unique active watch-sink's exact `(uuid, persona)` as long as both fields were strings. This can include a legitimate **empty-string persona**.
+- RC3-M mistakenly required both strings to be nonempty, then collapsed both actual count mismatches and scope format failures into one `WATCH_SINK_NOT_UNIQUE` code. The output alone did **not** distinguish 0/multiple matching sink rows from a single sink with an empty persona; do not claim the persona is proven empty.
+- RC3-M2 restores **exact prior string-type check** (do not substitute a nonempty value, never coalesce persona), separates `WATCH_SINK_NOT_UNIQUE` strictly for count != 1 and `WATCH_SINK_SCOPE_INVALID` for invalid columns, and keeps all SQL queries bound to the precise observed uuid/persona tuple.
+- Regression tests create a pair of SQLite databases in-memory, set `PRAGMA query_only=ON`, insert one active watch-sink with `persona=""` and scoped watch history, then prove the full snapshot and candidate query include that exact scope without writing.
+- Production Gateway Filter, RC2 and client routing remain unchanged. Run one new pinned read-only audit after both workflows pass. If the new code still reports `WATCH_SINK_NOT_UNIQUE`, it is an actual active-sink count mismatch and must be diagnosed without guessing a sink UUID or modifying watch_sinks.
+
 ## What would make it a safe *usable* feature
 
 **Gate A (implemented, CI):** Pure source-agnostic adapter and synthetic tests for 20/20, 50/50, AIO offset-ignored, native-offset, wrong users, partial metadata, two active resumes, replay drift and no injected watch writes. It is deliberately not linked into the Gateway.
