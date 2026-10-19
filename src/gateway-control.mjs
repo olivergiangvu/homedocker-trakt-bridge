@@ -19,13 +19,17 @@ export function gatewayFilteringEnabled({ db, config, profileId }) {
   return db.cachePeek(gatewayFilterKey(profileId))?.enabled === true;
 }
 
+export function gatewayFilterControlAvailable({ config, gateway, profileId }) {
+  return config?.jellyfinGatewayEnabled === true
+    && config?.jellyfinGatewayProfileId === profileId
+    && /^[A-Za-z0-9_-]{8,128}$/.test(config?.jellyfinGatewayUserId || '')
+    && Boolean(config?.jellyfinGatewayUpstreamUrl)
+    && gateway?.listening === true;
+}
+
 export function setGatewayFilteringEnabled({ db, config, gateway, profileId, enabled }) {
   if (typeof enabled !== 'boolean') throw new Error('gateway_toggle_invalid');
-  if (config?.jellyfinGatewayEnabled !== true
-      || config?.jellyfinGatewayProfileId !== profileId
-      || !/^[A-Za-z0-9_-]{8,128}$/.test(config?.jellyfinGatewayUserId || '')
-      || !config?.jellyfinGatewayUpstreamUrl
-      || gateway?.listening !== true
+  if (!gatewayFilterControlAvailable({ config, gateway, profileId })
       || typeof db?.cacheSet !== 'function') {
     throw new Error('gateway_listener_or_source_not_configured');
   }
