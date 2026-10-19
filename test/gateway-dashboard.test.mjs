@@ -33,6 +33,7 @@ function context(overrides = {}) {
         ? { id, name: 'Trakt account', connected_at: 1 } : null;
     },
     cachePeek(key) {
+      if (key === 'gateway-filter:v1:' + OWNER) return null;
       calls.peek++;
       assert.equal(key, 'identity-graph:v1:' + OWNER);
       return graph;
