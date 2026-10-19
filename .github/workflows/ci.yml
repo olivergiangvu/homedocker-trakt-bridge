@@ -45,7 +45,7 @@ jobs:
       - name: Build production container
         run: docker build -t homedocker-trakt-bridge:ci .
 
-      # Only the RC.1 Draft pull request exports a short-lived transportable
+      # Only the RC.2 Unified Draft pull request exports a short-lived transportable
       # image. Never publish GHCR or change the tag release HOLD from CI.
       # This archive is a runner-built candidate, not a registry manifest digest.
 
@@ -100,21 +100,21 @@ jobs:
           grep -q '"status":"setup_required"' /tmp/readiness.json
           grep -q "\"schemaVersion\":${expected_schema}" /tmp/readiness.json
 
-      - name: Package RC.1 reviewed Docker image as checksum-verified CI artifact
-        if: ${{ github.event_name == 'pull_request' && github.head_ref == 'feat/v140-rc1-source-candidate-20261018' }}
+      - name: Package RC.2 unified Docker image as checksum-verified CI artifact
+        if: ${{ github.event_name == 'pull_request' && github.head_ref == 'feat/v140-rc2-unified-gateway-ui-20261019' }}
         shell: bash
         run: |
           set -euo pipefail
-          test "$(node -p "require('./package.json').version")" = "1.4.0-rc.1"
+          test "$(node -p "require('./package.json').version")" = "1.4.0-rc.2"
           grep -q 'V140_STABLE_RELEASE_HOLD' .github/workflows/release.yml
-          mkdir -p /tmp/v140-rc1-ci-image
+          mkdir -p /tmp/v140-rc2-ci-image
           short_sha="$(git rev-parse --short=12 HEAD)"
-          image="homedocker-trakt-bridge:v1.4.0-rc.1-ci-${short_sha}"
+          image="homedocker-trakt-bridge:v1.4.0-rc.2-ci-${short_sha}"
           docker tag homedocker-trakt-bridge:ci "$image"
-          docker save -o /tmp/v140-rc1-ci-image/bridge-rc1.docker.tar "$image"
+          docker save -o /tmp/v140-rc2-ci-image/bridge-rc2.docker.tar "$image"
           (
-            cd /tmp/v140-rc1-ci-image
-            sha256sum bridge-rc1.docker.tar > SHA256SUMS
+            cd /tmp/v140-rc2-ci-image
+            sha256sum bridge-rc2.docker.tar > SHA256SUMS
             sha256sum -c SHA256SUMS
           )
           {
@@ -127,15 +127,15 @@ jobs:
             echo "local_image_id=$(docker image inspect "$image" --format '{{.Id}}')"
             echo 'registry_manifest_digest=NOT_AVAILABLE_UNPUBLISHED'
             echo 'credentials_included=NONE_IN_DOCKERFILE'
-          } > /tmp/v140-rc1-ci-image/IMAGE-METADATA.txt
-          test "$(du -m /tmp/v140-rc1-ci-image/bridge-rc1.docker.tar | cut -f1)" -lt 200
+          } > /tmp/v140-rc2-ci-image/IMAGE-METADATA.txt
+          test "$(du -m /tmp/v140-rc2-ci-image/bridge-rc2.docker.tar | cut -f1)" -lt 200
 
-      - name: Upload 7-day RC.1 CI image artifact, never GHCR
-        if: ${{ github.event_name == 'pull_request' && github.head_ref == 'feat/v140-rc1-source-candidate-20261018' }}
+      - name: Upload 7-day RC.2 unified CI image artifact, never GHCR
+        if: ${{ github.event_name == 'pull_request' && github.head_ref == 'feat/v140-rc2-unified-gateway-ui-20261019' }}
         uses: actions/upload-artifact@v4
         with:
-          name: v140-rc1-ci-image-${{ github.run_id }}
-          path: /tmp/v140-rc1-ci-image/
+          name: v140-rc2-ci-image-${{ github.run_id }}
+          path: /tmp/v140-rc2-ci-image/
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
