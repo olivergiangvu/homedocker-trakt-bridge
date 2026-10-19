@@ -170,13 +170,17 @@ def aggregate_candidate_rank(aio, bridge):
             result["groups_with_any_effective_series_drop"] += 1
         if drops == len(keys):
             result["groups_with_both_effective_series_drops"] += 1
-        individual_band.append((bands[0], bands[1:], drops))
+        individual_band.append((bands[0], bands[1:], drops,
+                                bool(flags.get(keys[0])),
+                                any(bool(flags.get(k)) for k in keys[1:])))
     # One group exists in HomeDocker; output a *coarse band*, never series
     # key, episode ID, IMDb, rank timestamp or other identifying data.
     if len(individual_band) == 1 and len(individual_band[0][1]) == 1:
         result["single_group_canonical_band"] = individual_band[0][0]
         result["single_group_alias_band"] = individual_band[0][1][0]
         result["single_group_effective_drop_count"] = individual_band[0][2]
+        result["single_group_canonical_direct_drop_effective"] = individual_band[0][3]
+        result["single_group_alias_direct_drop_effective"] = individual_band[0][4]
     return result
 
 
