@@ -6,6 +6,7 @@
  * or infer that a listening socket proves real-client routing.
  */
 import { loadVerifiedIdentityGraph } from './identity-continuity.mjs';
+import { gatewayFilteringEnabled, gatewayFilterControlAvailable } from './gateway-control.mjs';
 
 export function buildGatewayDashboardStatus({ db, config, profileId, gateway = null }) {
   const mapped = typeof profileId === 'string' && profileId.length > 0
@@ -59,6 +60,10 @@ export function buildGatewayDashboardStatus({ db, config, profileId, gateway = n
     state,
     enabled: configured,
     listening: Boolean(listening),
+    filteringEnabled: mapped && gatewayFilteringEnabled({ db, config, profileId }),
+    filterControlAvailable: gatewayFilterControlAvailable({ config, gateway, profileId }),
+    filterControlMode: 'persistent_database_preference',
+    sourceKind: config.jellyfinGatewaySourceKind || 'aiostreams',
     // These are configuration indicators, NOT upstream connectivity checks.
     upstreamConfigured: Boolean(config.jellyfinGatewayUpstreamUrl),
     userMappingConfigured: Boolean(mappingReady),
