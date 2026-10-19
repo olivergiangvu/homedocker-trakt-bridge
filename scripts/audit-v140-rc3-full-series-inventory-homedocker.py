@@ -78,10 +78,14 @@ def snapshot():
             "WHERE addon_name=? AND addon_instance_id=? AND retired_at IS NULL",
             (identity.SINK_NAME,identity.SINK_INSTANCE)
         ).fetchall()
-        if len(scopes)!=1 or not all(
-            isinstance(x,str) and bool(x) for x in scopes[0]
-        ):
+        if len(scopes)!=1:
             stop("WATCH_SINK_NOT_UNIQUE")
+        # RC3-K/E/F use type-valid exact (uuid, persona) scope, NOT a
+        # nonempty-persona condition. AIO's default persona may be "".
+        # Both columns remain mandatory strings, and every SQL query
+        # below binds the exact observed tuple without substitution.
+        if not all(isinstance(x,str) for x in scopes[0]):
+            stop("WATCH_SINK_SCOPE_INVALID")
         key=(
             "identity-graph:v1:"+ids[0][0],
         )
