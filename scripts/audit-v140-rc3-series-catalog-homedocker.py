@@ -24,6 +24,9 @@ CATALOG_MAX_PAGES = 4
 # Extend ONLY this offline catalog audit's two NextUp GETs, not its other
 # endpoint budgets and never the production Gateway.
 NEXTUP_TIMEOUT_SECONDS = 18
+# Standalone verification of a genuine preexisting episode ID may be slower
+# than lightweight Series metadata. 18s applies ONLY to this one item GET.
+EPISODE_DETAIL_TIMEOUT_SECONDS = 18
 DEADLINE_SECONDS = 150
 
 # Never emit the body of an unexpected exception, credential, URL or raw IDs.
@@ -51,8 +54,13 @@ SAFE_STOP_CODES = frozenset({
     "CATALOG_SNAPSHOT_DRIFT", "NEXTUP_ITEM_NOT_IN_CATALOG",
     "EXISTING_EPISODE_NOT_RESOLVABLE",
     "NEXTUP_18S_TIMEOUT", "NEXTUP_18S_TRANSPORT_UNAVAILABLE",
+    "EPISODE_GET_18S_TIMEOUT", "EPISODE_GET_18S_TRANSPORT_UNAVAILABLE",
+    "EPISODE_GET_BAD_JSON", "EPISODE_GET_BODY_TOO_LARGE",
 })
 PHASE = "BEFORE_START"
+# This becomes true ONLY after two identical fully validated catalog reads
+# and a match to the existing canonical NextUp Episode ID.
+CATALOG_EVIDENCE_VALIDATED = False
 PHASES = frozenset({
     "BEFORE_START", "READ_PRIVATE_SESSION", "CHECK_GATE_AND_GRAPH",
     "AUTHENTICATED_USER_PROBE", "READ_DOUBLE_NEXTUP",
@@ -130,6 +138,55 @@ def read_bounded_nextup(token, deadline):
         raise core.StopAudit("NEXTUP_18S_TRANSPORT_UNAVAILABLE") from None
 
 
+def read_existing_episode_detail(token, episode_id, deadline):
+    """Exactly one already-discovered catalog/NextUp episode; GET only.
+
+    No retries, no PlaybackInfo, no stream/progress endpoints. Does NOT
+    modify the shared core 6s timeout used by all other item GETs.
+    """
+    if not isinstance(episode_id, str) or not 1 <= len(episode_id) <= 512:
+        raise core.StopAudit("EXISTING_EPISODE_NOT_RESOLVABLE")
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise core.StopAudit("AUDIT_DEADLINE_EXCEEDED")
+    opener = core.build_opener(core.ProxyHandler({}), core.NoRedirect())
+    req = core.Request(
+        core.AIO + "/Items/" + quote(episode_id, safe=""), method="GET",
+        headers={
+            "X-Emby-Token": token,
+            "Accept": "application/json",
+            "Accept-Encoding": "identity",
+            "User-Agent": "homedocker-rc3i4-catalog-readonly/1",
+        },
+    )
+    try:
+        with opener.open(
+            req, timeout=min(EPISODE_DETAIL_TIMEOUT_SECONDS, remaining)
+        ) as response:
+            if response.status != 200:
+                raise core.StopAudit("AIO_GET_NON_200")
+            raw = response.read(core.MAX_BODY + 1)
+            if len(raw) > core.MAX_BODY:
+                raise core.StopAudit("EPISODE_GET_BODY_TOO_LARGE")
+            try:
+                item = core.json.loads(raw)
+            except (ValueError, UnicodeError):
+                raise core.StopAudit("EPISODE_GET_BAD_JSON") from None
+            if not isinstance(item, dict):
+                raise core.StopAudit("EPISODE_GET_BAD_JSON")
+            return item
+    except core.HTTPError:
+        raise core.StopAudit("AIO_GET_NON_200") from None
+    except core.URLError as err:
+        if isinstance(err.reason, TimeoutError):
+            raise core.StopAudit("EPISODE_GET_18S_TIMEOUT") from None
+        raise core.StopAudit("EPISODE_GET_18S_TRANSPORT_UNAVAILABLE") from None
+    except TimeoutError:
+        raise core.StopAudit("EPISODE_GET_18S_TIMEOUT") from None
+    except OSError:
+        raise core.StopAudit("EPISODE_GET_18S_TRANSPORT_UNAVAILABLE") from None
+
+
 def candidate_from_window(rows, metadata, groups):
     """Choose ONLY one genuine canonical NextUp row, no fabricated SeriesId."""
     if len(groups)!=1 or len(groups[0])<2:
@@ -192,7 +249,10 @@ def scan_pages(read,series_id):
 
 
 def main():
-    global PHASE
+    global PHASE, CATALOG_EVIDENCE_VALIDATED
+    # A previous successful run must never cause another audit to report
+    # stale catalog evidence after a later failure.
+    CATALOG_EVIDENCE_VALIDATED = False
     PHASE = "READ_PRIVATE_SESSION"
     token,mapped=core.credential()
     PHASE = "CHECK_GATE_AND_GRAPH"
@@ -244,10 +304,13 @@ def main():
     catalog_by_id={item["Id"]:item for item in catalog}
     if nextup_ep not in catalog_by_id:
         raise core.StopAudit("NEXTUP_ITEM_NOT_IN_CATALOG")
+    # Catalog binding is a separate and already completed evidence gate.
+    # Individual Item resolution remains a second independent check.
+    CATALOG_EVIDENCE_VALIDATED = True
     # Only one exact preexisting episode item is GET-resolved. PlaybackInfo
     # and media streams are intentionally never requested.
     PHASE = "GET_EXISTING_EPISODE"
-    detail_item=read("/Items/"+quote(nextup_ep,safe=""))
+    detail_item=read_existing_episode_detail(token,nextup_ep,deadline)
     candidate=catalog_by_id[nextup_ep]
     if not isinstance(detail_item,dict) or detail_item.get("Type")!="Episode" \
             or detail_item.get("Id")!=nextup_ep \
@@ -272,6 +335,9 @@ def main():
     print("RC3I_CATALOG_DOUBLE_READ=IDENTICAL")
     print("RC3I_NEXTUP_EPISODE_IN_CATALOG=YES")
     print("RC3I_EXISTING_EPISODE_ITEM_GET=VERIFIED")
+    print("RC3I_CATALOG_BINDING_GATE=VERIFIED_SINGLE_SERIES")
+    print("RC3I_EXISTING_EPISODE_GET_CALL_TIMEOUT_S="+str(EPISODE_DETAIL_TIMEOUT_SECONDS))
+    print("RC3I_OTHER_GET_CALL_TIMEOUT_S="+str(core.MAX_CALL_SECONDS))
     print("RC3I_FULL_NEXTUP_QUALIFIED=NO")
     print("RC3I_MEDIA_PLAYBACK_PROVEN=NO")
     print("RC3I_FILTER_FINAL=OFF")
@@ -288,6 +354,16 @@ if __name__=="__main__":
         print("RC3I_RESULT=STOP_CATALOG_UNQUALIFIED")
         print("RC3I_FAILURE_PHASE=" + (PHASE if PHASE in PHASES else "UNKNOWN_PHASE"))
         print("RC3I_FAILURE_REASON=" + safe_stop_code(error))
+        print("RC3I_CATALOG_BINDING_GATE=" + (
+            "VERIFIED_SINGLE_SERIES" if CATALOG_EVIDENCE_VALIDATED
+            else "NOT_YET_VERIFIED"
+        ))
+        print("RC3I_EXISTING_EPISODE_GET=" + (
+            "UNQUALIFIED" if PHASE == "GET_EXISTING_EPISODE"
+            else "NOT_TESTED"
+        ))
+        print("RC3I_GLOBAL_NEXTUP_QUALIFIED=NO")
+        print("RC3I_MEDIA_PLAYBACK_PROVEN=NO")
         # Cannot infer status of external operator changes after a stop.
         # Re-evaluate the no-filter invariant with a separate READ-ONLY
         # status check; NEVER report OFF if that check is unavailable.
