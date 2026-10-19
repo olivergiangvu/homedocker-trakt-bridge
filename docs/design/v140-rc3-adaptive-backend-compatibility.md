@@ -31,6 +31,25 @@ src/nextup-adaptive-window.mjs exports:
    - A 50/50 full window is classified BOUNDED_PREFIX_ONLY and may show a **first-page candidate**, but neither a complete list nor a trustworthy total; it always reports clientResponseChanged=false and globalPaginationQualified=false.
    - Under wrong user, missing metadata, ambiguous playback state, window drift, duplicate item IDs or insufficient coverage, falls back without suppression.
 
+## HomeDocker RC3-D/E findings and next source-independent path
+
+- R4-D: 50/50 episode cards had 50 valid IMDb metadata lookups, yet only six cards were mapped to the verified Bridge graph. All six belonged to **different single-card groups**. Therefore a 50-window filter has no removable verified alias pair today; it is **not** a metadata outage or two-resume decision block.
+- RC3-E: Bridge graph has 17 verified shows and only one verified canonical/alias group. AIO's exact configured sink has **11 canonical episode rows + 8 alias episode rows** for that group; both timelines exist but no dual active resumes were observed.
+- This is an upstream watch-state split with incomplete **NextUp visibility evidence**. Do not infer these are 19 distinct episodes; do not infer they are duplicated on the current screen. The relevant questions are precise season/episode overlap, conflicting played state, and whether one spelling's show appears outside AIO's fixed 50-card window.
+- RC3-F is the next read-only SQLite-only diagnostic: `scripts/audit-v140-rc3-alias-episode-overlap-homedocker.py`. It reuses verified graph and mapped AIO sink from RC3-E; reports only numeric counts of canonical-only/alias-only/overlapping season-episode coordinates, played disagreements and resumed overlap. It never changes history or routes clients.
+
+### Backend-independent architectural separation
+
+**Identity plane:** Verified Trakt show identities and exact IMDb aliases, with conflicts quarantined; do not rely on title similarity or backend string. 
+
+**State plane:** For AIO on the same host, optionally read only mapped user/persona's watch_state SQLite; for native Jellyfin/Remux, use their own authenticated per-user API or supported read-only state export. Never open a different backend's DB using AIO schema assumptions.
+
+**Catalog plane:** A source-specific resolver must supply a genuine playable episode Jellyfin ID and metadata. A raw watch-state row or an IMDb show ID is **not** a playable NextUp card. Do not invent a missing episode or fabricate SeriesId from IMDb.
+
+**Presentation plane:** A user/query-scoped, internally consistent shelf is needed before rewriting any client first-page or later-page response. An upstream 50/50 prefix and its TotalRecordCount are NOT sufficient proof of a full shelf. Use byte-for-byte passthrough on uncertainty.
+
+**Gate:** This branch remains **shadow only**. Neither RC3-E nor RC3-F constitutes permission to alter Trakt history, AIO source, Gateway production Filter or Odin's route.
+
 ## What would make it a safe *usable* feature
 
 **Gate A (implemented, CI):** Pure source-agnostic adapter and synthetic tests for 20/20, 50/50, AIO offset-ignored, native-offset, wrong users, partial metadata, two active resumes, replay drift and no injected watch writes. It is deliberately not linked into the Gateway.
