@@ -5,18 +5,29 @@
  * Uses the existing Bridge media_cache table, never watch-state/event tables.
  * Durable across Bridge restarts without schema migrations.
  */
+import { createHash } from 'node:crypto';
+
 const TTL_SECONDS = 10 * 365 * 24 * 3600;
 
-export function gatewayFilterKey(profileId) {
+export function gatewayFilterKey(profileId, config) {
   if (!/^[a-f0-9]{24}$/.test(profileId || '')) throw new Error('invalid_gateway_profile');
-  return 'gateway-filter:v1:' + profileId;
+  // Source URL/user/type identity is NOT disclosed in the DB key, and switching
+  // AIO ↔ Remux ↔ native Jellyfin never inherits a prior ON state.
+  const scope = [
+    profileId,
+    config?.jellyfinGatewaySourceKind || 'aiostreams',
+    config?.jellyfinGatewayUpstreamUrl || '',
+    config?.jellyfinGatewayUserId || '',
+  ].join('\\x1f');
+  const suffix = createHash('sha256').update(scope).digest('hex').slice(0, 24);
+  return 'gateway-filter:v1:' + profileId + ':' + suffix;
 }
 
 export function gatewayFilteringEnabled({ db, config, profileId }) {
   if (config?.jellyfinGatewayEnabled !== true
       || config?.jellyfinGatewayProfileId !== profileId
       || typeof db?.cachePeek !== 'function') return false;
-  return db.cachePeek(gatewayFilterKey(profileId))?.enabled === true;
+  return db.cachePeek(gatewayFilterKey(profileId, config))?.enabled === true;
 }
 
 export function gatewayFilterControlAvailable({ config, gateway, profileId }) {
@@ -34,6 +45,6 @@ export function setGatewayFilteringEnabled({ db, config, gateway, profileId, ena
     throw new Error('gateway_listener_or_source_not_configured');
   }
   // Only this namespaced preference changes, not any playback or identity.
-  db.cacheSet(gatewayFilterKey(profileId), { enabled }, TTL_SECONDS);
+  db.cacheSet(gatewayFilterKey(profileId, config), { enabled }, TTL_SECONDS);
   return enabled;
 }
