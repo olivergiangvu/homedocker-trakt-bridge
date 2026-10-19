@@ -48,6 +48,18 @@ src/nextup-adaptive-window.mjs exports:
 
 **Presentation plane:** A user/query-scoped, internally consistent shelf is needed before rewriting any client first-page or later-page response. An upstream 50/50 prefix and its TotalRecordCount are NOT sufficient proof of a full shelf. Use byte-for-byte passthrough on uncertainty.
 
+### RC3-F evidence (HomeDocker, 19 Oct 2026)
+
+- One verified IMDb alias group has 11 canonical episode coordinates and eight alias episode coordinates. All **eight alias episodes overlap the canonical coordinates**, with three canonical-only episodes and zero alias-only. It is a strict subset in the *observed* 19 watch-state rows.
+- Zero `played` disagreement on the eight common coordinates; zero overlapping active resumes; no invalid or duplicate coordinate rows. This is strong support for an **immutable canonical progress read-model** (logical union=11), NOT a destructive merge, not proof of duplicated NextUp cards or proof of playable Jellyfin items.
+- Do not interpret 19 physical rows as 19 watched episodes. Keep local AIO watch_state and Trakt history unchanged. If future data introduces disagreements, multiple simultaneous resumes or ambiguous coordinates, quarantine that group rather than silently selecting a winner.
+
+### RC3-G — last source candidate-routing diagnostic before implementing canonical read model
+
+- AIO's official `recentSeries()` candidate ranking uses `(played = 1 OR position_ms > 0)`, groups by `series_key`, and sorts by `MAX(sort_at) DESC` plus `series_key`. Its HTTP NextUp handler scans up to 200 candidates but may skip shows due to drop, caught-up status, missing metadata, and de-duplicates by `SeriesId`.
+- `scripts/audit-v140-rc3-nextup-candidate-rank-homedocker.py` reads the mapped sink and graph with SQLite query_only=ON. It reports only aggregate canonical vs alias **candidate-rank bands** (1–50, 51–200, beyond 200, absent), any effective series drop flags, and whether both spellings have *watched* candidate rows.
+- The rank bands are **not actual UI positions**, since metadata resolution and match-key/drop handling can suppress candidates. No raw IDs or dates are printed; no tokens, HTTP calls or writes. AIO/Remux/native Jellyfin adapters will eventually supply independently verified state data to the same pure canonicalization engine.
+
 **Gate:** This branch remains **shadow only**. Neither RC3-E nor RC3-F constitutes permission to alter Trakt history, AIO source, Gateway production Filter or Odin's route.
 
 ## What would make it a safe *usable* feature
