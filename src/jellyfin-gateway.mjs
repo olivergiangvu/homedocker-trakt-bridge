@@ -444,9 +444,13 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
         requested.searchParams, json, options.firstPageMode
       );
       if (hasPaging && !firstPage) metrics.nextUpPagedPassThrough++;
-      if (!requested.searchParams.has('SeriesId')
-          && !requested.searchParams.has('ParentId')
-          && (!hasPaging || firstPage)) {
+      // Never project arbitrary upstream selectors (especially UserId) even
+      // without a paging key. The /Users/Me probe proves the token's owner,
+      // not that an explicit query did not select somebody else's library.
+      const simpleUnpaged = !hasPaging
+        && [...requested.searchParams.keys()].every(key => key === 'Limit')
+        && requested.searchParams.getAll('Limit').length <= 1;
+      if (simpleUnpaged || firstPage) {
         try {
           const graph = loadVerifiedIdentityGraph(db, options.profileId);
           filtered = await normalizeForUser(json, req, graph, options, fetchImpl, seriesCache, metadataInFlight, limiter, now);
