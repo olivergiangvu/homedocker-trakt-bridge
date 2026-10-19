@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 export const APP_NAME = 'HomeDocker Trakt Bridge';
-export const APP_VERSION = '1.4.0-rc.1';
+export const APP_VERSION = '1.4.0-rc.2';
 
 function requireEnv(name) {
   const value = process.env[name]?.trim();
@@ -83,6 +83,9 @@ export function loadConfig() {
     jellyfinGatewayPort: intEnv('JELLYFIN_GATEWAY_PORT', 7101, 1024, 65535),
     // Conservative default; canary-only opt-in after upstream latency measurements.
     jellyfinGatewayNextUpTimeoutMs: intEnv('JELLYFIN_GATEWAY_NEXTUP_TIMEOUT_MS', 8000, 8000, 20000),
+    // StartIndex=0 may be projected only for a demonstrably short complete page.
+    // Never rewrite full or later pages; AIO pagination remains authoritative.
+    jellyfinGatewayFirstPageMode: enumEnv('JELLYFIN_GATEWAY_FIRST_PAGE_MODE', 'short_first_page_only', ['off', 'short_first_page_only']),
     jellyfinGatewayUpstreamUrl: (process.env.JELLYFIN_GATEWAY_UPSTREAM_URL || '').trim(),
     jellyfinGatewayUserId: (process.env.JELLYFIN_GATEWAY_AIO_USER_ID || '').trim(),
     jellyfinGatewayProfileId: (process.env.JELLYFIN_GATEWAY_PROFILE_ID || '').trim(),
