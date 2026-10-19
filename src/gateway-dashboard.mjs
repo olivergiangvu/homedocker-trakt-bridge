@@ -26,6 +26,10 @@ export function buildGatewayDashboardStatus({ db, config, profileId, gateway = n
     ? gateway.gatewayMetricsSnapshot() : null;
   const safeCount = (name) => Number.isSafeInteger(telemetry?.[name])
     && telemetry[name] >= 0 ? telemetry[name] : 0;
+  const averageMs = (countKey, totalKey) => {
+    const count = safeCount(countKey), total = safeCount(totalKey);
+    return count ? Math.round(total / count) : null;
+  };
   const metrics = telemetry ? {
     scope: 'listener_wide_since_restart',
     nextUpRequests: safeCount('nextUpRequests'),
@@ -38,6 +42,10 @@ export function buildGatewayDashboardStatus({ db, config, profileId, gateway = n
     upstreamTransportFailures: safeCount('upstreamTransportFailures'),
     upstreamNon200Responses: safeCount('upstreamNon200Responses'),
     responseFailures: safeCount('responseFailures'),
+    nextUpAverageMs: averageMs('nextUpCompletedResponses', 'nextUpResponseTotalMs'),
+    aioUpstreamAverageMs: averageMs('nextUpUpstreamSamples', 'nextUpUpstreamTotalMs'),
+    metadataActive: safeCount('metadataActive'),
+    metadataQueued: safeCount('metadataQueued'),
   } : null;
   const state = !configured ? 'disabled'
     : !mapped ? 'not_mapped_to_this_profile'
