@@ -10,6 +10,8 @@
 - R4-A, mapped AIO Jellyfin session: GET /Shows/NextUp?StartIndex=0&Limit=20 returned 20/20; local internal Gateway OFF response had byte and JSON parity with the upstream.
 - R4-B, same user: GET /Shows/NextUp?StartIndex=0&Limit=50 returned 50/50, TotalRecordCount=50. Both full pages are deliberately ineligible for RC2 filtering.
 - These are source observations; they do not prove duplicates exist on those pages or prove a true global total. There is **zero live positive NextUp alias-suppression proof** and no qualified Odin ingress.
+- R4-C live shadow audit, mapped-user token and Filter OFF: STOP:STARTINDEX_NOT_HONORED. Source inspected: the RC3-P1 script required `page.get("StartIndex") == offset`; a **missing StartIndex field** also triggers that result. **Do not claim the upstream ignores offset yet.** The follow-up diagnostic separates absent echo, wrong echo, repeated page content, overlap and snapshot drift without exposing raw episode IDs.
+
 
 ## Critical distinction
 
@@ -46,6 +48,8 @@ All tests use synthetic pages and synthetic tokens/IDs. They do not access Trakt
 **RC3-P0 (this PR):** Independent read-only research module, tests and design; no runtime import, no image promotion, no new endpoints or env vars. Existing Docker Compose, nginx, Trakt writer, media_cache, AIO watch_state and clients are untouched.
 
 **RC3-P1 (tool included; live execution requires separate operator step):** scripts/audit-v140-rc3-nextup-shadow-homedocker.py is an optional host-side authenticated, bounded **GET-only** read of the current mapped AIO user. It checks the Bridge Gateway Filter is OFF before and after reading; enforces Users/Me equality; reads an already-provisioned root-only session token from /run; requests up to 4 pages at Limit=20 with <=8 NextUp calls (and one Users/Me); emits only numeric counts and generic reasons. It does not try a global IMDb projection, change the Filter, write data or enter client routing. If the temporary user token has been removed, STOP without rebuilding it automatically. Executing the script is NOT part of GitHub CI and is not authorized by merging the PR. Revoke the temporary admin API key and unused test sessions afterwards.
+
+**RC3-P1 diagnostic:** `scripts/diagnose-v140-rc3-nextup-offset-homedocker.py` performs exactly three 20-item NextUp GETs (offsets 0, 20, 0 replay) plus one authenticated Users/Me GET. It requires the same mode-600 root-only user token, Bridge listener ACTIVE and Filter OFF both before and after. It prints only presence/match of StartIndex, item counts, overlap count and page-replay stability. Non-overlap or an exact offset echo is **observational**, not transactionally stable pagination. A missing echo remains an unqualified contract until separately reviewed. The original RC3-P1 live audit has been patched to classify absent StartIndex as STARTINDEX_FIELD_ABSENT, distinct from genuine STARTINDEX_NOT_HONORED. No production change.
 
 **RC3-P2 (new design review, NOT implemented):** True client-facing pagination consistency would require a coherent snapshot/cursor, scope to user+query, stable page slicing/continuation, explicit expiry/invalidation, upper bounds and failure-recovery semantics. Without that, independently rewritten StartIndex=0&Limit=20 and StartIndex=20&Limit=20 could omit or duplicate items as earlier rows are suppressed. Source-side pagination itself may ignore offsets. Never count one short-page success as authorization to move Odin.
 
