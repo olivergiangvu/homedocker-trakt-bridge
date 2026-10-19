@@ -175,6 +175,26 @@ RC3-K source-only GET/SQLite audit: scripts/audit-v140-rc3-history-catalog-coord
 - Internal `episodeBindings` are never printed by the HomeDocker diagnostic and are **not** a public Jellyfin response. The current repository does not yet have an independently verified user-wide watched series index or playable stream contract. Accordingly, it still reports `nextUpShelfQualified=false`, `globalNextUpQualified=false`, `mediaPlaybackProven=false`.
 - **Next action after code CI:** no need to rerun expensive RC3-K. Instead design an isolated, authenticated one-user read-only ingestion path that reuses validated source semantics, bounds and independently revalidates freshness, with a full series discovery plan; do not turn on the filter based on synthetic tests.
 
+## RC3-M — full source series-key discovery (offline + read-only host audit)
+
+Upstream AIOStreams pinned SHA 6ca32ed21e3036d87c35c49b24f2cf507d065ed1:
+- Jellyfin /Shows/NextUp caps Limit to 50, ignores StartIndex and sends TotalRecordCount=visible items. In the general no-SeriesId branch, it uses provider.recentSeries(scope, Limit*4), then stops checking after at most 200 source candidates (NEXT_UP_SHOWS=200), and filters via watch drop times / match_key, caughtUp, metadata and playable next-up item logic.
+- Core packages/core/src/db/repositories/watch-state.ts has a **paged source recentSeries generator**: GROUP BY series_key, MAX(sort_at) descending with lexical key tie-break, WHERE uuid+persona, series_key not null, episode not null, and (played=1 OR position_ms>0). The generator subsequently uses per-series anchor rows, match_key-based consolidation and dropped_at filtering before exposing candidate rows.
+- **Hence distinct raw source candidate keys != NextUp cards**. The full-source ranked query is an inventory/discovery source only and does NOT reproduce the final generator's match-key/drop or metadata/caught-up logic. Ranking beyond position 200 proves records are present in the exact watch-sink, not that an item beyond NextUp 50 is playable or can be ordered identically.
+
+Pure shadow-only src/nextup-scoped-series-discovery.mjs:
+- Requires complete user/profile/sink/source-query evidence and bounded 10,000 raw keys. Separately models **all series_key values with episode-coordinate history** and **watched/resume recentSeries candidate keys**; candidate keys must be a unique ordered subset of historical keys. Zero-progress rows are retained in the former but not promoted into the latter.
+- Accepts only independently verified graph alias spelling groups to build *non-playable grouping hints*; unrelated/opaque/unverified keys stay distinct. No titles/IMDb fuzzy joins, fabricated Jellyfin IDs, synthetic NextUp TotalRecordCount, route changes or user history mutation.
+- Returns the internal source series inventory and ranked candidate counts, with globalNextUpQualified=false, nextUpShelfQualified=false and playableCatalogQualified=false under every result.
+
+Bounded read-only host script scripts/audit-v140-rc3-full-series-inventory-homedocker.py:
+- Verifies same mapped Jellyfin user using one local authenticated GET /Users/Me and Gateway Filter OFF before/after. Requires a single Bridge connected profile, an active exact AIO watch-sink and fresh verified identity graph. Reads BOTH AIO SQLite and Bridge SQLite using fixed paths mode=ro + PRAGMA query_only=ON, in read transactions. Captures two full snapshots; FAILS CLOSED on drift, unexpected schema, missing scope, invalid ranks or >10,000 source keys.
+- Prints *only aggregates*: count all distinct historical series keys, ranked watched/resume candidates, history-only source keys, candidate rank bands 1-50/51-200/beyond 200, graph-verified alias grouping reduction hints, and source keys with IMDb-like vs opaque syntax. No source keys, ID strings, episode coordinates, timestamps, progress, bearer, titles or raw JSON are emitted.
+- **Does not call** AIO NextUp, any catalog/episode endpoint, Trakt or a playback API; no writes, no restart, no client responses modified. Source candidate rank beyond 200 is not a global NextUp paging guarantee.
+- This source is specific to AIO SQLite. Jellyfin native and Remux require independently validated history enumeration/identity contracts rather than assuming their Jellyfin-like APIs produce the same key set.
+
+Operational gate: after Push and PR CI are BOTH green on one immutable commit, run the pinned root-owned host-only RC3-M audit once. Evaluate exact counts and source drift before designing a **separate** authenticated catalog resolver for missing series and complete user-facing pagination. Do not enable Filter or route Odin based solely on an inventory.
+
 ## What would make it a safe *usable* feature
 
 **Gate A (implemented, CI):** Pure source-agnostic adapter and synthetic tests for 20/20, 50/50, AIO offset-ignored, native-offset, wrong users, partial metadata, two active resumes, replay drift and no injected watch writes. It is deliberately not linked into the Gateway.
