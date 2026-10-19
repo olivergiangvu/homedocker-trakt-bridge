@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { once } from 'node:events';
 import {
-  createJellyfinGateway, validateGatewayConfig,
+  createJellyfinGateway, validateGatewayConfig, eligibleCompleteFirstPage,
 } from '../src/jellyfin-gateway.mjs';
 import { observeVerifiedShowIdentity } from '../src/identity-continuity.mjs';
+import { gatewayFilterKey } from '../src/gateway-control.mjs';
 
 const PROFILE = 'a'.repeat(24);
 const USER = '11111111abcdef00';
@@ -26,6 +27,7 @@ const fakeDb = () => {
   const map = new Map();
   return {
     cacheGet: (key) => structuredClone(map.get(key) ?? null),
+    cachePeek: (key) => structuredClone(map.get(key) ?? null),
     cacheSet: (key, value) => map.set(key, structuredClone(value)),
   };
 };
@@ -132,13 +134,36 @@ async function fixture(t, {
     jellyfinGatewayUserId: expectedUser,
     jellyfinGatewayResumePassThrough: resumeEnabled,
   };
+  // The normal synthetic test fixture explicitly opts into identity filtering;
+  // actual production/default install always starts with filtering OFF.
+  if (enabled) db.cacheSet(gatewayFilterKey(PROFILE, config), { enabled: true });
   const server = createJellyfinGateway({ config, db });
   t.after(() => server.close());
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const base = 'http://127.0.0.1:' + server.address().port;
-  return { base, hits, db, gateway: server };
+  return { base, hits, db, gateway: server, config };
 }
+
+test('UI ON/OFF preference takes effect immediately on same Gateway listener', async t => {
+  const { base, hits, db, gateway, config } = await fixture(t);
+  const url = base + '/Shows/NextUp?Limit=20';
+  const call = async () => {
+    const result = await fetch(url, { headers: { 'X-Emby-Token': AIO_TOKEN } });
+    assert.equal(result.status, 200);
+    return result.json();
+  };
+  assert.equal((await call()).Items.length, 1);
+  db.cacheSet(gatewayFilterKey(PROFILE, config), { enabled: false });
+  const before = hits.length;
+  const off = await call();
+  assert.deepEqual(off, reply);
+  assert.deepEqual(hits.slice(before).map(hit => hit.path), ['/Shows/NextUp?Limit=20']);
+  db.cacheSet(gatewayFilterKey(PROFILE, config), { enabled: true });
+  assert.equal((await call()).Items.length, 1);
+  assert.equal(gateway.gatewayMetricsSnapshot().nextUpRequests, 3);
+  assert.equal(gateway.listening, true);
+});
 
 test('unconfigured gateway is disabled and rejects unexpected upstream URL', () => {
   assert.equal(validateGatewayConfig({ jellyfinGatewayEnabled: false }), null);
@@ -307,6 +332,85 @@ test('series-specific and paging requests are upstream passthrough', async t => 
   assert.equal(hits.filter(x => x.path === '/Users/Me').length, 0);
 });
 
+
+
+test('unpaged UserId, parent and unknown filters never normalize another user selection', async t => {
+  const { base, hits } = await fixture(t);
+  for (const query of ['UserId=some-other-user', 'ParentId=some-folder',
+    'SeriesId=seriesOld', 'SortBy=Random', 'Limit=20&Limit=40',
+    'IncludeItemTypes=Episode']) {
+    const r = await fetch(base + '/Shows/NextUp?' + query, {
+      headers: { 'X-Emby-Token': AIO_TOKEN },
+    });
+    assert.equal(r.status, 200);
+    assert.deepEqual(await r.json(), reply);
+  }
+  assert.equal(hits.filter(x => x.path === '/Users/Me').length, 0);
+  assert.equal(hits.filter(x => x.path.startsWith('/Items/series')).length, 0);
+});
+
+test('Odin first short StartIndex=0 page can normalize only with exact count evidence', async t => {
+  const { base, hits, gateway } = await fixture(t);
+  const r = await fetch(base + '/Shows/NextUp?StartIndex=0&Limit=20', {
+    headers: { 'X-Emby-Token': AIO_TOKEN },
+  });
+  assert.equal(r.status, 200);
+  const data = await r.json();
+  assert.deepEqual(data.Items, [mockRows[1]]);
+  assert.equal(data.TotalRecordCount, 1);
+  assert.equal(data.StartIndex, 0);
+  assert.equal(gateway.gatewayMetricsSnapshot().nextUpNormalizedResponses, 1);
+  assert.equal(gateway.gatewayMetricsSnapshot().nextUpPagedPassThrough, 0);
+  assert.equal(hits.filter(x => x.path === '/Users/Me').length, 1);
+});
+
+test('full first page, wrong count and unknown StartIndex=0 query are raw AIO', async t => {
+  const scenarios = [
+    { label: 'full', payload: { ...reply, Items: Array.from(
+      { length: 20 }, (_, i) => ({ ...mockRows[i % 2], Id: 'episode' + i })),
+      TotalRecordCount: 20,
+    }, query: '?StartIndex=0&Limit=20' },
+    { label: 'prefix count', payload: { ...reply, TotalRecordCount: 20 },
+      query: '?StartIndex=0&Limit=20' },
+    { label: 'misleading Count', payload: { ...reply, Count: 20 },
+      query: '?StartIndex=0&Limit=20' },
+    { label: 'unqualified filter', payload: reply,
+      query: '?StartIndex=0&Limit=20&SortBy=DatePlayed' },
+  ];
+  for (const scenario of scenarios) {
+    await t.test(scenario.label, async sub => {
+      const { base, hits, gateway } = await fixture(sub, { nextUp: scenario.payload });
+      const r = await fetch(base + '/Shows/NextUp' + scenario.query, {
+        headers: { 'X-Emby-Token': AIO_TOKEN },
+      });
+      assert.equal(r.status, 200);
+      assert.deepEqual(await r.json(), scenario.payload);
+      assert.equal(hits.filter(x => x.path === '/Users/Me').length, 0);
+      assert.equal(gateway.gatewayMetricsSnapshot().nextUpPagedPassThrough, 1);
+      assert.equal(gateway.gatewayMetricsSnapshot().nextUpNormalizedResponses, 0);
+    });
+  }
+});
+
+test('first page candidate requires strictly numeric bounded Limit and exact short counts', () => {
+  const params = search => new URL('http://example.test/?' + search).searchParams;
+  assert.equal(eligibleCompleteFirstPage(params('StartIndex=0&Limit=20'), reply), true);
+  for (const query of [
+    'StartIndex=1&Limit=20', 'StartIndex=0&Limit=0',
+    'StartIndex=0&Limit=100', 'StartIndex=0&Limit=20&Limit=30',
+    'StartIndex=0&Limit=20&SeriesId=123',
+    'StartIndex=0&Limit=20&ParentId=parent',
+    'StartIndex=0&Limit=20&SearchTerm=foo',
+    'StartIndex=0&Limit=01',
+  ]) {
+    assert.equal(eligibleCompleteFirstPage(params(query), reply), false, query);
+  }
+  assert.equal(eligibleCompleteFirstPage(params('StartIndex=0&Limit=20'), reply, 'off'), false);
+  assert.equal(eligibleCompleteFirstPage(params('StartIndex=0&Limit=2'), reply), false);
+  assert.equal(eligibleCompleteFirstPage(params('StartIndex=0&Limit=20'),
+    { ...reply, StartIndex: 2 }), false);
+});
+
 test('Resume routes remain 404 unless explicitly opted in', async t => {
   const { base, hits } = await fixture(t);
   for (const route of [
@@ -401,6 +505,7 @@ test('Gateway metrics are in-memory, aggregate-only, and not public HTTP routes'
     nextUpNormalizedResponses: 0,
     nextUpUnchangedResponses: 0,
     nextUpRemovedItems: 0,
+    nextUpPagedPassThrough: 0,
     failOpenNormalizationErrors: 0,
     upstreamTransportFailures: 0,
     upstreamNon200Responses: 0,

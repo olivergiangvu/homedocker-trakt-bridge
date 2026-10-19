@@ -64,6 +64,12 @@ function readonlyProofDb() {
   let reads=0,writes=0;
   const readonly={
     cacheGet(key) {reads++;return structuredClone(entries.get(key)??null);},
+    // Existing persisted preference was provisioned before this read-only test.
+    cachePeek(key) {
+      reads++;
+      if (key.startsWith('gateway-filter:v1:' + PROFILE + ':')) return { enabled: true };
+      return structuredClone(entries.get(key)??null);
+    },
     cacheSet() {writes++;throw new Error('SECOND_HISTORY_WRITER_FORBIDDEN');},
     transaction() {writes++;throw new Error('TRANSACTION_FORBIDDEN');},
     prepare() {writes++;throw new Error('SQL_FORBIDDEN');},

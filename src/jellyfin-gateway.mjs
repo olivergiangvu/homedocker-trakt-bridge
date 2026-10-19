@@ -14,6 +14,7 @@ import http from 'node:http';
 import { Buffer } from 'node:buffer';
 import { loadVerifiedIdentityGraph } from './identity-continuity.mjs';
 import { filterNextUpForVerifiedAliases } from './jellyfin-nextup-filter.mjs';
+import { gatewayFilteringEnabled } from './gateway-control.mjs';
 
 const MAX_NEXTUP_BYTES = 2 * 1024 * 1024;
 const MAX_METADATA_SERIES = 50;
@@ -110,6 +111,7 @@ export function validateGatewayConfig(config) {
     userId: config.jellyfinGatewayUserId,
     profileId: config.jellyfinGatewayProfileId,
     resumePassThrough: config.jellyfinGatewayResumePassThrough === true,
+    firstPageMode: config.jellyfinGatewayFirstPageMode ?? 'short_first_page_only',
     nextUpTimeoutMs: validatedNextUpTimeoutMs(
       config.jellyfinGatewayNextUpTimeoutMs === undefined
         ? NETWORK_TIMEOUT_MS : config.jellyfinGatewayNextUpTimeoutMs
@@ -292,6 +294,31 @@ async function normalizeForUser(body, req, graph, options, fetchImpl, seriesCach
   });
 }
 
+/**
+ * Odin commonly sends StartIndex=0. Only allow in-memory normalization when
+ * a bounded, demonstrably short first page was delivered, with exact counts.
+ * A full page can have hidden later results even if AIO reports prefix totals:
+ * NEVER mutate those pages or StartIndex>0. The policy fails open to AIO.
+ */
+export function eligibleCompleteFirstPage(searchParams, body, mode = 'short_first_page_only') {
+  if (mode !== 'short_first_page_only'
+      || searchParams.getAll('StartIndex').length !== 1
+      || searchParams.get('StartIndex') !== '0'
+      || searchParams.getAll('Limit').length !== 1) return false;
+  const limitValue = searchParams.get('Limit');
+  if (!/^[1-9][0-9]?$/.test(limitValue ?? '')) return false;
+  const limit = Number(limitValue);
+  if (limit > MAX_METADATA_SERIES || limit < 2) return false;
+  const allowed = new Set(['StartIndex', 'Limit']);
+  if ([...searchParams.keys()].some(key => !allowed.has(key))) return false;
+  const items = body?.Items;
+  if (!Array.isArray(items) || items.length < 2 || items.length >= limit) return false;
+  if (body?.StartIndex !== undefined && body.StartIndex !== 0) return false;
+  if (body?.TotalRecordCount !== items.length) return false;
+  if (Object.hasOwn(body, 'Count') && body.Count !== items.length) return false;
+  return true;
+}
+
 function sendJson(res, status, payload) {
   const bytes = Buffer.from(JSON.stringify(payload));
   res.statusCode = status;
@@ -318,6 +345,7 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
     nextUpNormalizedResponses: 0,
     nextUpUnchangedResponses: 0,
     nextUpRemovedItems: 0,
+    nextUpPagedPassThrough: 0,
     failOpenNormalizationErrors: 0,
     upstreamTransportFailures: 0,
     upstreamNon200Responses: 0,
@@ -402,6 +430,13 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
         responseHeaders(res, upstream, false);
         return res.end(bytes);
       }
+      // OFF is a genuine fast bypass: upstream JSON bytes are passed through
+      // without parsing, metadata lookups, graph reads or response projection.
+      if (!gatewayFilteringEnabled({ db, config, profileId: options.profileId })) {
+        metrics.nextUpUnchangedResponses++;
+        responseHeaders(res, upstream, false);
+        return res.end(bytes);
+      }
       let json;
       try { json = JSON.parse(bytes.toString('utf8')); }
       catch {
@@ -412,9 +447,18 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
       let filtered = json;
       // Series-specific NextUp must remain upstream-defined. Unknown paging or
       // alternative filters also remain untouched until separately qualified.
-      if (!requested.searchParams.has('SeriesId')
-          && !requested.searchParams.has('ParentId')
-          && !requested.searchParams.has('StartIndex')) {
+      const hasPaging = requested.searchParams.has('StartIndex');
+      const firstPage = eligibleCompleteFirstPage(
+        requested.searchParams, json, options.firstPageMode
+      );
+      if (hasPaging && !firstPage) metrics.nextUpPagedPassThrough++;
+      // Never project arbitrary upstream selectors (especially UserId) even
+      // without a paging key. The /Users/Me probe proves the token's owner,
+      // not that an explicit query did not select somebody else's library.
+      const simpleUnpaged = !hasPaging
+        && [...requested.searchParams.keys()].every(key => key === 'Limit')
+        && requested.searchParams.getAll('Limit').length <= 1;
+      if (simpleUnpaged || firstPage) {
         try {
           const graph = loadVerifiedIdentityGraph(db, options.profileId);
           filtered = await normalizeForUser(json, req, graph, options, fetchImpl, seriesCache, metadataInFlight, limiter, now);

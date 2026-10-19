@@ -6,6 +6,7 @@
  * or infer that a listening socket proves real-client routing.
  */
 import { loadVerifiedIdentityGraph } from './identity-continuity.mjs';
+import { gatewayFilteringEnabled, gatewayFilterControlAvailable } from './gateway-control.mjs';
 
 export function buildGatewayDashboardStatus({ db, config, profileId, gateway = null }) {
   const mapped = typeof profileId === 'string' && profileId.length > 0
@@ -26,6 +27,10 @@ export function buildGatewayDashboardStatus({ db, config, profileId, gateway = n
     ? gateway.gatewayMetricsSnapshot() : null;
   const safeCount = (name) => Number.isSafeInteger(telemetry?.[name])
     && telemetry[name] >= 0 ? telemetry[name] : 0;
+  const averageMs = (countKey, totalKey) => {
+    const count = safeCount(countKey), total = safeCount(totalKey);
+    return count ? Math.round(total / count) : null;
+  };
   const metrics = telemetry ? {
     scope: 'listener_wide_since_restart',
     nextUpRequests: safeCount('nextUpRequests'),
@@ -33,10 +38,15 @@ export function buildGatewayDashboardStatus({ db, config, profileId, gateway = n
     nextUpNormalizedResponses: safeCount('nextUpNormalizedResponses'),
     nextUpUnchangedResponses: safeCount('nextUpUnchangedResponses'),
     nextUpRemovedItems: safeCount('nextUpRemovedItems'),
+    nextUpPagedPassThrough: safeCount('nextUpPagedPassThrough'),
     failOpenNormalizationErrors: safeCount('failOpenNormalizationErrors'),
     upstreamTransportFailures: safeCount('upstreamTransportFailures'),
     upstreamNon200Responses: safeCount('upstreamNon200Responses'),
     responseFailures: safeCount('responseFailures'),
+    nextUpAverageMs: averageMs('nextUpCompletedResponses', 'nextUpResponseTotalMs'),
+    aioUpstreamAverageMs: averageMs('nextUpUpstreamSamples', 'nextUpUpstreamTotalMs'),
+    metadataActive: safeCount('metadataActive'),
+    metadataQueued: safeCount('metadataQueued'),
   } : null;
   const state = !configured ? 'disabled'
     : !mapped ? 'not_mapped_to_this_profile'
@@ -50,9 +60,14 @@ export function buildGatewayDashboardStatus({ db, config, profileId, gateway = n
     state,
     enabled: configured,
     listening: Boolean(listening),
+    filteringEnabled: mapped && gatewayFilteringEnabled({ db, config, profileId }),
+    filterControlAvailable: gatewayFilterControlAvailable({ config, gateway, profileId }),
+    filterControlMode: 'persistent_database_preference',
+    sourceKind: config.jellyfinGatewaySourceKind || 'aiostreams',
     // These are configuration indicators, NOT upstream connectivity checks.
     upstreamConfigured: Boolean(config.jellyfinGatewayUpstreamUrl),
     userMappingConfigured: Boolean(mappingReady),
+    nextUpMode: config.jellyfinGatewayFirstPageMode ?? 'short_first_page_only',
     resumeMode: configured && config.jellyfinGatewayResumePassThrough === true
       ? 'raw_passthrough' : 'off',
     identity: {
