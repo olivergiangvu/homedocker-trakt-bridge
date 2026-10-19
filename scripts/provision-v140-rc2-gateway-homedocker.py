@@ -134,7 +134,7 @@ def graph_identity(db_path, user):
             raise Stop("VERIFIED_IDENTITY_GRAPH_MALFORMED") from exc
         if graph.get("revision") != 1 or len(shows) != 17 or aliases != 1:
             raise Stop("VERIFIED_IDENTITY_GRAPH_COUNTS_CHANGED")
-        scope = "\x1f".join((profile, "aiostreams", UPSTREAM, user))
+        scope = r"\x1f".join((profile, "aiostreams", UPSTREAM, user))
         hash_part = hashlib.sha256(scope.encode()).hexdigest()[:24]
         key = "gateway-filter:v1:" + profile + ":" + hash_part
         preference = db.execute(
