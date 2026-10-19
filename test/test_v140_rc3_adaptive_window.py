@@ -1,5 +1,6 @@
 """Offline tests for the optional authenticated AIO shadow candidate runner."""
 import importlib.util
+import copy
 from pathlib import Path
 import unittest
 
@@ -21,7 +22,7 @@ def pages(count=50, both_active=False):
     rows[1] = item(1, "canonical", 20000)
     if both_active:
         rows[0]["UserData"]["PlaybackPositionTicks"] = 5000
-    first = {"Items": rows[:20], "StartIndex": 0, "TotalRecordCount": 20}
+    first = {"Items": copy.deepcopy(rows[:20]), "StartIndex": 0, "TotalRecordCount": 20}
     window = {"Items": rows, "StartIndex": 0, "TotalRecordCount": count}
     mapping = {"alias": "tt44094505", "canonical": "tt44051354"}
     graph = {"tt44094505": {"263102"}, "tt44051354": {"263102"}}
