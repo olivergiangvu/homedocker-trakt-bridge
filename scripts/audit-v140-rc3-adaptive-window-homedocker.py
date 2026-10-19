@@ -137,6 +137,71 @@ def choose(a, b):
     return None
 
 
+
+def diagnose_candidate_gates(expanded, metadata, canon):
+    """Privacy-safe aggregate explanation for zero removals.
+
+    This is a diagnostic only. The existing analyze() stays the authority
+    for candidate decisions. No SeriesId, IMDb, Trakt ID, title or state is
+    returned. All counters are scoped only to the current verified user/window.
+    """
+    groups = {}
+    counts = {
+        "metadata_imdb_present": 0,
+        "metadata_imdb_missing": 0,
+        "verified_graph_matched_cards": 0,
+        "verified_graph_unmatched_cards": 0,
+        "ambiguous_graph_cards": 0,
+        "single_card_groups": 0,
+        "same_spelling_pairs": 0,
+        "groups_over_two_cards": 0,
+        "two_distinct_spelling_pairs": 0,
+        "both_active_resume_pairs": 0,
+        "uncertain_winner_pairs": 0,
+        "eligible_winner_pairs": 0,
+    }
+    for row in expanded:
+        imdb = metadata.get(row["SeriesId"])
+        if not isinstance(imdb, str) or not IMDB.fullmatch(imdb):
+            counts["metadata_imdb_missing"] += 1
+            continue
+        counts["metadata_imdb_present"] += 1
+        owners = canon.get(imdb, set())
+        if not owners:
+            counts["verified_graph_unmatched_cards"] += 1
+            continue
+        if len(owners) != 1:
+            counts["ambiguous_graph_cards"] += 1
+            continue
+        counts["verified_graph_matched_cards"] += 1
+        owner = next(iter(owners))
+        groups.setdefault(owner, []).append((row, imdb))
+    for entries in groups.values():
+        if len(entries) == 1:
+            counts["single_card_groups"] += 1
+            continue
+        if len(entries) > 2:
+            counts["groups_over_two_cards"] += 1
+            continue
+        (a, aid), (b, bid) = entries
+        if aid == bid or a["SeriesId"] == b["SeriesId"]:
+            counts["same_spelling_pairs"] += 1
+            continue
+        counts["two_distinct_spelling_pairs"] += 1
+        if choose(a, b) is not None:
+            counts["eligible_winner_pairs"] += 1
+            continue
+        def active(item):
+            data = item.get("UserData")
+            ticks = data.get("PlaybackPositionTicks") if isinstance(data, dict) else None
+            return type(ticks) in (int, float) and ticks > 0
+        if active(a) and active(b):
+            counts["both_active_resume_pairs"] += 1
+        else:
+            counts["uncertain_winner_pairs"] += 1
+    return counts
+
+
 def analyze(original, window, metadata, canon):
     first = items(original, CLIENT_LIMIT)
     expanded = items(window, WINDOW_LIMIT)
@@ -220,6 +285,9 @@ def main():
             raise core.StopAudit("METADATA_UNAVAILABLE") from None
 
     outcome = analyze(source_page, window_a, details, canon)
+    counters = diagnose_candidate_gates(expanded, details, canon)
+    if counters["eligible_winner_pairs"] != outcome["candidate_removed"]:
+        raise core.StopAudit("DIAGNOSTIC_INCONSISTENCY")
     core.bridge_gate()
     print("ADAPTIVE_USER=MAPPED")
     print("ADAPTIVE_GATEWAY_FILTER=OFF")
@@ -227,6 +295,8 @@ def main():
     print("ADAPTIVE_SOURCE_WINDOW_ITEMS=" + str(outcome["window_items"]))
     print("ADAPTIVE_METADATA_LOOKUPS=" + str(len(uniq_series)))
     print("ADAPTIVE_VERIFIED_REMOVAL_CANDIDATES=" + str(outcome["candidate_removed"]))
+    for name, value in counters.items():
+        print("ADAPTIVE_GATE_" + name.upper() + "=" + str(value))
     print("ADAPTIVE_CLIENT_FIRST_PAGE_WOULD_CHANGE=" +
           str(outcome["first_page_visible_change"]).lower())
     print("ADAPTIVE_REFILL_20_POSSIBLE=" +
