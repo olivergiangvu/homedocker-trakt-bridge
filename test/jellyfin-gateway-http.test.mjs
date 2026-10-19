@@ -6,6 +6,7 @@ import {
   createJellyfinGateway, validateGatewayConfig, eligibleCompleteFirstPage,
 } from '../src/jellyfin-gateway.mjs';
 import { observeVerifiedShowIdentity } from '../src/identity-continuity.mjs';
+import { gatewayFilterKey } from '../src/gateway-control.mjs';
 
 const PROFILE = 'a'.repeat(24);
 const USER = '11111111abcdef00';
@@ -135,17 +136,17 @@ async function fixture(t, {
   };
   // The normal synthetic test fixture explicitly opts into identity filtering;
   // actual production/default install always starts with filtering OFF.
-  if (enabled) db.cacheSet('gateway-filter:v1:' + PROFILE, { enabled: true });
+  if (enabled) db.cacheSet(gatewayFilterKey(PROFILE, config), { enabled: true });
   const server = createJellyfinGateway({ config, db });
   t.after(() => server.close());
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const base = 'http://127.0.0.1:' + server.address().port;
-  return { base, hits, db, gateway: server };
+  return { base, hits, db, gateway: server, config };
 }
 
 test('UI ON/OFF preference takes effect immediately on same Gateway listener', async t => {
-  const { base, hits, db, gateway } = await fixture(t);
+  const { base, hits, db, gateway, config } = await fixture(t);
   const url = base + '/Shows/NextUp?Limit=20';
   const call = async () => {
     const result = await fetch(url, { headers: { 'X-Emby-Token': AIO_TOKEN } });
@@ -153,12 +154,12 @@ test('UI ON/OFF preference takes effect immediately on same Gateway listener', a
     return result.json();
   };
   assert.equal((await call()).Items.length, 1);
-  db.cacheSet('gateway-filter:v1:' + PROFILE, { enabled: false });
+  db.cacheSet(gatewayFilterKey(PROFILE, config), { enabled: false });
   const before = hits.length;
   const off = await call();
   assert.deepEqual(off, reply);
   assert.deepEqual(hits.slice(before).map(hit => hit.path), ['/Shows/NextUp?Limit=20']);
-  db.cacheSet('gateway-filter:v1:' + PROFILE, { enabled: true });
+  db.cacheSet(gatewayFilterKey(PROFILE, config), { enabled: true });
   assert.equal((await call()).Items.length, 1);
   assert.equal(gateway.gatewayMetricsSnapshot().nextUpRequests, 3);
   assert.equal(gateway.listening, true);
