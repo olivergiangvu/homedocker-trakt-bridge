@@ -232,12 +232,18 @@ def main():
 if __name__=="__main__":
     try:
         main()
-    except (core.StopAudit,OSError,ValueError,TypeError,RuntimeError) as error:
+    except Exception as error:
         print("RC3I_RESULT=STOP_CATALOG_UNQUALIFIED")
         print("RC3I_FAILURE_PHASE=" + (PHASE if PHASE in PHASES else "UNKNOWN_PHASE"))
         print("RC3I_FAILURE_REASON=" + safe_stop_code(error))
         # Cannot infer status of external operator changes after a stop.
-        print("RC3I_FILTER_ON_STOP=UNVERIFIED")
+        # Re-evaluate the no-filter invariant with a separate READ-ONLY
+        # status check; NEVER report OFF if that check is unavailable.
+        try:
+            core.bridge_gate()
+            print("RC3I_FILTER_ON_STOP=OFF")
+        except Exception:
+            print("RC3I_FILTER_ON_STOP=UNVERIFIED")
         print("RC3I_SECRETS_PRINTED=NO")
         print("RC3I_PRODUCTION_CHANGES=0")
         raise SystemExit(2)
