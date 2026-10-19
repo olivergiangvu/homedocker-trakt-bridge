@@ -14,6 +14,7 @@ import http from 'node:http';
 import { Buffer } from 'node:buffer';
 import { loadVerifiedIdentityGraph } from './identity-continuity.mjs';
 import { filterNextUpForVerifiedAliases } from './jellyfin-nextup-filter.mjs';
+import { gatewayFilteringEnabled } from './gateway-control.mjs';
 
 const MAX_NEXTUP_BYTES = 2 * 1024 * 1024;
 const MAX_METADATA_SERIES = 50;
@@ -439,6 +440,13 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
       let filtered = json;
       // Series-specific NextUp must remain upstream-defined. Unknown paging or
       // alternative filters also remain untouched until separately qualified.
+      // UI switch is persisted in the Bridge DB and read per request.
+      // OFF proxies upstream untouched; no restart and no client route edits.
+      if (!gatewayFilteringEnabled({ db, config, profileId: options.profileId })) {
+        metrics.nextUpUnchangedResponses++;
+        responseHeaders(res, upstream, false);
+        return res.end(bytes);
+      }
       const hasPaging = requested.searchParams.has('StartIndex');
       const firstPage = eligibleCompleteFirstPage(
         requested.searchParams, json, options.firstPageMode
