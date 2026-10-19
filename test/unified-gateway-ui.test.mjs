@@ -28,12 +28,12 @@ test('unified panel has identity, safety, telemetry and navigation in ONE dashbo
     'Verified aliases', 'Gateway listener', 'User identity mapping',
     'NextUp response policy', 'Removed duplicate cards',
     'Paged requests passed through', 'Fail-open normalizations',
-    'Gateway mean latency', 'AIO mean latency', 'Metadata active / queued',
+    'Gateway mean latency', 'Upstream mean latency', 'Metadata active / queued',
     'V140_STABLE_RELEASE_HOLD', 'Production client routing is not qualified',
   ]) assert.ok(html.includes(label), label);
   assert.match(html, /id="aio-identity-gateway"/);
   assert.ok(!html.includes('github.com'));
-  assert.match(html, /Read-only/);
+  assert.match(html, /No watch-history edits/);
   assert.match(html, />17</);
   assert.match(html, />7</);
 });
@@ -54,7 +54,7 @@ test('disabled panel says OFF, not running nor client qualified', () => {
     state: 'disabled', enabled: false, listening: false,
     telemetry: null, userMappingConfigured: false,
   }), { compact: true });
-  assert.match(html, /Installed · OFF/);
+  assert.match(html, /Not provisioned/);
   assert.match(html, /Not listening/);
   assert.match(html, /Not confirmed/);
   assert.match(html, /—/);
