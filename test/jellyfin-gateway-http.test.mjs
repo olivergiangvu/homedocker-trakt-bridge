@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { once } from 'node:events';
 import {
-  createJellyfinGateway, validateGatewayConfig,
+  createJellyfinGateway, validateGatewayConfig, eligibleCompleteFirstPage,
 } from '../src/jellyfin-gateway.mjs';
 import { observeVerifiedShowIdentity } from '../src/identity-continuity.mjs';
 
@@ -305,6 +305,69 @@ test('series-specific and paging requests are upstream passthrough', async t => 
   });
   assert.deepEqual(await b.json(), reply);
   assert.equal(hits.filter(x => x.path === '/Users/Me').length, 0);
+});
+
+
+test('Odin first short StartIndex=0 page can normalize only with exact count evidence', async t => {
+  const { base, hits, gateway } = await fixture(t);
+  const r = await fetch(base + '/Shows/NextUp?StartIndex=0&Limit=20', {
+    headers: { 'X-Emby-Token': AIO_TOKEN },
+  });
+  assert.equal(r.status, 200);
+  const data = await r.json();
+  assert.deepEqual(data.Items, [mockRows[1]]);
+  assert.equal(data.TotalRecordCount, 1);
+  assert.equal(data.StartIndex, 0);
+  assert.equal(gateway.gatewayMetricsSnapshot().nextUpNormalizedResponses, 1);
+  assert.equal(gateway.gatewayMetricsSnapshot().nextUpPagedPassThrough, 0);
+  assert.equal(hits.filter(x => x.path === '/Users/Me').length, 1);
+});
+
+test('full first page, wrong count and unknown StartIndex=0 query are raw AIO', async t => {
+  const scenarios = [
+    { label: 'full', payload: { ...reply, Items: Array.from(
+      { length: 20 }, (_, i) => ({ ...mockRows[i % 2], Id: 'episode' + i })),
+      TotalRecordCount: 20,
+    }, query: '?StartIndex=0&Limit=20' },
+    { label: 'prefix count', payload: { ...reply, TotalRecordCount: 20 },
+      query: '?StartIndex=0&Limit=20' },
+    { label: 'misleading Count', payload: { ...reply, Count: 20 },
+      query: '?StartIndex=0&Limit=20' },
+    { label: 'unqualified filter', payload: reply,
+      query: '?StartIndex=0&Limit=20&SortBy=DatePlayed' },
+  ];
+  for (const scenario of scenarios) {
+    await t.test(scenario.label, async sub => {
+      const { base, hits, gateway } = await fixture(sub, { nextUp: scenario.payload });
+      const r = await fetch(base + '/Shows/NextUp' + scenario.query, {
+        headers: { 'X-Emby-Token': AIO_TOKEN },
+      });
+      assert.equal(r.status, 200);
+      assert.deepEqual(await r.json(), scenario.payload);
+      assert.equal(hits.filter(x => x.path === '/Users/Me').length, 0);
+      assert.equal(gateway.gatewayMetricsSnapshot().nextUpPagedPassThrough, 1);
+      assert.equal(gateway.gatewayMetricsSnapshot().nextUpNormalizedResponses, 0);
+    });
+  }
+});
+
+test('first page candidate requires strictly numeric bounded Limit and exact short counts', () => {
+  const params = search => new URL('http://example.test/?' + search).searchParams;
+  assert.equal(eligibleCompleteFirstPage(params('StartIndex=0&Limit=20'), reply), true);
+  for (const query of [
+    'StartIndex=1&Limit=20', 'StartIndex=0&Limit=0',
+    'StartIndex=0&Limit=100', 'StartIndex=0&Limit=20&Limit=30',
+    'StartIndex=0&Limit=20&SeriesId=123',
+    'StartIndex=0&Limit=20&ParentId=parent',
+    'StartIndex=0&Limit=20&SearchTerm=foo',
+    'StartIndex=0&Limit=01',
+  ]) {
+    assert.equal(eligibleCompleteFirstPage(params(query), reply), false, query);
+  }
+  assert.equal(eligibleCompleteFirstPage(params('StartIndex=0&Limit=20'), reply, 'off'), false);
+  assert.equal(eligibleCompleteFirstPage(params('StartIndex=0&Limit=2'), reply), false);
+  assert.equal(eligibleCompleteFirstPage(params('StartIndex=0&Limit=20'),
+    { ...reply, StartIndex: 2 }), false);
 });
 
 test('Resume routes remain 404 unless explicitly opted in', async t => {
