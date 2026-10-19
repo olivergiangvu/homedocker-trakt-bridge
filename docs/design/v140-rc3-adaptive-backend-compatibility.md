@@ -60,6 +60,14 @@ src/nextup-adaptive-window.mjs exports:
 - `scripts/audit-v140-rc3-nextup-candidate-rank-homedocker.py` reads the mapped sink and graph with SQLite query_only=ON. It reports only aggregate canonical vs alias **candidate-rank bands** (1–50, 51–200, beyond 200, absent), any effective series drop flags, and whether both spellings have *watched* candidate rows.
 - The rank bands are **not actual UI positions**, since metadata resolution and match-key/drop handling can suppress candidates. No raw IDs or dates are printed; no tokens, HTTP calls or writes. AIO/Remux/native Jellyfin adapters will eventually supply independently verified state data to the same pure canonicalization engine.
 
+### RC3-P3 pure Canonical Progress View now implemented (offline only)
+
+- `src/nextup-canonical-progress-view.mjs` is a pure backend-agnostic logical state projector. The first AIO fixture is the proven RC3-F cohort: **11 canonical episode coordinates + 8 alias coordinates = 11 logical episodes**, with 8 overlapping coordinates. It cannot output a playable Jellyfin Item, a fabricated `TotalRecordCount`, or any write.
+- A backend-specific adapter must supply exact same-user episode rows `{imdb,season,episode,played,positionMs}` with independently verified Trakt→IMDb aliases; never derive mapping from title similarity. The module rejects unknown IMDb spellings, duplicate coordinates, conflicting `played` values, two simultaneous active resumes, or ambiguous graph ownership.
+- The original playback positions remain in the source rows. Where one spelling has a valid active resume and its counterpart is inactive, the view can preserve that position *as evidence of its actual spelling*, without migrating it to the other spelling.
+- RC3-G drop diagnostics now emit booleans `SINGLE_GROUP_CANONICAL_DIRECT_DROP_EFFECTIVE` and `SINGLE_GROUP_ALIAS_DIRECT_DROP_EFFECTIVE`. They mirror only direct `series_key` drop flags. AIO may additionally suppress using a matched `showOf(row)` key, so these flags are **not** final card-presence proof.
+- Runtime integration intentionally remains missing. Required to proceed: per-backend state adapter, verified authenticated user scope, catalog/playback ID resolver, stable presentation shelf/pagination and exact-path canary. A successful pure model must not be deployed as NextUp JSON.
+
 **Gate:** This branch remains **shadow only**. Neither RC3-E nor RC3-F constitutes permission to alter Trakt history, AIO source, Gateway production Filter or Odin's route.
 
 ## What would make it a safe *usable* feature
