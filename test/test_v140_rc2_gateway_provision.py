@@ -41,9 +41,24 @@ class GatewayProvisionTests(unittest.TestCase):
         }
         candidate = json.loads(json.dumps(base))
         candidate["services"]["trakt-bridge"]["networks"]["media_core"] = None
+        # Real Docker Compose renders base 'default: null' but an override
+        # that explicitly preserves it can render 'default: {}'.
+        candidate["services"]["trakt-bridge"]["networks"]["default"] = {}
         candidate["services"]["trakt-bridge"]["environment"].update(env)
         candidate["networks"]["media_core"] = {"name": ops.AIO_NETWORK, "external": True}
         ops.validate_composed(base, candidate, env)
+        mutated = json.loads(json.dumps(candidate))
+        mutated["services"]["trakt-bridge"]["networks"]["default"] = {"aliases":["unsafe"]}
+        with self.assertRaisesRegex(ops.Stop, "DEFAULT_NETWORK_CHANGED"):
+            ops.validate_composed(base, mutated, env)
+        mutated = json.loads(json.dumps(candidate))
+        mutated["networks"]["default"]["name"] = "other_network"
+        with self.assertRaisesRegex(ops.Stop, "PROJECT_DEFAULT_NETWORK_CHANGED"):
+            ops.validate_composed(base, mutated, env)
+        mutated = json.loads(json.dumps(candidate))
+        mutated["networks"]["media_core"]["external"] = False
+        with self.assertRaisesRegex(ops.Stop, "GATEWAY_NETWORK_MUST_BE_EXTERNAL"):
+            ops.validate_composed(base, mutated, env)
         candidate["services"]["trakt-bridge"]["ports"].append({"published":"7101"})
         with self.assertRaisesRegex(ops.Stop, "BRIDGE_COMPOSE_FIELD_CHANGED"):
             ops.validate_composed(base, candidate, env)
