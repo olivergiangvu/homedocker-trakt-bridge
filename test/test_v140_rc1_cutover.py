@@ -102,6 +102,50 @@ class ControlledCutoverTests(unittest.TestCase):
                         with self.assertRaises(ops.Stop):
                             ops.assert_gateway_off(["fixture", "compose"])
 
+    def test_cutover_failure_restores_rc6_using_private_env(self):
+        with tempfile.TemporaryDirectory() as td:
+            artifact = {"tag": "fixture:rc1",
+                        "image_id": "sha256:" + "a" * 64,
+                        "archive": Path(td) / "fake-image.tar"}
+            original = {"Config": {"Image": ops.RC6}}
+            command = ["sudo", "-n", "docker", "compose", "fixture"]
+            envfile = Path(td) / ".env"
+
+            def harmless_run(*args):
+                if args[-3:] == ("config", "--format", "json"):
+                    return json.dumps({"services": {
+                        "trakt-bridge": {"image": "incorrect-image"}}})
+                return ""
+
+            with patch.object(ops.Path, "home", return_value=Path(td)), \
+                 patch.object(ops.old, "run", side_effect=harmless_run), \
+                 patch.object(ops, "verify_loaded_image"), \
+                 patch.object(ops.old, "set_image"), \
+                 patch.object(ops, "rollback") as rb, \
+                 patch("builtins.print"):
+                with self.assertRaisesRegex(
+                        ops.Stop, "CUTOVER_FAILED_AND_RC6_RESTORED"):
+                    ops.apply(artifact, original, command, envfile, "aio")
+                rb.assert_called_once()
+                self.assertEqual(rb.call_args.args[1], envfile)
+
+    def test_rc6_rollback_uses_existing_compose_and_readiness(self):
+        with patch.object(ops.old, "run", return_value="") as run, \
+             patch.object(ops, "runtime_ready", return_value=True), \
+             patch.object(ops.old, "container", return_value={
+                 "Config": {"Image": ops.RC6}
+             }), patch("builtins.print"):
+            ops.rollback(Path("/fixture/previous.env"),
+                         Path("/fixture/.env"), ["fixture", "compose"])
+        argv = [call.args for call in run.call_args_list]
+        self.assertTrue(any(args[:4] == (
+            "sudo", "-n", "cp", "-p") for args in argv))
+        self.assertTrue(any(
+            "up" in args and "--no-deps" in args
+            and "--pull" in args and "never" in args
+            and "--force-recreate" in args and "trakt-bridge" in args
+            for args in argv))
+
     def test_no_broad_deployment_or_history_mutation_in_script(self):
         text = source.read_text()
         for forbidden in (
