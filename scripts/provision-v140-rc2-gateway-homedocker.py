@@ -203,10 +203,28 @@ def validate_composed(base, candidate, expected):
     newnet = new.get("networks") or {}
     if set(oldnet) != {"default"} or set(newnet) != {"default", "media_core"}:
         raise Stop("UNEXPECTED_BRIDGE_NETWORK_DIFF")
-    if newnet["default"] != oldnet["default"]:
+    # Compose normalizes an explicit 'default: {}' in an override to an
+    # empty mapping while the base default network may render as null.
+    # Those two values have identical semantics. Any nonempty difference
+    # (aliases, ipv4_address, priority, etc.) is still rejected.
+    original_default = oldnet["default"]
+    merged_default = newnet["default"]
+    if original_default in (None, {}) and merged_default in (None, {}):
+        pass
+    elif merged_default != original_default:
         raise Stop("DEFAULT_NETWORK_CHANGED")
-    if candidate.get("networks", {}).get("media_core", {}).get("name") != AIO_NETWORK:
+    # Also anchor the resolved Docker network itself. Allow exactly one new
+    # external network, not a renamed/reconfigured project-default network.
+    old_top = base.get("networks") or {}
+    new_top = candidate.get("networks") or {}
+    if (set(new_top) != set(old_top) | {"media_core"}
+            or new_top.get("default") != old_top.get("default")
+            or (old_top.get("default") or {}).get("name") != BASE_NETWORK):
+        raise Stop("PROJECT_DEFAULT_NETWORK_CHANGED")
+    if (new_top.get("media_core") or {}).get("name") != AIO_NETWORK:
         raise Stop("WRONG_EXTERNAL_NETWORK")
+    if new_top["media_core"].get("external") is not True:
+        raise Stop("GATEWAY_NETWORK_MUST_BE_EXTERNAL")
     if "7101" in json.dumps(new.get("ports") or []):
         raise Stop("GATEWAY_PUBLIC_PORT_FORBIDDEN")
     if candidate.get("volumes") != base.get("volumes"):
