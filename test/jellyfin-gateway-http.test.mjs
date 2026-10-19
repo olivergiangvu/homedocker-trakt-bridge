@@ -144,6 +144,26 @@ async function fixture(t, {
   return { base, hits, db, gateway: server };
 }
 
+test('UI ON/OFF preference takes effect immediately on same Gateway listener', async t => {
+  const { base, hits, db, gateway } = await fixture(t);
+  const url = base + '/Shows/NextUp?Limit=20';
+  const call = async () => {
+    const result = await fetch(url, { headers: { 'X-Emby-Token': AIO_TOKEN } });
+    assert.equal(result.status, 200);
+    return result.json();
+  };
+  assert.equal((await call()).Items.length, 1);
+  db.cacheSet('gateway-filter:v1:' + PROFILE, { enabled: false });
+  const before = hits.length;
+  const off = await call();
+  assert.deepEqual(off, reply);
+  assert.deepEqual(hits.slice(before).map(hit => hit.path), ['/Shows/NextUp?Limit=20']);
+  db.cacheSet('gateway-filter:v1:' + PROFILE, { enabled: true });
+  assert.equal((await call()).Items.length, 1);
+  assert.equal(gateway.gatewayMetricsSnapshot().nextUpRequests, 3);
+  assert.equal(gateway.listening, true);
+});
+
 test('unconfigured gateway is disabled and rejects unexpected upstream URL', () => {
   assert.equal(validateGatewayConfig({ jellyfinGatewayEnabled: false }), null);
   assert.throws(() => validateGatewayConfig({
