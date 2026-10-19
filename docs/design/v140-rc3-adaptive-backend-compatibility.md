@@ -107,6 +107,19 @@ Added `scripts/audit-v140-rc3-series-catalog-homedocker.py` (RC3-I): optional au
 
 **Important limitation:** Catalog enumeration may demonstrate that the backend can resolve an existing NextUp card without upstream NextUp pagination. It is not proof that *other watched series* can all be discovered from a NextUp=50 prefix, or that missing catalog IDs can be reconstructed. Subsequent work requires a stable **source series index** spanning all relevant user-history series, authenticated mapping to playable catalog IDs, and a coherent user-scoped shelf/snapshot before any client-facing response change. Avoid relying solely on AIO container file paths for arbitrary Jellyfin or Remux installations.
 
+## RC3-I2 STOP: transport problem before catalog, not an episode pagination verdict
+
+2026-10-19 HomeDocker pinned-source RC3-I2 returned:
+- `FAILURE_PHASE=READ_DOUBLE_NEXTUP`, `FAILURE_REASON=AIO_GET_UNAVAILABLE`; Gateway Filter was independently rechecked OFF and source changes=0.
+- The shared GET reader used **6 seconds per call** and collapses network timeouts, URL errors and invalid JSON into that same reason. The first/second NextUp GET could not be distinguished from that report. **No episode catalog GET was reached**; the result does NOT reject `/Shows/{SeriesId}/Episodes` or episode binding.
+- Earlier RC3-H successfully read the mapped user's NextUp=50 twice, so avoid attributing the new failure to pagination without transport evidence.
+
+RC3-J isolated, bounded transport diagnostic `scripts/diagnose-v140-rc3-nextup-get-homedocker.py`:
+- Same root-only Jellyfin session, exact /Users/Me match and Filter OFF gate; no querying a different user.
+- One NextUp 50 GET at 6s, **one optional retry at 12s ONLY on timeout**. Returns a fixed error classification: `TIMEOUT`, `CONNECTION_REFUSED`, `NETWORK_UNREACHABLE`, `AUTH_REJECTED`, `HTTP_OTHER`, `JSON_INVALID`, `BODY_TOO_LARGE`, `TRANSPORT_OTHER` or `OK`, plus aggregate elapsed time and item count when available. No raw exceptions, titles, URLs, IDs or tokens.
+- At most 3 total GET calls including /Users/Me, no metadata fanout, no catalog, Trakt, SQLite writes, Docker changes, Odin ingress or AIO configuration change. Recheck OFF after success/failure.
+- DO NOT increase RC3-I global timeout, disable fail-open, or reroute client based on a single unstable GET. Await RC3-J evidence first; on sustained latency optimize the call/caching budget with source-specific controls and verify no accidental data loss.
+
 ## What would make it a safe *usable* feature
 
 **Gate A (implemented, CI):** Pure source-agnostic adapter and synthetic tests for 20/20, 50/50, AIO offset-ignored, native-offset, wrong users, partial metadata, two active resumes, replay drift and no injected watch writes. It is deliberately not linked into the Gateway.
