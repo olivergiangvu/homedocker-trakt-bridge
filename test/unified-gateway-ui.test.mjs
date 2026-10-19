@@ -15,6 +15,8 @@ const status = (extras = {}) => ({
   telemetry: { nextUpRequests: 7, nextUpNormalizedResponses: 2,
     nextUpRemovedItems: 2, nextUpUnchangedResponses: 5,
     nextUpPagedPassThrough: 3, failOpenNormalizationErrors: 0,
+    nextUpAverageMs: 92, aioUpstreamAverageMs: 51,
+    metadataActive: 2, metadataQueued: 0,
     upstreamTransportFailures: 0, upstreamNon200Responses: 0 },
   ...extras,
 });
@@ -26,6 +28,7 @@ test('unified panel has identity, safety, telemetry and navigation in ONE dashbo
     'Verified aliases', 'Gateway listener', 'User identity mapping',
     'NextUp response policy', 'Removed duplicate cards',
     'Paged requests passed through', 'Fail-open normalizations',
+    'Gateway mean latency', 'AIO mean latency', 'Metadata active / queued',
     'V140_STABLE_RELEASE_HOLD', 'Production client routing is not qualified',
   ]) assert.ok(html.includes(label), label);
   assert.match(html, /id="aio-identity-gateway"/);
