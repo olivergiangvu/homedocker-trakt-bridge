@@ -8,7 +8,7 @@ const file = name => readFileSync(new URL(name, root), 'utf8');
 
 test('RC.1 source version is consistent, tag publication remains explicitly guarded', () => {
   const version = JSON.parse(file('package.json')).version;
-  assert.equal(version, '1.4.0-rc.1');
+  assert.equal(version, '1.4.0-rc.2');
   assert.equal(APP_VERSION, version);
   const release = file('.github/workflows/release.yml');
   assert.match(release, /Block unqualified v1\.4 Gateway publication/);
