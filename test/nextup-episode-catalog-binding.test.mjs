@@ -97,10 +97,12 @@ test('truncated 100/100 page does not count as exhausted catalog',()=>{
 
 test('prefix-only totals and short page with larger global count rejected',()=>{
   const input=complete();
+  // AIO prefix-only total (10) initially looks plausible, but the second
+  // page exposes a different total (11). This is cross-page total drift.
   input.pages[0].response.TotalRecordCount=10;
   const result=qualifyEpisodeCatalogPages(input);
   assert.equal(result.qualified,false);
-  assert.equal(result.reason,'PAGE_RESPONSE_CONTRACT_UNVERIFIED');
+  assert.equal(result.reason,'GLOBAL_TOTAL_DRIFT');
   const short=complete(11,10);
   short.pages[0].response.Items=short.pages[0].response.Items.slice(0,9);
   short.pages[0].response.Count=9;
