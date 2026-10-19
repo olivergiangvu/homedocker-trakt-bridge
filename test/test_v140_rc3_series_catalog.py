@@ -184,6 +184,88 @@ class SeriesCatalogTests(unittest.TestCase):
                 audit.read_bounded_nextup("private",audit.time.monotonic()+30)
         self.assertNotIn("PRIVATE",str(caught.exception))
 
+    def test_single_existing_episode_get_uses_only_specific_18s_budget(self):
+        holder = {}
+        class Response:
+            status = 200
+            def __enter__(self): return self
+            def __exit__(self,*args): return False
+            def read(self,size):
+                return (b'{"Type":"Episode","Id":"episode-7",'
+                        b'"SeriesId":"series-from-live-nextup",'
+                        b'"ParentIndexNumber":1,"IndexNumber":7}')
+
+        class Opener:
+            def open(self, request, timeout):
+                holder["timeout"] = timeout
+                holder["path"] = request.full_url
+                holder["method"] = request.get_method()
+                return Response()
+
+        with patch.object(audit.core,"build_opener",return_value=Opener()):
+            result=audit.read_existing_episode_detail(
+                "private-token","episode-7",audit.time.monotonic()+40)
+        self.assertEqual(result["Id"],"episode-7")
+        self.assertEqual(holder["timeout"],18)
+        self.assertEqual(holder["method"],"GET")
+        self.assertEqual(holder["path"],
+                         "http://127.0.0.1:3240/jellyfin/Items/episode-7")
+        self.assertEqual(audit.core.MAX_CALL_SECONDS,6)
+
+    def test_single_existing_episode_stop_does_not_leak_raw_errors(self):
+        from urllib.error import URLError
+
+        class Timeout:
+            def open(self, request, timeout):
+                raise URLError(TimeoutError("secret-and-private-id"))
+        with patch.object(audit.core,"build_opener",return_value=Timeout()):
+            with self.assertRaisesRegex(audit.core.StopAudit,
+                                        "EPISODE_GET_18S_TIMEOUT") as result:
+                audit.read_existing_episode_detail(
+                    "secret","episode-7",audit.time.monotonic()+40)
+        self.assertNotIn("secret",str(result.exception))
+        self.assertIn("EPISODE_GET_18S_TIMEOUT",audit.SAFE_STOP_CODES)
+
+    def test_only_catalog_passed_can_advance_binding_evidence_gate(self):
+        # Simulates the final GET error while all earlier qualified snapshots
+        # and the discovered catalog/NextUp episode ID are internally coherent.
+        ep_id="episode-7"
+        catalog = [episode(i) for i in range(1,12)]
+        nextup={"Type":"Episode","SeriesId":SERIES_ID,"Id":ep_id}
+        def read_metadata(path):
+            if path == "/Users/Me": return {"Id":"mapped"}
+            if path.startswith("/Items/") and path.endswith(SERIES_ID):
+                return {"Id":SERIES_ID,"Type":"Series",
+                        "ProviderIds":{"Imdb":CANON}}
+            raise AssertionError("Unexpected local mock call")
+
+        # main() is still fully read-only and calls no production gateway writes
+        with patch.object(audit.core,"credential",
+                          return_value=("token","mapped")), \
+             patch.object(audit.core,"bridge_gate",return_value=True), \\
+             patch.object(audit.visibility,"verified_groups_from_bridge",
+                          return_value=[[CANON,ALIAS]]), \\
+             patch.object(audit.core,"make_reader",
+                          return_value=read_metadata), \\
+             patch.object(audit,"read_bounded_nextup",
+                          return_value={"Items":[nextup],
+                                        "StartIndex":0,
+                                        "TotalRecordCount":1}), \\
+             patch.object(audit,"scan_pages",
+                          return_value=(catalog,[
+                              {"Items":catalog,"StartIndex":0,
+                               "TotalRecordCount":11}
+                          ])), \
+             patch.object(audit,"read_existing_episode_detail",
+                          side_effect=audit.core.StopAudit(
+                              "EPISODE_GET_18S_TIMEOUT")):
+            # Override the file's 50-thread metadata search: just one episode.
+            with self.assertRaisesRegex(audit.core.StopAudit,
+                                        "EPISODE_GET_18S_TIMEOUT"):
+                audit.main()
+        self.assertEqual(audit.PHASE,"GET_EXISTING_EPISODE")
+        self.assertTrue(audit.CATALOG_EVIDENCE_VALIDATED)
+
     def test_secrets_stay_unprinted_and_no_mutation(self):
         source=PATH.read_text()
         for phrase in ["core.credential()","core.bridge_gate()",
