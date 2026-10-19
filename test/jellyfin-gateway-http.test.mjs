@@ -4,6 +4,7 @@ import http from 'node:http';
 import { once } from 'node:events';
 import {
   createJellyfinGateway, validateGatewayConfig, eligibleCompleteFirstPage,
+  eligibleCompleteUnpagedNextUp,
 } from '../src/jellyfin-gateway.mjs';
 import { observeVerifiedShowIdentity } from '../src/identity-continuity.mjs';
 import { gatewayFilterKey } from '../src/gateway-control.mjs';
@@ -585,4 +586,74 @@ test('single-flight metadata error fails open for each client without poisoning 
   assert.ok(replies.every(x => JSON.stringify(x) === JSON.stringify(reply)));
   // No failed metadata lookup may hide NextUp progress.
   assert.ok(hits.filter(x => x.path.startsWith('/Items/series')).length >= 2);
+});
+
+test('Limit-only unpaged NextUp is eligible only if the entire short page is provably complete', () => {
+  const query = value => new URLSearchParams(value);
+  assert.equal(eligibleCompleteUnpagedNextUp(query('Limit=20'), reply), true);
+  assert.equal(eligibleCompleteUnpagedNextUp(query(''), reply), true);
+  const candidates = [
+    [query('Limit=2'), reply],
+    [query('Limit=100'), reply],
+    [query('Limit=01'), reply],
+    [query('Limit=0'), reply],
+    [query('Limit=20&Limit=40'), reply],
+    [query('Limit=20&UserId=someone'), reply],
+    [query('SortBy=DatePlayed'), reply],
+    [query('Limit=20'), { ...reply, TotalRecordCount: 20 }],
+    [query('Limit=20'), { ...reply, Count: 100 }],
+    [query('Limit=20'), { ...reply, StartIndex: 20 }],
+    [query('Limit=20'), { ...reply, TotalRecordCount: undefined }],
+    [query(''), { ...reply, TotalRecordCount: 20 }],
+    [query(''), { ...reply, Count: 20 }],
+  ];
+  for (const [params, payload] of candidates) {
+    assert.equal(eligibleCompleteUnpagedNextUp(params, payload), false,
+      `unsafe query=${params.toString()} / count=${payload.TotalRecordCount}`);
+  }
+});
+
+test('Gateway never rewrites unpaged full/prefix/unknown-count pages or probes identity', async t => {
+  const candidates = [
+    { label: 'full Limit-only page', query: 'Limit=2', payload: reply },
+    { label: 'prefix count mismatch', query: 'Limit=20',
+      payload: { ...reply, TotalRecordCount: 20 } },
+    { label: 'unknown total count', query: 'Limit=20',
+      payload: { ...reply, TotalRecordCount: undefined } },
+    { label: 'inconsistent Count', query: 'Limit=20',
+      payload: { ...reply, Count: 12 } },
+    { label: 'unexpected StartIndex', query: 'Limit=20',
+      payload: { ...reply, StartIndex: 10 } },
+  ];
+  for (const c of candidates) {
+    await t.test(c.label, async sub => {
+      const { base, hits, gateway } = await fixture(sub, { nextUp: c.payload });
+      const r = await fetch(base + '/Shows/NextUp?' + c.query, {
+        headers: { 'X-Emby-Token': AIO_TOKEN },
+      });
+      assert.equal(r.status, 200);
+      assert.deepEqual(await r.json(), c.payload);
+      assert.deepEqual(hits.map(h => h.path), ['/Shows/NextUp?' + c.query]);
+      assert.equal(gateway.gatewayMetricsSnapshot().nextUpUnpagedUnsafePassThrough, 1);
+      assert.equal(gateway.gatewayMetricsSnapshot().nextUpNormalizedResponses, 0);
+    });
+  }
+});
+
+test('Remux/native Jellyfin source kinds can use the same verified API contract in synthetic only', async t => {
+  for (const sourceKind of ['remux', 'jellyfin']) {
+    await t.test(sourceKind, async sub => {
+      const { base, db, config, hits } = await fixture(sub);
+      // The source-kind control scopes preference; this mocks the *same* API
+      // contract and does not establish real Remux or Jellyfin compatibility.
+      config.jellyfinGatewaySourceKind = sourceKind;
+      db.cacheSet(gatewayFilterKey(PROFILE, config), { enabled: true });
+      const r = await fetch(base + '/Shows/NextUp?Limit=20', {
+        headers: { 'X-Emby-Token': AIO_TOKEN },
+      });
+      assert.equal(r.status, 200);
+      assert.equal((await r.json()).Items.length, 1);
+      assert.ok(hits.some(h => h.path === '/Users/Me'));
+    });
+  }
 });
