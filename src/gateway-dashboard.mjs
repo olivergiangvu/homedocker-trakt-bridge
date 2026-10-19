@@ -33,6 +33,7 @@ export function buildGatewayDashboardStatus({ db, config, profileId, gateway = n
     nextUpNormalizedResponses: safeCount('nextUpNormalizedResponses'),
     nextUpUnchangedResponses: safeCount('nextUpUnchangedResponses'),
     nextUpRemovedItems: safeCount('nextUpRemovedItems'),
+    nextUpPagedPassThrough: safeCount('nextUpPagedPassThrough'),
     failOpenNormalizationErrors: safeCount('failOpenNormalizationErrors'),
     upstreamTransportFailures: safeCount('upstreamTransportFailures'),
     upstreamNon200Responses: safeCount('upstreamNon200Responses'),
@@ -53,6 +54,7 @@ export function buildGatewayDashboardStatus({ db, config, profileId, gateway = n
     // These are configuration indicators, NOT upstream connectivity checks.
     upstreamConfigured: Boolean(config.jellyfinGatewayUpstreamUrl),
     userMappingConfigured: Boolean(mappingReady),
+    nextUpMode: config.jellyfinGatewayFirstPageMode ?? 'short_first_page_only',
     resumeMode: configured && config.jellyfinGatewayResumePassThrough === true
       ? 'raw_passthrough' : 'off',
     identity: {
