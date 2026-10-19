@@ -208,7 +208,7 @@ test('existing admin and per-profile HTML pages render integrated gateway panel'
     + encodeURIComponent(config.adminKey));
   assert.equal(admin.status, 200);
   const adminHtml = await admin.text();
-  assert.match(adminHtml, /AIO Identity Gateway/);
+  assert.match(adminHtml, /Jellyfin Identity Gateway/);
   assert.match(adminHtml, /v1\.4 target/);
   assert.match(adminHtml, /Verified alias groups/);
 
@@ -219,7 +219,7 @@ test('existing admin and per-profile HTML pages render integrated gateway panel'
     + encodeURIComponent(key));
   assert.equal(profile.status, 200);
   const profileHtml = await profile.text();
-  assert.match(profileHtml, /AIO Identity Gateway/);
+  assert.match(profileHtml, /Jellyfin Identity Gateway/);
   assert.match(profileHtml, /Verified aliases/);
   assert.match(profileHtml, /Read-only JSON diagnostics/);
   assert.match(profileHtml, /Production client routing is not qualified/);
