@@ -53,6 +53,8 @@ def read_graph():
         graph = json.loads(result[0]) if result else {}
     except (ValueError, TypeError):
         raise core.StopAudit("GRAPH_MALFORMED") from None
+    if not isinstance(graph, dict):
+        raise core.StopAudit("GRAPH_MALFORMED")
     shows = graph.get("shows")
     conflicts = graph.get("conflicts", [])
     if not isinstance(shows, dict) or not isinstance(conflicts, list) \
@@ -117,16 +119,19 @@ def when(value):
 
 
 def choose(a, b):
+    def user_data(item):
+        value = item.get("UserData")
+        return value if isinstance(value, dict) else {}
     def resumed(item):
-        ticks = item.get("UserData", {}).get("PlaybackPositionTicks")
+        ticks = user_data(item).get("PlaybackPositionTicks")
         return type(ticks) in (float, int) and ticks > 0
     a_active, b_active = resumed(a), resumed(b)
     if a_active and b_active:
         return None
     if a_active != b_active:
         return a if a_active else b
-    aa = when(a.get("UserData", {}).get("LastPlayedDate"))
-    bb = when(b.get("UserData", {}).get("LastPlayedDate"))
+    aa = when(user_data(a).get("LastPlayedDate"))
+    bb = when(user_data(b).get("LastPlayedDate"))
     if aa is not None and bb is not None and abs(aa - bb) > 2:
         return a if aa > bb else b
     return None
@@ -203,7 +208,8 @@ def main():
         result = reader("/Items/" + quote(series_id, safe=""))
         if result.get("Type") != "Series" or result.get("Id") != series_id:
             raise core.StopAudit("METADATA_IDENTITY_MISMATCH")
-        value = result.get("ProviderIds", {}).get("Imdb")
+        provider_ids = result.get("ProviderIds")
+        value = provider_ids.get("Imdb") if isinstance(provider_ids, dict) else None
         return series_id, value.lower() if isinstance(value, str) \
             and IMDB.fullmatch(value.lower()) else None
 
