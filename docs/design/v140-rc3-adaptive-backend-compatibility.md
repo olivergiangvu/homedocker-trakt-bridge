@@ -70,6 +70,27 @@ src/nextup-adaptive-window.mjs exports:
 
 **Gate:** This branch remains **shadow only**. Neither RC3-E nor RC3-F constitutes permission to alter Trakt history, AIO source, Gateway production Filter or Odin's route.
 
+## RC3-H conclusive HomeDocker API observation (2026-10-19)
+
+- RC3-H used the same mapped AIO Jellyfin user, two stable 50-item NextUp GETs and 50 per-series IMDb lookups. **Canonical cards=1; alias cards=0; groups both spellings in the window=0; canonical-only groups=1**. The Gateway Filter stayed OFF; no source or client change.
+- RC3-G2 separately proved both spelling timelines were eligible for watch-state candidate ranking in 1..50, but only **alias** had an effective direct series-key drop flag. That is consistent with AIO suppressing the alias in this NextUp snapshot, yet is not an exact trace through match-key and metadata/caught-up filters.
+- The old RC3-H output `UNVERIFIED_GRAPH_CARDS=49` was imprecisely named. The corrected metric is **`OUTSIDE_VERIFIED_ALIAS_GROUP_CARDS=49`**. These cards are outside the single *verified multi-spelling alias group*, not necessarily outside the entire Bridge graph. RC3-D previously counted six cards in the broader 17-show verified graph. All 50 per-series IMDb metadata lookups were valid.
+- **Disposition for this mapped AIO account/window:** no current alias duplicate requiring NextUp card suppression. Do NOT enable filter merely to remove a card that isn't there. Source paging remains broken (StartIndex ignored; Limit cap 50); that limitation is independent of the alias that is presently hidden.
+
+## RC3-P4 — source-independent history adapters (pure offline contracts, not connected to client)
+
+`src/nextup-progress-source-adapters.mjs` now supplies normalized rows for the existing `buildCanonicalProgressView()` engine, with explicit contracts:
+
+| Adapter | Required provenance | Conversion | Fail-closed cases |
+| --- | --- | --- | --- |
+| AIO watch_state SQLite | Exact, independently checked active watch_sink uuid+persona and connected Bridge profile; caller uses read-only DB connection | Strict `kind='episode'`, `series_key='s|tt...'`, season/episode, played=0/1 and nonnegative integer position_ms | Missing scope, invalid key/row, unverified IDs, over budget |
+| Native Jellyfin episode *history*, NOT NextUp | Same authenticated user; independently established complete episode-history enumeration; same-user SeriesId→Series ProviderIds.Imdb verified | `UserData.Played` and exact Jellyfin tick to millisecond conversion; preserves source episode coordinates | Partial history, missing Series metadata, malformed response, repeated Ids, sub-millisecond timebase ambiguity |
+| Remux Jellyfin-compatible history | All native checks **plus independent Remux contract validation**; do not assume its API merely because it resembles Jellyfin | Same strict mapping only after provenance test | Missing native contract proof; differences in Remux index/ID semantics |
+
+All three are **pure**, bounded, shadow-only: no production import, no Trakt writes, no synthetic playable item IDs, no Client NextUp pagination count and no routing. Synthetic regression tests verify AIO 11+8→11 logical episodes, equivalent Jellyfin history, Remux contract guard, active-resume conflicts and byte-for-byte untouched input.
+
+**Next engineering milestone:** separately qualify a backend-provided *complete, user-scoped history source* and a *playable catalog resolver*, then construct a consistent shelf/cursor and exact one-client opt-in test. Nothing in RC3-H or the pure adapters proves user-wide Jellyfin paging or authorizes exposing port 7101.
+
 ## What would make it a safe *usable* feature
 
 **Gate A (implemented, CI):** Pure source-agnostic adapter and synthetic tests for 20/20, 50/50, AIO offset-ignored, native-offset, wrong users, partial metadata, two active resumes, replay drift and no injected watch writes. It is deliberately not linked into the Gateway.
