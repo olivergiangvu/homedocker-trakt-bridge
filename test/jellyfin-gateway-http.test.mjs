@@ -26,6 +26,7 @@ const fakeDb = () => {
   const map = new Map();
   return {
     cacheGet: (key) => structuredClone(map.get(key) ?? null),
+    cachePeek: (key) => structuredClone(map.get(key) ?? null),
     cacheSet: (key, value) => map.set(key, structuredClone(value)),
   };
 };
@@ -132,6 +133,9 @@ async function fixture(t, {
     jellyfinGatewayUserId: expectedUser,
     jellyfinGatewayResumePassThrough: resumeEnabled,
   };
+  // The normal synthetic test fixture explicitly opts into identity filtering;
+  // actual production/default install always starts with filtering OFF.
+  if (enabled) db.cacheSet('gateway-filter:v1:' + PROFILE, { enabled: true });
   const server = createJellyfinGateway({ config, db });
   t.after(() => server.close());
   server.listen(0, '127.0.0.1');
