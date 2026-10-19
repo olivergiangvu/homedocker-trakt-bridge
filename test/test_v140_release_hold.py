@@ -17,7 +17,7 @@ class V140ReleaseHold(unittest.TestCase):
     def test_qualified_stable_history_remains_immutable(self):
         pkg=(ROOT/"package.json").read_text("utf8")
         self.assertIn(
-            '"version": "1.4.0-rc.1"', pkg,
+            '"version": "1.4.0-rc.2"', pkg,
             "RC source version is allowed only under the existing v1.4 tag HOLD"
         )
         self.assertTrue((ROOT/"scripts/publish-v1.3.0-tag.py").is_file())
