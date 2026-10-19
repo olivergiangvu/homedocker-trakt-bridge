@@ -430,6 +430,13 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
         responseHeaders(res, upstream, false);
         return res.end(bytes);
       }
+      // OFF is a genuine fast bypass: upstream JSON bytes are passed through
+      // without parsing, metadata lookups, graph reads or response projection.
+      if (!gatewayFilteringEnabled({ db, config, profileId: options.profileId })) {
+        metrics.nextUpUnchangedResponses++;
+        responseHeaders(res, upstream, false);
+        return res.end(bytes);
+      }
       let json;
       try { json = JSON.parse(bytes.toString('utf8')); }
       catch {
@@ -440,13 +447,6 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
       let filtered = json;
       // Series-specific NextUp must remain upstream-defined. Unknown paging or
       // alternative filters also remain untouched until separately qualified.
-      // UI switch is persisted in the Bridge DB and read per request.
-      // OFF proxies upstream untouched; no restart and no client route edits.
-      if (!gatewayFilteringEnabled({ db, config, profileId: options.profileId })) {
-        metrics.nextUpUnchangedResponses++;
-        responseHeaders(res, upstream, false);
-        return res.end(bytes);
-      }
       const hasPaging = requested.searchParams.has('StartIndex');
       const firstPage = eligibleCompleteFirstPage(
         requested.searchParams, json, options.firstPageMode
