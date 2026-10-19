@@ -24,7 +24,7 @@ const status = (extras = {}) => ({
 test('unified panel has identity, safety, telemetry and navigation in ONE dashboard', () => {
   const html = renderUnifiedGatewayPanel(status());
   for (const label of [
-    'AIO Identity Gateway', 'Unified Bridge', 'history authority',
+    'Jellyfin Identity Gateway', 'Unified Bridge', 'history authority',
     'Verified aliases', 'Gateway listener', 'User identity mapping',
     'NextUp response policy', 'Removed duplicate cards',
     'Paged requests passed through', 'Fail-open normalizations',
