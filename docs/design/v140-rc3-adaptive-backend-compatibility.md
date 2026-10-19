@@ -163,6 +163,18 @@ RC3-K source-only GET/SQLite audit: scripts/audit-v140-rc3-history-catalog-coord
 - Scope is strictly **one verified cross-IMDb alias group**. An unmatched history coordinate leads to SCOPED_HISTORY_COORDINATES_ALL_BOUND=NO. This neither fabricates an episode nor constructs NextUp, modifies watched history, checks media streaming or qualifies client ingress. **A catalog episode without a history row is not proof it was never watched on Trakt or another client.**
 - GET budgets match RC3-I4; bounded to 4 pages / 400 episodes and a 150s audit deadline. No playback endpoint, Docker/container restart or Trakt calls.
 
+## RC3-K Live PASS and RC3-L pure scoped AIO history-to-catalog ID model
+
+**2026-10-20 HomeDocker operator RC3-K real source evidence (GET-only / SQLite read-only):**
+- Exact mapped user; 1 independently verified Bridge alias group; double-read catalog identical; independent watch_state double-read identical; canonical NextUp card bound to one real series.
+- Physical rows: 11 canonical + 8 alias, overlap=8, alias-only=0. Distinct logical history coordinate count=**11**, catalog count=**12**; exactly **11/11** history coordinates found in the canonical catalog, 0 missing, 1 catalog-only coordinate; active resumes=0.
+- `SCOPED_HISTORY_COORDINATES_ALL_BOUND=YES` with no database writes, Filter OFF, no route/client response changes. **Only one series**, not a global NextUp view. The 12th catalog-only coordinate has no evidence in this AIO sink history and must not be called never-watched or unplayed elsewhere.
+
+**RC3-L offline source composition:** `src/nextup-scoped-aio-catalog-read-model.mjs` combines the previously isolated AIO source adapter, verified canonical progress projection and strict catalog pagination/binding. It requires caller-attested, same-user/exact-sink/graph/NextUp/catalog **stable snapshot gates**, and a verified canonical IMDb matching the resolved Series metadata. Only if every gate holds, it produces the internal immutable read-model containing **actual source-provided Episode IDs**, their exact Season/Episode coordinates, historical played/resume state and a count of catalog-only coordinates. No in-band calls to SQLite, Trakt, Jellyfin, Remux or Gateway; no Item synthesis or mutation.
+- Synthetic regression fixture reproduces the **19 physical watch rows → 11 logical episodes → 11 bound IDs from a 12-episode real-shaped catalog**, plus conflict, alias active resume, missing coordinates, wrong series, unverified identity and missing provenance gates. Fixture tests demonstrate algorithmic behavior, not new live-data validation.
+- Internal `episodeBindings` are never printed by the HomeDocker diagnostic and are **not** a public Jellyfin response. The current repository does not yet have an independently verified user-wide watched series index or playable stream contract. Accordingly, it still reports `nextUpShelfQualified=false`, `globalNextUpQualified=false`, `mediaPlaybackProven=false`.
+- **Next action after code CI:** no need to rerun expensive RC3-K. Instead design an isolated, authenticated one-user read-only ingestion path that reuses validated source semantics, bounds and independently revalidates freshness, with a full series discovery plan; do not turn on the filter based on synthetic tests.
+
 ## What would make it a safe *usable* feature
 
 **Gate A (implemented, CI):** Pure source-agnostic adapter and synthetic tests for 20/20, 50/50, AIO offset-ignored, native-offset, wrong users, partial metadata, two active resumes, replay drift and no injected watch writes. It is deliberately not linked into the Gateway.
