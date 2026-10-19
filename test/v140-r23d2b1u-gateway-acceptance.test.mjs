@@ -67,7 +67,7 @@ function readonlyProofDb() {
     // Existing persisted preference was provisioned before this read-only test.
     cachePeek(key) {
       reads++;
-      if (key === 'gateway-filter:v1:' + PROFILE) return { enabled: true };
+      if (key.startsWith('gateway-filter:v1:' + PROFILE + ':')) return { enabled: true };
       return structuredClone(entries.get(key)??null);
     },
     cacheSet() {writes++;throw new Error('SECOND_HISTORY_WRITER_FORBIDDEN');},
