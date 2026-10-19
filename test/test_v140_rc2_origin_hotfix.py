@@ -43,9 +43,9 @@ class TestOriginHotfix(unittest.TestCase):
     def test_image_pinning_same_writer_and_rollback_invariants(self):
         code = SCRIPT.read_text()
         self.assertIn("v1.4.0-rc.2-ci-fa64a91ad827", code)
-        for phrase in ("source_pr_head_sha", "same_writer"):
-            # Provable by exact imported artifact() and mount guards.
-            self.assertTrue(phrase in code or phrase == "source_pr_head_sha")
+        # The imported rc2.artifact() verifies exact PR head, SHA256 and
+        # source metadata; this wrapper must actually invoke it.
+        self.assertIn("rc2.artifact(run_id, expected_head)", code)
         self.assertIn("SECOND_WRITER_MOUNT_DETECTED", code)
         self.assertIn('"--force-recreate", "trakt-bridge"', code)
         self.assertIn("RC2_ORIGIN_FIX_ROLLBACK=HEALTHY", code)
