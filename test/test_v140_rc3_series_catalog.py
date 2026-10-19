@@ -2,6 +2,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 PATH = Path(__file__).resolve().parents[1] / "scripts/audit-v140-rc3-series-catalog-homedocker.py"
 spec=importlib.util.spec_from_file_location("rc3i_probe",PATH)
@@ -94,6 +95,32 @@ class SeriesCatalogTests(unittest.TestCase):
                 rows+[{"SeriesId":"alias","Id":"old","Type":"Episode"}],
                 {"canon":CANON,"alias":ALIAS},[[CANON,ALIAS]]
             )
+
+    def test_safe_stop_codes_never_echo_untrusted_exception_data(self):
+        safe = audit.core.StopAudit("CATALOG_EPISODE_IDENTITY_INVALID")
+        self.assertEqual(audit.safe_stop_code(safe),
+                         "CATALOG_EPISODE_IDENTITY_INVALID")
+        # An upstream response/exception might contain bearer/URLs/IDs.
+        # Such text must NEVER be printed, even if it comes from StopAudit.
+        untrusted = audit.core.StopAudit("bearer token example with HTTP body")
+        self.assertEqual(audit.safe_stop_code(untrusted),
+                         "UNCLASSIFIED_SAFE_STOP")
+        self.assertEqual(audit.safe_stop_code(ValueError("secret")),
+                         "LOCAL_RUNTIME_FAILURE")
+        self.assertIn("CATALOG_FIRST_PASS", audit.PHASES)
+
+    def test_main_marks_phase_before_authenticated_probe_error(self):
+        fake = audit.core.StopAudit("AIO_GET_NON_200")
+        with patch.object(audit.core, "credential",
+                          return_value=("private", "mapped")), \
+             patch.object(audit.core, "bridge_gate", return_value=True), \\
+             patch.object(audit.visibility, "verified_groups_from_bridge",
+                          return_value=[[CANON,ALIAS]]), \\
+             patch.object(audit.core, "make_reader",
+                          return_value=lambda path: (_ for _ in ()).throw(fake)):
+            with self.assertRaises(audit.core.StopAudit):
+                audit.main()
+        self.assertEqual(audit.PHASE, "AUTHENTICATED_USER_PROBE")
 
     def test_secrets_stay_unprinted_and_no_mutation(self):
         source=PATH.read_text()
