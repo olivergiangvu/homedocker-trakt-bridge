@@ -62,6 +62,8 @@ class RankTests(unittest.TestCase):
             self.assertEqual(result["single_group_canonical_band"], "1_TO_50")
             self.assertEqual(result["single_group_alias_band"], "1_TO_50")
             self.assertEqual(result["single_group_effective_drop_count"], 0)
+            self.assertFalse(result["single_group_canonical_direct_drop_effective"])
+            self.assertFalse(result["single_group_alias_direct_drop_effective"])
             self.assertNotIn("tt87654321", str(result))
         finally:
             aio.close()
@@ -97,6 +99,8 @@ class RankTests(unittest.TestCase):
                     result = audit.aggregate_candidate_rank(aio, bridge)
                     self.assertEqual(result["single_group_effective_drop_count"], expected)
                     self.assertEqual(result["groups_with_any_effective_series_drop"], expected)
+                    self.assertFalse(result["single_group_canonical_direct_drop_effective"])
+                    self.assertEqual(result["single_group_alias_direct_drop_effective"], bool(expected))
                 finally:
                     aio.close()
                     bridge.close()
