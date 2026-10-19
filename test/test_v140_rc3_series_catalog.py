@@ -122,6 +122,68 @@ class SeriesCatalogTests(unittest.TestCase):
                 audit.main()
         self.assertEqual(audit.PHASE, "AUTHENTICATED_USER_PROBE")
 
+    def test_18s_nextup_timeout_is_isolated_from_core_six_second_budget(self):
+        import io
+        from unittest.mock import MagicMock
+
+        holder={}
+        request=MagicMock()
+        request.status=200
+        request.read.return_value=b'{"Items":[],"StartIndex":0,"TotalRecordCount":0}'
+
+        class Response:
+            status=200
+            def __enter__(self): return self
+            def __exit__(self,*args): return False
+            def read(self,size): return b'{"Items":[],"StartIndex":0,"TotalRecordCount":0}'
+
+        class Opener:
+            def open(self,req,timeout):
+                holder["timeout"]=timeout
+                holder["url"]=req.full_url
+                holder["method"]=req.get_method()
+                return Response()
+
+        with patch.object(audit.core,"build_opener",return_value=Opener()):
+            result=audit.read_bounded_nextup(
+                "private-token",audit.time.monotonic()+60)
+        self.assertEqual(holder["timeout"],18)
+        self.assertEqual(holder["method"],"GET")
+        self.assertTrue(holder["url"].startswith("http://127.0.0.1:3240/"))
+        self.assertEqual(result["Items"],[])
+        self.assertEqual(audit.core.MAX_CALL_SECONDS,6)
+
+    def test_timeout_is_sanitized_and_fail_closed(self):
+        from urllib.error import URLError
+
+        class TimeoutOpener:
+            def open(self,req,timeout):
+                raise URLError(TimeoutError("SECRET token and private item"))
+
+        with patch.object(audit.core,"build_opener",return_value=TimeoutOpener()):
+            with self.assertRaisesRegex(
+                audit.core.StopAudit,"NEXTUP_18S_TIMEOUT"
+            ) as caught:
+                audit.read_bounded_nextup("private",audit.time.monotonic()+30)
+        self.assertNotIn("SECRET",str(caught.exception))
+        self.assertIn("NEXTUP_18S_TIMEOUT",audit.SAFE_STOP_CODES)
+
+    def test_unavailable_and_invalid_json_do_not_expose_original_response(self):
+        class BadOpener:
+            def open(self,req,timeout):
+                class Response:
+                    status=200
+                    def __enter__(self):return self
+                    def __exit__(self,*args):return False
+                    def read(self,size):return b"PRIVATE BODY Not JSON"
+                return Response()
+        with patch.object(audit.core,"build_opener",return_value=BadOpener()):
+            with self.assertRaisesRegex(
+                audit.core.StopAudit,"NEXTUP_18S_TRANSPORT_UNAVAILABLE"
+            ) as caught:
+                audit.read_bounded_nextup("private",audit.time.monotonic()+30)
+        self.assertNotIn("PRIVATE",str(caught.exception))
+
     def test_secrets_stay_unprinted_and_no_mutation(self):
         source=PATH.read_text()
         for phrase in ["core.credential()","core.bridge_gate()",
