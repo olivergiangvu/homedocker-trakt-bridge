@@ -134,6 +134,19 @@ RC3-I3 modifies **only the standalone host-side read-only catalog audit**:
 - On timeout/network/invalid JSON, emit a **fixed allowlisted** reason and phase without leaking token, ID, HTTP body, item metadata or URL. On STOP, separately verify Filter OFF.
 - CI regression fixtures check long-timeout isolation, immutable 6s core GET budget, timeout classification, no response-body disclosure and existing catalog fail-closed conditions. Actual HomeDocker catalog qualification awaits a subsequent operator GET-only audit.
 
+## RC3-I3 actual GET_EXISTING_EPISODE stop and RC3-I4 evidence separation
+
+Operator-run live RC3-I3 on 2026-10-20:
+- `RESULT=STOP_CATALOG_UNQUALIFIED`, `FAILURE_PHASE=GET_EXISTING_EPISODE`, `FAILURE_REASON=AIO_GET_UNAVAILABLE`; Filter OFF, no writes. This reader used the same generic 6s timeout. As in RC3-J, its error code alone does **not** prove timeout rather than transport, JSON or other GET failure.
+- The script only reaches that phase after successfully passing: mapped user, two identical NextUp=50 reads, 50-card metadata lookup, verified single canonical candidate, **two fully validated paginated catalog reads with identical page results**, and the exact existing NextUp Episode ID present in that catalog. This proves one *single-series catalog-to-NextUp item correspondence* in the examined window; it is not a broad Jellyfin catalog or actual playable stream proof.
+- The failure is the optional final **`GET /Items/{EpisodeId}`** detail probe, not NextUp pagination or catalog paging. Re-running 50 metadata requests solely to rediscover that is unnecessary without a targeted next diagnostic.
+
+RC3-I4 source-only correction:
+- Emits independent `RC3I_CATALOG_BINDING_GATE=VERIFIED_SINGLE_SERIES` only after both catalog reads replay unchanged **and** an exact existing NextUp Episode ID appears within the catalog. On a stop before that condition it emits `NOT_YET_VERIFIED`. Explicitly refuses to label `MEDIA_PLAYBACK_PROVEN` or `GLOBAL_NEXTUP_QUALIFIED`.
+- The one authenticated `GET /Items/{EpisodeId}` now has a **separate 18s deadline** (no retry; request ID must be discovered from that same live NextUp and catalog). Static redacted result classifications distinguish timeout, invalid JSON, non-200 status and other transport errors.
+- All other GET calls keep their established budget (18s *only* for NextUp, 6s for metadata/catalog), no production Gateway timeout change, no replay/watched writes, no Trakt writes, no downstream client changes. CI synthetic tests cover the independent evidence gate and error budget.
+- Even if RC3-I4 fully passes, complete per-user history enumeration, binding *all* watched series and streaming availability remain unqualified; R5 production ingress and Gateway Filter stay HOLD.
+
 ## What would make it a safe *usable* feature
 
 **Gate A (implemented, CI):** Pure source-agnostic adapter and synthetic tests for 20/20, 50/50, AIO offset-ignored, native-offset, wrong users, partial metadata, two active resumes, replay drift and no injected watch writes. It is deliberately not linked into the Gateway.
