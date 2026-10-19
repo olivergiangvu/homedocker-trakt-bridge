@@ -113,9 +113,9 @@ class SeriesCatalogTests(unittest.TestCase):
         fake = audit.core.StopAudit("AIO_GET_NON_200")
         with patch.object(audit.core, "credential",
                           return_value=("private", "mapped")), \
-             patch.object(audit.core, "bridge_gate", return_value=True), \\
+             patch.object(audit.core, "bridge_gate", return_value=True), \
              patch.object(audit.visibility, "verified_groups_from_bridge",
-                          return_value=[[CANON,ALIAS]]), \\
+                          return_value=[[CANON,ALIAS]]), \
              patch.object(audit.core, "make_reader",
                           return_value=lambda path: (_ for _ in ()).throw(fake)):
             with self.assertRaises(audit.core.StopAudit):
