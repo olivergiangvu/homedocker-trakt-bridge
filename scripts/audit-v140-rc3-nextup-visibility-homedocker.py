@@ -110,7 +110,7 @@ def summarize_visibility(rows, series_imdb, groups):
         "window_items": len(rows),
         "series_metadata_checked": len(series_imdb),
         "valid_imdb_metadata_cards": len(rows) - invalid_metadata,
-        "unverified_graph_cards": outside_graph,
+        "outside_verified_alias_group_cards": outside_graph,
         "canonical_cards": visible_canonical,
         "alias_cards": visible_alias,
         "groups_canonical_only_in_window": sum(
