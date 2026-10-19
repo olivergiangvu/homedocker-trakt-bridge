@@ -90,7 +90,8 @@ export function loadConfig() {
     // Remux or native Jellyfin may be selected separately after same-user API validation.
     jellyfinGatewaySourceKind: enumEnv('JELLYFIN_GATEWAY_SOURCE_KIND', 'aiostreams', ['aiostreams', 'remux', 'jellyfin']),
     jellyfinGatewayUpstreamUrl: (process.env.JELLYFIN_GATEWAY_UPSTREAM_URL || '').trim(),
-    jellyfinGatewayUserId: (process.env.JELLYFIN_GATEWAY_AIO_USER_ID || '').trim(),
+    // Generic Jellyfin source user ID; historical AIO-specific env remains an alias.
+    jellyfinGatewayUserId: ((process.env.JELLYFIN_GATEWAY_USER_ID ?? process.env.JELLYFIN_GATEWAY_AIO_USER_ID) || '').trim(),
     jellyfinGatewayProfileId: (process.env.JELLYFIN_GATEWAY_PROFILE_ID || '').trim(),
     // Opt-in raw Resume response passthrough; no identity normalization.
     jellyfinGatewayResumePassThrough: boolEnv('JELLYFIN_GATEWAY_RESUME_PASSTHROUGH', false),
