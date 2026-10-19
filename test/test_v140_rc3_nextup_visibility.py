@@ -33,7 +33,7 @@ class VisibilityTests(unittest.TestCase):
         self.assertEqual(report["groups_canonical_only_in_window"],1)
         self.assertEqual(report["groups_both_spellings_in_window"],0)
         self.assertEqual(report["groups_absent_from_window"],1)
-        self.assertEqual(report["unverified_graph_cards"],2)
+        self.assertEqual(report["outside_verified_alias_group_cards"],2)
 
     def test_co_visible_alias_does_not_invent_routing_or_merge(self):
         sample=rows("canonical","alias","group2_alias")
