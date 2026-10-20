@@ -233,10 +233,9 @@ def set_image(ref):
     data = ENV.read_bytes()
     if len(re.findall(rb"(?m)^TRAKT_BRIDGE_IMAGE=.*$", data)) != 1:
         raise Stop("IMAGE_VARIABLE_NOT_EXACT")
-    value = data.replace(b"\r\n", b"\n")
     changed = re.sub(rb"(?m)^TRAKT_BRIDGE_IMAGE=.*$",
-                     b"TRAKT_BRIDGE_IMAGE=" + ref.encode("ascii"), value)
-    if changed == value:
+                     b"TRAKT_BRIDGE_IMAGE=" + ref.encode("ascii"), data)
+    if changed == data:
         raise Stop("IMAGE_UPDATE_WOULD_BE_NOOP")
     replace_env_bytes(changed)
 
