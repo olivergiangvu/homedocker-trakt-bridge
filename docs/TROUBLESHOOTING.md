@@ -61,6 +61,18 @@ Do not delete AIOStreams state blindly to fix a client cache symptom.
 
 The historical dual-IMDb case is documented in [DEVELOPMENT.md](DEVELOPMENT.md).
 
+## v1.4 Gateway listener is healthy, but NextUp is unchanged
+
+Separate three independent states: (1) **listener provisioned** with exact source/user/profile mapping, (2) **effective Identity Filter** AUTO ON or persistent manual OFF, and (3) an **authorized client actually routed to that exact NextUp-only endpoint**.
+
+- The public `.env.example` defaults to `JELLYFIN_GATEWAY_ENABLED=false`. The Gateway is not activated simply by installing v1.4.
+- A ready listener or dashboard `ON` state is not evidence that Odin, Remux, Trellis, Strand, Desktop, nginx or QuickConnect uses it.
+- The filter only handles **eligible short first-page TV-series alias collisions** in `GET /Shows/NextUp` after authenticated same-user verification. Full/paginated/unknown-count requests, unsupported query selectors, movies, `/UserItems/Resume`, ambiguous aliases or competing playback resumes are deliberately passed through.
+- A known Desktop `userId`/`Limit=24`/`EnableResumable=false` query shape is not covered by the RC2 policy. Do not remove query parameters or broaden routing just to force a match.
+- Off-window NextUp item insertion is **not** shipped; related PRs are research-only. Do not delete watched records or force Trakt resync to make a missing shelf item appear.
+
+Troubleshoot read-only: check the authenticated dashboard's listener/filter/source mapping, compare the original AIO NextUp response with the requested client route (without publishing tokens), then review [v1.4 operations](STABLE-V1.4-OPERATIONS.md) and [release limitations](releases/v1.4.0.md). Never point a whole Jellyfin client at Gateway port `7101`.
+
 ## The same viewing appears twice in Trakt history
 
 This is different from duplicate Continue Watching cards. A duplicate Trakt history entry means Trakt recorded two viewing events for the same media item.
