@@ -135,9 +135,8 @@ async function fixture(t, {
     jellyfinGatewayUserId: expectedUser,
     jellyfinGatewayResumePassThrough: resumeEnabled,
   };
-  // The normal synthetic test fixture explicitly opts into identity filtering;
-  // actual production/default install always starts with filtering OFF.
-  if (enabled) db.cacheSet(gatewayFilterKey(PROFILE, config), { enabled: true });
+  // Qualify the real AUTO ON default: valid mapped source, no pre-seeded
+  // gateway preference. Individual tests can persist OFF/ON as a kill switch.
   const server = createJellyfinGateway({ config, db });
   t.after(() => server.close());
   server.listen(0, '127.0.0.1');
