@@ -62,12 +62,11 @@ jobs:
         id: meta
         with:
           images: ghcr.io/${{ github.repository }}
+          # Do not mutate :latest for v1.4 until post-deployment acceptance.
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha
-            # Keep the existing v1.3 :latest until v1.4 HomeDocker rollout
-            # and rollback acceptance have been independently observed.
             type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') && !startsWith(github.ref_name, 'v1.4') }}
 
       - uses: docker/build-push-action@v6
