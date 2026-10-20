@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from '../src/server.mjs';
 import { deriveProfileKey } from '../src/crypto.mjs';
-import { gatewayFilteringEnabled, setGatewayFilteringEnabled } from '../src/gateway-control.mjs';
+import { gatewayFilterKey, gatewayFilteringEnabled, setGatewayFilteringEnabled } from '../src/gateway-control.mjs';
 import { renderUnifiedGatewayPanel } from '../src/unified-gateway-panel.mjs';
 
 const PROFILE = 'a'.repeat(24), OTHER = 'b'.repeat(24);
@@ -55,10 +55,11 @@ const form = (url, key, state, opts = {}) => fetch(url + '/u/' + PROFILE
   body: 'state=' + state,
 });
 
-test('persistent profile ON/OFF preserves preference without histories or Trakt writes', async t => {
+test('valid Gateway source is AUTO ON; manual ON/OFF persists without histories or Trakt writes', async t => {
   const { db, config, counters, url, gateway } = await httpFixture(t);
   const key = deriveProfileKey(config.bridgeSecret, 'setup', PROFILE);
-  assert.equal(gatewayFilteringEnabled({ db, config, profileId: PROFILE }), false);
+  assert.equal(gatewayFilteringEnabled({ db, config, profileId: PROFILE }), true);
+  assert.equal(counters.writes, 0); // AUTO ON does not insert a preference
   for (const desired of ['on', 'off', 'on']) {
     const response = await form(url, key, desired);
     assert.equal(response.status, 302);
@@ -89,7 +90,7 @@ test('control refuses cross-origin, absent origin, wrong bearer, GET and malform
   assert.equal((await form(url, key, 'on', { headers: { 'sec-fetch-site': 'cross-site' } })).status, 403);
   assert.equal((await form(url, key, 'maybe')).status, 400);
   assert.equal((await fetch(url + '/u/' + PROFILE + '/gateway/filter?key=' + key)).status, 405);
-  assert.equal(gatewayFilteringEnabled({ db, config, profileId: PROFILE }), false);
+  assert.equal(gatewayFilteringEnabled({ db, config, profileId: PROFILE }), true);
   assert.equal(counters.writes, 0);
 });
 
@@ -192,28 +193,45 @@ test('admin can toggle mapped source but another profile cannot', async t => {
   assert.equal(counters.writes, 1);
 });
 
-test('an ON preference never follows AIO to Remux or another Jellyfin user', () => {
+test('source-scoped manual OFF persists but never suppresses another configured user/source', () => {
   const { db, config, gateway } = fixture();
-  setGatewayFilteringEnabled({ db, config, gateway, profileId: PROFILE, enabled: true });
   assert.equal(gatewayFilteringEnabled({ db, config, profileId: PROFILE }), true);
+  setGatewayFilteringEnabled({ db, config, gateway, profileId: PROFILE, enabled: false });
+  assert.equal(gatewayFilteringEnabled({ db, config, profileId: PROFILE }), false);
   const remux = { ...config, jellyfinGatewaySourceKind: 'remux',
     jellyfinGatewayUpstreamUrl: 'http://remux:3000/jellyfin' };
-  assert.equal(gatewayFilteringEnabled({ db, config: remux, profileId: PROFILE }), false);
+  assert.equal(gatewayFilteringEnabled({ db, config: remux, profileId: PROFILE }), true);
   const otherUser = { ...config, jellyfinGatewayUserId: 'different-user-999' };
-  assert.equal(gatewayFilteringEnabled({ db, config: otherUser, profileId: PROFILE }), false);
+  assert.equal(gatewayFilteringEnabled({ db, config: otherUser, profileId: PROFILE }), true);
   const native = { ...config, jellyfinGatewaySourceKind: 'jellyfin' };
-  assert.equal(gatewayFilteringEnabled({ db, config: native, profileId: PROFILE }), false);
-  assert.equal(gatewayFilteringEnabled({ db, config, profileId: PROFILE }), true);
+  assert.equal(gatewayFilteringEnabled({ db, config: native, profileId: PROFILE }), true);
+  assert.equal(gatewayFilteringEnabled({ db, config, profileId: PROFILE }), false);
 });
 
-test('unprovisioned transport fails closed with no persistent writes', async t => {
+test('unprovisioned transport rejects controls despite preconfigured AUTO ON policy', async t => {
   const { db, config, counters, url } = await httpFixture(t, { gateway: null });
   const key = deriveProfileKey(config.bridgeSecret, 'setup', PROFILE);
   const r = await form(url, key, 'on');
   assert.equal(r.status, 409);
   assert.equal(counters.writes, 0);
-  assert.equal(gatewayFilteringEnabled({ db, config, profileId: PROFILE }), false);
+  assert.equal(gatewayFilteringEnabled({ db, config, profileId: PROFILE }), true);
   assert.throws(() => setGatewayFilteringEnabled({
     db, config, gateway: null, profileId: PROFILE, enabled: true,
   }), /listener_or_source/);
+});
+
+test('AUTO ON fails closed for disabled, unmapped, incomplete or malformed preference', () => {
+  const { db, config, counters } = fixture();
+  const disabled = { ...config, jellyfinGatewayEnabled: false };
+  const incomplete = { ...config, jellyfinGatewayUserId: '' };
+  const wrong = { ...config, jellyfinGatewayProfileId: OTHER };
+  for (const item of [disabled, incomplete, wrong]) {
+    assert.equal(gatewayFilteringEnabled({ db, config: item, profileId: PROFILE }), false);
+  }
+  assert.equal(gatewayFilteringEnabled({ db, config, profileId: OTHER }), false);
+  assert.equal(gatewayFilteringEnabled({ db: null, config, profileId: PROFILE }), false);
+  const key = gatewayFilterKey(PROFILE, config);
+  db.cacheSet(key, { enabled: 'yes' });
+  assert.equal(gatewayFilteringEnabled({ db, config, profileId: PROFILE }), false);
+  assert.equal(counters.events, 0);
 });
