@@ -45,7 +45,7 @@ The repository includes `scripts/deploy-v1.4.0-homedocker.py` for a **specific**
 To inspect the preflight logic in a trusted checkout, the read-only invocation is:
 
 ```bash
-python3 -B scripts/deploy-v1.4.0-homedocker.py
+sudo python3 -B scripts/deploy-v1.4.0-homedocker.py
 ```
 
 If it reports STOP, treat that as a safety condition; do not follow it with a generic `docker compose up -d` or a Portainer whole-stack redeploy. Use the existing validated recovery procedure and protected backups for any future upgrade.
