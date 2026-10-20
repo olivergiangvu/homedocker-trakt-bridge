@@ -84,6 +84,20 @@ class AnchorDropTests(unittest.TestCase):
         with self.assertRaisesRegex(audit.shadow.StopAudit,"SOURCE_RANK_INVALID"):
             audit.summarize(index,data)
 
+    def test_null_and_numeric_string_drop_timestamps_match_upstream(self):
+        index,data=fixture(3)
+        data["drops"]=[(index["recent"][0][0],None,None)]
+        result,_=audit.summarize(index,data)
+        self.assertEqual(result["TOP_200"]["EFFECTIVE_DROP_HINT"],0)
+        data["drops"]=[(index["recent"][0][0],None,"4")]
+        result,_=audit.summarize(index,data)
+        self.assertEqual(result["TOP_200"]["EFFECTIVE_DROP_HINT"],1)
+        data["drops"]=[(index["recent"][0][0],None,"invalid-hidden-value")]
+        with self.assertRaisesRegex(
+            audit.shadow.StopAudit,"DROP_ROW_INVALID"
+        ):
+            audit.summarize(index,data)
+
     def test_actual_sqlite_anchor_query_scoped_and_query_only(self):
         db=sqlite3.connect(":memory:")
         db.executescript("""
