@@ -1,0 +1,285 @@
+"""RC3-I offline coverage of real catalog GET-only probe logic."""
+import importlib.util
+from pathlib import Path
+import unittest
+from unittest.mock import patch
+
+PATH = Path(__file__).resolve().parents[1] / "scripts/audit-v140-rc3-series-catalog-homedocker.py"
+spec=importlib.util.spec_from_file_location("rc3i_probe",PATH)
+audit=importlib.util.module_from_spec(spec)
+spec.loader.exec_module(audit)
+
+CANON="tt44051354"
+ALIAS="tt44094505"
+SERIES_ID="series-from-live-nextup"
+
+
+def episode(i, series=SERIES_ID):
+    return {"Id":"episode-"+str(i),"Type":"Episode","SeriesId":series,
+            "ParentIndexNumber":1,"IndexNumber":i}
+
+
+def mock_reader(*,length=21,ignored_offset=False,total_override=None,
+                extra_bad_item=False,mutable=False):
+    records=[episode(i) for i in range(1,length+1)]
+    if extra_bad_item: records[0]["SeriesId"]="OTHER"
+    reads=[]
+    def read(path):
+        reads.append(path)
+        assert path.startswith("/Shows/")
+        assert "StartIndex=" in path and "Limit=100" in path
+        index=int(path.split("StartIndex=")[1].split("&")[0])
+        if ignored_offset:index=0
+        found=records[index:index+100]
+        return {"Items":found,"TotalRecordCount":(
+            total_override if total_override is not None else length),
+            "StartIndex":index,
+            "Count":len(found)}
+    return read, reads
+
+
+class SeriesCatalogTests(unittest.TestCase):
+    def test_one_page_catalog_with_21_items_is_real(self):
+        read, requests=mock_reader()
+        items,pages=audit.scan_pages(read,SERIES_ID)
+        self.assertEqual(len(items),21)
+        self.assertEqual(len(pages),1)
+        self.assertEqual(len(requests),1)
+        self.assertEqual(items[0]["Id"],"episode-1")
+
+    def test_two_pages_with_101_items_are_contiguous(self):
+        read, requests=mock_reader(length=101)
+        items,pages=audit.scan_pages(read,SERIES_ID)
+        self.assertEqual(len(items),101)
+        self.assertEqual(len(pages),2)
+        self.assertIn("StartIndex=100",requests[1])
+
+    def test_nextup_ignored_offset_not_accepted_in_catalog(self):
+        read,_=mock_reader(length=101,ignored_offset=True)
+        with self.assertRaisesRegex(
+            audit.core.StopAudit,"CATALOG_PAGING_CONTRACT_INVALID"
+        ):
+            audit.scan_pages(read,SERIES_ID)
+
+    def test_truncated_catalog_cannot_claim_full_count(self):
+        read,_=mock_reader(length=101,total_override=202)
+        with self.assertRaisesRegex(
+            audit.core.StopAudit,"CATALOG_PARTIAL_TOTAL"
+        ):
+            audit.scan_pages(read,SERIES_ID)
+
+    def test_over_400_items_fails_budget_not_fake_total(self):
+        read,_=mock_reader(length=405)
+        with self.assertRaisesRegex(
+            audit.core.StopAudit,"CATALOG_EXCEEDS_AUDIT_BUDGET"
+        ):
+            audit.scan_pages(read,SERIES_ID)
+
+    def test_cross_source_episode_id_fails_closed(self):
+        read,_=mock_reader(extra_bad_item=True)
+        with self.assertRaisesRegex(
+            audit.core.StopAudit,"CATALOG_EPISODE_IDENTITY_INVALID"
+        ):
+            audit.scan_pages(read,SERIES_ID)
+
+    def test_only_real_canonical_card_selected(self):
+        rows=[{"SeriesId":"canon","Id":"live-id","Type":"Episode"}]
+        candidate=audit.candidate_from_window(rows,{"canon":CANON},[
+            [CANON,ALIAS]
+        ])
+        self.assertEqual(candidate["Id"],"live-id")
+        with self.assertRaisesRegex(
+            audit.core.StopAudit,"CANONICAL_ONLY_NEXTUP_NOT_PROVEN"
+        ):
+            audit.candidate_from_window(
+                rows+[{"SeriesId":"alias","Id":"old","Type":"Episode"}],
+                {"canon":CANON,"alias":ALIAS},[[CANON,ALIAS]]
+            )
+
+    def test_safe_stop_codes_never_echo_untrusted_exception_data(self):
+        safe = audit.core.StopAudit("CATALOG_EPISODE_IDENTITY_INVALID")
+        self.assertEqual(audit.safe_stop_code(safe),
+                         "CATALOG_EPISODE_IDENTITY_INVALID")
+        # An upstream response/exception might contain bearer/URLs/IDs.
+        # Such text must NEVER be printed, even if it comes from StopAudit.
+        untrusted = audit.core.StopAudit("bearer token example with HTTP body")
+        self.assertEqual(audit.safe_stop_code(untrusted),
+                         "UNCLASSIFIED_SAFE_STOP")
+        self.assertEqual(audit.safe_stop_code(ValueError("secret")),
+                         "LOCAL_RUNTIME_FAILURE")
+        self.assertIn("CATALOG_FIRST_PASS", audit.PHASES)
+
+    def test_main_marks_phase_before_authenticated_probe_error(self):
+        fake = audit.core.StopAudit("AIO_GET_NON_200")
+        with patch.object(audit.core, "credential",
+                          return_value=("private", "mapped")), \
+             patch.object(audit.core, "bridge_gate", return_value=True), \
+             patch.object(audit.visibility, "verified_groups_from_bridge",
+                          return_value=[[CANON,ALIAS]]), \
+             patch.object(audit.core, "make_reader",
+                          return_value=lambda path: (_ for _ in ()).throw(fake)):
+            with self.assertRaises(audit.core.StopAudit):
+                audit.main()
+        self.assertEqual(audit.PHASE, "AUTHENTICATED_USER_PROBE")
+
+    def test_18s_nextup_timeout_is_isolated_from_core_six_second_budget(self):
+        import io
+        from unittest.mock import MagicMock
+
+        holder={}
+        request=MagicMock()
+        request.status=200
+        request.read.return_value=b'{"Items":[],"StartIndex":0,"TotalRecordCount":0}'
+
+        class Response:
+            status=200
+            def __enter__(self): return self
+            def __exit__(self,*args): return False
+            def read(self,size): return b'{"Items":[],"StartIndex":0,"TotalRecordCount":0}'
+
+        class Opener:
+            def open(self,req,timeout):
+                holder["timeout"]=timeout
+                holder["url"]=req.full_url
+                holder["method"]=req.get_method()
+                return Response()
+
+        with patch.object(audit.core,"build_opener",return_value=Opener()):
+            result=audit.read_bounded_nextup(
+                "private-token",audit.time.monotonic()+60)
+        self.assertEqual(holder["timeout"],18)
+        self.assertEqual(holder["method"],"GET")
+        self.assertTrue(holder["url"].startswith("http://127.0.0.1:3240/"))
+        self.assertEqual(result["Items"],[])
+        self.assertEqual(audit.core.MAX_CALL_SECONDS,6)
+
+    def test_timeout_is_sanitized_and_fail_closed(self):
+        from urllib.error import URLError
+
+        class TimeoutOpener:
+            def open(self,req,timeout):
+                raise URLError(TimeoutError("SECRET token and private item"))
+
+        with patch.object(audit.core,"build_opener",return_value=TimeoutOpener()):
+            with self.assertRaisesRegex(
+                audit.core.StopAudit,"NEXTUP_18S_TIMEOUT"
+            ) as caught:
+                audit.read_bounded_nextup("private",audit.time.monotonic()+30)
+        self.assertNotIn("SECRET",str(caught.exception))
+        self.assertIn("NEXTUP_18S_TIMEOUT",audit.SAFE_STOP_CODES)
+
+    def test_unavailable_and_invalid_json_do_not_expose_original_response(self):
+        class BadOpener:
+            def open(self,req,timeout):
+                class Response:
+                    status=200
+                    def __enter__(self):return self
+                    def __exit__(self,*args):return False
+                    def read(self,size):return b"PRIVATE BODY Not JSON"
+                return Response()
+        with patch.object(audit.core,"build_opener",return_value=BadOpener()):
+            with self.assertRaisesRegex(
+                audit.core.StopAudit,"NEXTUP_18S_TRANSPORT_UNAVAILABLE"
+            ) as caught:
+                audit.read_bounded_nextup("private",audit.time.monotonic()+30)
+        self.assertNotIn("PRIVATE",str(caught.exception))
+
+    def test_single_existing_episode_get_uses_only_specific_18s_budget(self):
+        holder = {}
+        class Response:
+            status = 200
+            def __enter__(self): return self
+            def __exit__(self,*args): return False
+            def read(self,size):
+                return (b'{"Type":"Episode","Id":"episode-7",'
+                        b'"SeriesId":"series-from-live-nextup",'
+                        b'"ParentIndexNumber":1,"IndexNumber":7}')
+
+        class Opener:
+            def open(self, request, timeout):
+                holder["timeout"] = timeout
+                holder["path"] = request.full_url
+                holder["method"] = request.get_method()
+                return Response()
+
+        with patch.object(audit.core,"build_opener",return_value=Opener()):
+            result=audit.read_existing_episode_detail(
+                "private-token","episode-7",audit.time.monotonic()+40)
+        self.assertEqual(result["Id"],"episode-7")
+        self.assertEqual(holder["timeout"],18)
+        self.assertEqual(holder["method"],"GET")
+        self.assertEqual(holder["path"],
+                         "http://127.0.0.1:3240/jellyfin/Items/episode-7")
+        self.assertEqual(audit.core.MAX_CALL_SECONDS,6)
+
+    def test_single_existing_episode_stop_does_not_leak_raw_errors(self):
+        from urllib.error import URLError
+
+        class Timeout:
+            def open(self, request, timeout):
+                raise URLError(TimeoutError("secret-and-private-id"))
+        with patch.object(audit.core,"build_opener",return_value=Timeout()):
+            with self.assertRaisesRegex(audit.core.StopAudit,
+                                        "EPISODE_GET_18S_TIMEOUT") as result:
+                audit.read_existing_episode_detail(
+                    "secret","episode-7",audit.time.monotonic()+40)
+        self.assertNotIn("secret",str(result.exception))
+        self.assertIn("EPISODE_GET_18S_TIMEOUT",audit.SAFE_STOP_CODES)
+
+    def test_only_catalog_passed_can_advance_binding_evidence_gate(self):
+        # Simulates the final GET error while all earlier qualified snapshots
+        # and the discovered catalog/NextUp episode ID are internally coherent.
+        ep_id="episode-7"
+        catalog = [episode(i) for i in range(1,12)]
+        nextup={"Type":"Episode","SeriesId":SERIES_ID,"Id":ep_id}
+        def read_metadata(path):
+            if path == "/Users/Me": return {"Id":"mapped"}
+            if path.startswith("/Items/") and path.endswith(SERIES_ID):
+                return {"Id":SERIES_ID,"Type":"Series",
+                        "ProviderIds":{"Imdb":CANON}}
+            raise AssertionError("Unexpected local mock call")
+
+        # main() is still fully read-only and calls no production gateway writes
+        with patch.object(audit.core,"credential",
+                          return_value=("token","mapped")), \
+             patch.object(audit.core,"bridge_gate",return_value=True), \
+             patch.object(audit.visibility,"verified_groups_from_bridge",
+                          return_value=[[CANON,ALIAS]]), \
+             patch.object(audit.core,"make_reader",
+                          return_value=read_metadata), \
+             patch.object(audit,"read_bounded_nextup",
+                          return_value={"Items":[nextup],
+                                        "StartIndex":0,
+                                        "TotalRecordCount":1}), \
+             patch.object(audit,"scan_pages",
+                          return_value=(catalog,[
+                              {"Items":catalog,"StartIndex":0,
+                               "TotalRecordCount":11}
+                          ])), \
+             patch.object(audit,"read_existing_episode_detail",
+                          side_effect=audit.core.StopAudit(
+                              "EPISODE_GET_18S_TIMEOUT")):
+            # Override the file's 50-thread metadata search: just one episode.
+            with self.assertRaisesRegex(audit.core.StopAudit,
+                                        "EPISODE_GET_18S_TIMEOUT"):
+                audit.main()
+        self.assertEqual(audit.PHASE,"GET_EXISTING_EPISODE")
+        self.assertTrue(audit.CATALOG_EVIDENCE_VALIDATED)
+
+    def test_secrets_stay_unprinted_and_no_mutation(self):
+        source=PATH.read_text()
+        for phrase in ["core.credential()","core.bridge_gate()",
+                       '"/Users/Me"',"ThreadPoolExecutor(max_workers=4)",
+                       "RC3I_SECRETS_PRINTED=NO"]:
+            self.assertIn(phrase,source)
+        for forbidden in ["docker compose","UPDATE watch_state","DELETE FROM watch_state",
+                          "TraktClient","/PlaybackInfo","method='POST'"]:
+            # /PlaybackInfo occurs only in a comment, ensure no HTTP request.
+            if forbidden=="/PlaybackInfo":
+                self.assertNotIn('read("/Items/"+quote(nextup_ep,safe="")+"/PlaybackInfo")',source)
+            else:
+                self.assertNotIn(forbidden,source)
+
+
+if __name__=="__main__":
+    unittest.main()
