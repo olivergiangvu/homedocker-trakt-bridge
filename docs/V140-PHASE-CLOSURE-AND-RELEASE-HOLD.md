@@ -1,4 +1,7 @@
-# v1.4.0 Unified Gateway — phase closure register and release hold
+# v1.4.0 R23D — historical research phase closure and release hold
+
+> **HISTORICAL RECORD (as of 2026-10-16):** The R23D privileged host-fencing/boot-admission experiment below was not promoted wholesale into the narrower Practical Unified Gateway release. The separately reviewed [v1.4.0 Stable](https://github.com/olivergiangvu/homedocker-trakt-bridge/releases/tag/v1.4.0) was published on **2026-10-20**. Thus the prior `V140_STABLE_RELEASE_HOLD`, `v1.3.0 latest stable` and RC6-host statements below are **dated research checkpoints**, not current GitHub release status or a claim of present HomeDocker runtime. Do not delete this file: the negative security evidence and stop conditions remain important for any future expanded threat model. See [v1.4 Stable operations](STABLE-V1.4-OPERATIONS.md).
+
 
 **Date:** 2026-10-16
 **Release status:** `V140_STABLE_RELEASE_HOLD`

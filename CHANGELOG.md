@@ -2,6 +2,22 @@
 
 All notable changes to HomeDocker Trakt Bridge are documented here.
 
+## [1.4.0] - 2026-10-20
+
+### Stable release — one Trakt Bridge with bounded read-only Gateway
+- Published [v1.4.0](https://github.com/olivergiangvu/homedocker-trakt-bridge/releases/tag/v1.4.0) from reviewed commit `33e97c9ffc52003f7f9ac11f37b7c092ef993207`.
+- Integrates the **read-only Jellyfin NextUp Identity Gateway** into the existing Bridge process/dashboard. No second Trakt OAuth writer, Bridge SQLite owner or automatic history migration.
+- Conservatively normalizes **verified same-user TV-series alias collisions** in eligible `GET /Shows/NextUp` response shapes; unsupported, ambiguous, full/paginated queries are passed through unchanged.
+- Gateway listener defaults **OFF** until an operator provisions exact source/user/profile mapping. Valid mappings have **AUTO ON** Identity Filter with authenticated persistent manual **OFF** override.
+- Keeps the v1.3 watch-state v2, resume, scrobble, rate-limit and non-writing comparison safeguards. No automatic Trakt/AIO history repair or DB rewrite.
+
+### Scope boundaries and operation
+- Does not automatically redirect nginx/clients or normalize movies, `/UserItems/Resume`, large/off-window shelves or every NextUp variant. Listener enabled is not proof of client ingress.
+- AIOStreams stays an independent upstream; preserve single-writer ownership, immutable deployment digest, online SQLite backup and RC2 rollback until host acceptance.
+- After the immutable application tag, operator tooling on `main` gained a guarded RC2→Stable two-Compose cutover and related regression tests; those changes are **not** silently part of the tagged v1.4 application image.
+
+See [v1.4 stable release notes](docs/releases/v1.4.0.md) and [v1.4 HomeDocker operations](docs/STABLE-V1.4-OPERATIONS.md).
+
 ## [1.3.0] - 2026-10-13
 
 ### Stable promotion

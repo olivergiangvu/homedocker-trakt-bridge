@@ -1,4 +1,7 @@
-# HomeDocker Stable deployment — v1.3.0 (Bridge only)
+# HomeDocker Stable deployment — v1.3.0 (Bridge only; historical runbook)
+
+> **ARCHIVED / version-specific:** This page documents the original RC6 → v1.3.0 cutover only. The current published stable is [v1.4.0](https://github.com/olivergiangvu/homedocker-trakt-bridge/releases/tag/v1.4.0). For current production status, safe checks, RC2 → v1.4.0 one-time helper and rollback, use [v1.4 Stable operations](STABLE-V1.4-OPERATIONS.md). Do not apply these RC6-specific commands to a v1.4 host. Statements below describe evidence available **at the original v1.3 release date**.
+
 
 **Release published:** [v1.3.0](https://github.com/olivergiangvu/homedocker-trakt-bridge/releases/tag/v1.3.0), immutable tag `8c505089e0c5ad2e7ce1514bd9c1acf1722bea95`, published 2026-10-14. The image release changes Bridge version metadata versus qualified RC6, **not application logic or DB schema**.
 

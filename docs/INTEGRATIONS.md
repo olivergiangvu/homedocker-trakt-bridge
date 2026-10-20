@@ -74,6 +74,14 @@ Capture the prior running AIO image ID/digest only as a **temporary rollback ass
 
 See [Stable qualification](design/v1.3-stable-qualification.md) for the rolling-upstream acceptance matrix and [Operations](OPERATIONS.md) for rollback practices.
 
+## v1.4 Unified Gateway and client routing
+
+The optional NextUp Identity Gateway is **inside the Trakt Bridge process**. It projects verified, same-user **TV-series identity alias collisions** into one eligible `GET /Shows/NextUp` card. Identity Filter is AUTO ON only after explicit valid listener/source/user/profile provisioning; the authenticated dashboard supports a persistent manual OFF override.
+
+This is **not** a global Jellyfin/NextUp fix and not a general proxy. Unsupported client request shapes, paginated or full result pages, ambiguous identity and competing Resume cases pass through without filtering. Movies, Resume, scrobble and watched/history writes are untouched. `/Users/Me` and the relevant upstream identity checks are authenticated and same-user scoped.
+
+**Client behavior remains separate:** neither the release nor enabling the listener modifies nginx, AIOStreams, QuickConnect or login base URLs. A client sees normalization only after an operator explicitly configures and validates an approved NextUp-only route. Never expose internal port `7101` or point the entire Jellyfin API at it. See [v1.4 operator guide](STABLE-V1.4-OPERATIONS.md).
+
 ## Native Trakt clients
 
 Some clients can use both:
@@ -99,7 +107,7 @@ The historical dual-IMDb regression that motivated this rule is documented in [D
 
 A separate non-blocking observation remains under investigation: the same viewing can occasionally appear twice in Trakt history when more than one playback path is allowed to write to Trakt. The first diagnostic question is therefore **which components are writers**, not whether the watched/resume read-authority model is correct.
 
-Do not disable a working writer globally just to hide duplicate play counts unless you are deliberately isolating paths for diagnosis. This observation does not currently block the v1.0 release gate and is tracked separately from identity/Continue Watching correctness.
+Do not disable a working writer globally just to hide duplicate play counts unless you are deliberately isolating paths for diagnosis. This historical duplicate-play observation is separate from v1.4's read-only NextUp filter and remains a multi-writer diagnostic concern, not an authorization to replay or delete history.
 
 ## Odin / Jellyfin-compatible clients without native Trakt
 

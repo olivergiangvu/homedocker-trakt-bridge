@@ -1,136 +1,204 @@
 # HomeDocker Trakt Bridge
 
+**One canonical Trakt history. One AIOStreams state bridge. One optional, read-only Jellyfin NextUp Gateway.**
+
 [![CI](https://github.com/olivergiangvu/homedocker-trakt-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/olivergiangvu/homedocker-trakt-bridge/actions/workflows/ci.yml)
-[![Latest release](https://img.shields.io/github/v/release/olivergiangvu/homedocker-trakt-bridge)](https://github.com/olivergiangvu/homedocker-trakt-bridge/releases/latest)
+[![Stable release](https://img.shields.io/github/v/release/olivergiangvu/homedocker-trakt-bridge?label=stable)](https://github.com/olivergiangvu/homedocker-trakt-bridge/releases/latest)
 [![License: MIT](https://img.shields.io/github/license/olivergiangvu/homedocker-trakt-bridge)](LICENSE)
+[![Docker image](https://img.shields.io/badge/container-GHCR-2496ED?logo=docker&logoColor=white)](https://github.com/olivergiangvu/homedocker-trakt-bridge/pkgs/container/homedocker-trakt-bridge)
 
-Self-hosted **Trakt sync for AIOStreams and Jellyfin-compatible clients**.
+A self-hosted **Trakt ↔ AIOStreams `watch_state` v2 bridge** for Jellyfin-compatible playback clients. It keeps **Trakt as the canonical watched/resume history** and makes that state available through AIOStreams, without turning secondary tracker histories into competing authorities.
 
-It keeps Trakt as the canonical watched/resume history while AIOStreams provides the Jellyfin-compatible playback/state surface used by clients such as Strand, Remux and Trellis.
+**Current published stable: [v1.4.0 — Unified Gateway](https://github.com/olivergiangvu/homedocker-trakt-bridge/releases/tag/v1.4.0)** · Published **20 October 2026** · [Release notes](docs/releases/v1.4.0.md) · [What's changed](CHANGELOG.md)
+
+> **Release ≠ deployment.** A published GitHub tag, a GHCR image, an installed HomeDocker container, an enabled Gateway listener and a client actually routing through that Gateway are independent states. This README describes released capabilities, **not** unverified behavior on every installation.
+
+[**Quick start**](#quick-start--new-installation) · [**v1.4 Gateway**](#v14-unified-gateway) · [**How it works**](#architecture) · [**Production operations**](docs/STABLE-V1.4-OPERATIONS.md) · [**Full documentation**](docs/README.md)
+
+---
+
+## Why HomeDocker Trakt Bridge?
+
+Different Jellyfin-compatible clients can expose playback, Continue Watching and watched-state through AIOStreams, while some of those same clients also integrate with Trakt natively. Without a clear source of truth, identity mismatches and overlapping write paths can create inconsistent watched/resume views or repeated history events.
+
+HomeDocker Trakt Bridge offers a **single, auditable integration boundary**:
+
+- **Read:** Trakt watched history, progress and watchlists → Bridge → AIOStreams / clients.
+- **Write:** AIOStreams playback and watched/watchlist events → Bridge → Trakt, with retries, deduplication and rate-limit safeguards.
+- **Observe:** health, connection state, errors and optional read-only AIO/Trakt comparisons.
+- **Project, optionally in v1.4:** verified TV-series identity aliases into eligible **NextUp-only** responses, without modifying underlying watch history.
+
+It is **not** a general Jellyfin server, a Trakt replacement, a bulk history-repair utility or a universal duplicate-card fix.
+
+## Architecture
 
 ```mermaid
 flowchart LR
-    C["Jellyfin-compatible clients"] --> A["AIOStreams"]
-    A <--> B["Trakt Bridge"]
-    B <--> T["Trakt"]
+    C["Jellyfin-compatible clients<br/>Strand · Remux · Trellis · other clients"]
+    A["AIOStreams<br/>Jellyfin-compatible state / playback"]
+    T["Trakt<br/>Canonical watched / resume history"]
+    M["AIOMetadata (optional)<br/>Metadata / secondary tracker writes"]
+
+    subgraph P["One HomeDocker Trakt Bridge process"]
+        B["Bridge<br/>watch_state v2 · scrobble · sync"]
+        G["v1.4 NextUp Gateway<br/>read-only, optional"]
+    end
+
+    C <-->|"Jellyfin-compatible API"| A
+    A <-->|"watch_state v2 push / pull"| B
+    B <-->|"Trakt API"| T
+    C -. "explicit, approved NextUp-only route" .-> G
+    G -. "authenticated same-user GET" .-> A
+    M -. "optional separate integration" .-> C
 ```
 
-## Dashboard
+| Component | Responsibility |
+| --- | --- |
+| **Trakt** | Authoritative long-term watched history and resume progress |
+| **Trakt Bridge** | One Trakt OAuth writer, state translation, scrobbling, reconciliation observations and operator dashboard |
+| **AIOStreams** | Jellyfin-compatible playback and watched/resume state surface used by clients |
+| **v1.4 NextUp Gateway** | Optional, same-process **read-only** projection for narrowly qualified TV-series identity collisions |
+| **AIOMetadata (optional)** | Metadata/catalog and possible secondary-tracker write fan-out; **not** a competing external watched-history read authority |
 
-![Sanitized HomeDocker Trakt Bridge v1.0.0 dashboard](docs/assets/dashboard-v1-public.png)
-
-The operator dashboard exposes connection health, pull identity, authoritative watched/watchlist state and recent sync activity. The screenshot above is sanitized; live Manifest URLs are credentials and must not be published.
+**Design rule:** avoid multiple external tracker-history sources pushing conflicting watched/resume state back into the same AIOStreams/Jellyfin surface. Clients with native Trakt should converge on Trakt's identity namespace (see [Integrations](docs/INTEGRATIONS.md)).
 
 ## Features
 
-- playback scrobbling: start, pause and stop
-- watched / unwatched history sync
-- resume state pulled from Trakt into AIOStreams
-- movie and show watchlist sync
-- bulk season/show watched updates
-- retry-safe and restart-safe processing
-- Trakt rate-limit protection and bounded stale fallback
-- native Trakt + AIOStreams coexistence
-- optional read-only AIO local-state gap detection with per-item settlement, restart-safe coalescing and position-aware delivery correlation
-- lightweight operator dashboard with health and sync status
+| Capability | v1.4 status | Notes |
+| --- | --- | --- |
+| Trakt ↔ AIOStreams `watch_state` v2 | **Core** | Profile-specific push/pull integration |
+| Start, pause and stop scrobbling | **Core** | Retry-safe processing and terminal-state guards |
+| Watched/unwatched movies and episodes | **Core** | Includes supported season/show bulk watched changes |
+| Resume/progress and movie/show watchlists | **Core** | Trakt remains authoritative |
+| Native Trakt + AIOStreams coexistence | **Supported** | `PULL_IDENTITY_MODE=trakt` recommended |
+| Semantic history dedupe and Trakt `429` handling | **Core** | Bounded cooldown, retries and stale-state safeguards |
+| Dashboard / health / readiness | **Core** | Current state, operational events and error diagnosis |
+| AIO local-state reconciler | **Optional, non-writing** | `detect` or `compare`; no automatic repair writeback |
+| Unified NextUp Identity Gateway | **Optional in v1.4** | Requires operator provisioning and qualified client routing |
+| All-client NextUp / Resume / movie deduplication | **Not supported** | Unsupported or ambiguous cases pass through unchanged |
 
-## Quick start
+## v1.4 Unified Gateway
 
-Requirements: Docker Engine, Docker Compose, a Trakt API application and an HTTPS reverse proxy.
+v1.4 adds a **read-only Jellyfin NextUp Identity Gateway inside the existing Bridge process**. Where the upstream identity graph supports it, the Gateway can present a verified duplicate **TV-series alias collision** as one card in an eligible `GET /Shows/NextUp` response.
+
+The default release does **not** launch a second Bridge, another SQLite database or another Trakt writer. It also does **not** automatically route any client to the Gateway.
+
+### Three separate activation stages
+
+| Stage | What it means | Automatic? |
+| --- | --- | --- |
+| **1. Provision listener** | Operator enables the Gateway and supplies an exact upstream source, Jellyfin user and Bridge profile mapping | **No** — example default is OFF |
+| **2. Enable effective filter** | For a valid provisioned mapping, Identity Filter is **AUTO ON**; authenticated **manual OFF** takes precedence and persists across restarts | **Yes, only after valid provisioning** |
+| **3. Route a client** | An operator separately verifies an approved, **NextUp-only** client request path through the Gateway | **No** — never implied by a listening socket |
+
+**Scope limitations (intentional):**
+
+- Only verified **TV-series** aliases in supported, coherent, short first-page NextUp responses.
+- Full/paginated results, unsupported query shapes, unknown/inconsistent counts and ambiguous identity or Resume conditions are **passed through unchanged**.
+- **Movies, `/UserItems/Resume`, normal playback, watched markers and Trakt history are not rewritten.**
+- Not a universal fix for Odin, AIOStreams Desktop or other clients. Large-shelf/off-window item insertion remains research, **not** a v1.4 release feature.
+- **Port `7101` is an internal listener only.** Never expose it publicly or repoint an entire Jellyfin client/API base URL at a NextUp-only Gateway.
+
+For exact operating boundaries, see [v1.4 Stable operations](docs/STABLE-V1.4-OPERATIONS.md), [Configuration](docs/CONFIGURATION.md) and [release limitations](docs/releases/v1.4.0.md).
+
+## Quick start — new installation
+
+> These instructions are for a **new standalone installation**, not an upgrade of an existing HomeDocker/Portainer production stack. Production operators should use the [verified v1.4 guide](docs/STABLE-V1.4-OPERATIONS.md) instead.
+
+**Prerequisites:** Linux/Docker Engine with Docker Compose, a Trakt API application, AIOStreams supporting `watch_state` v2 and an HTTPS reverse proxy (for example, host nginx).
+
+**1. Prepare files**
 
 ```bash
 git clone https://github.com/olivergiangvu/homedocker-trakt-bridge.git
 cd homedocker-trakt-bridge
-
 cp .env.example .env
 cp compose.example.yml compose.yml
 ```
 
-Edit `.env` and set at least:
+**2. Configure `.env` securely**
 
 ```env
+# For a reproducible v1.4.0 install, select the reviewed immutable image:
+TRAKT_BRIDGE_IMAGE=ghcr.io/olivergiangvu/homedocker-trakt-bridge@sha256:61c28bd22155950cacfd7ac47e5d5259a74e55c5b99c3dc4b63d95be524f2c77
+
 PUBLIC_BASE_URL=https://trakt.example.com
 TRAKT_CLIENT_ID=...
 TRAKT_CLIENT_SECRET=...
 BRIDGE_SECRET_KEY=...
 ADMIN_KEY=...
+PULL_IDENTITY_MODE=trakt
+
+# Optional Gateway stays off until separately provisioned and tested.
+JELLYFIN_GATEWAY_ENABLED=false
 ```
 
-Then start the bridge:
+Generate private `BRIDGE_SECRET_KEY` and `ADMIN_KEY` values independently with `openssl rand -hex 32`. The `.env.example` file starts with a **mutable `:latest` example**, which is **not** a guarantee of the published v1.4 Stable image; replace that image reference before starting production.
+
+**3. Start and verify**
 
 ```bash
 docker compose pull
 docker compose up -d
-```
 
-The GHCR image is public, so anonymous pulls work without `docker login`.
-
-For a long-lived production install, pin `TRAKT_BRIDGE_IMAGE` to a release tag or immutable digest instead of following `latest`.
-
-Verify:
-
-```bash
 curl -fsS http://127.0.0.1:7000/health
 curl -fsS http://127.0.0.1:7000/readiness
 ```
 
-## Connect Trakt and AIOStreams
+The sample Compose binds Bridge to **`127.0.0.1:7000`**, not a public interface. Terminate HTTPS at your host reverse proxy and ensure `PUBLIC_BASE_URL` matches the externally reachable HTTPS address. An unconfigured instance may answer process health before profile-level readiness is satisfied.
 
-1. Open `https://your-domain/setup?key=<ADMIN_KEY>`.
-2. Create a profile and connect Trakt through OAuth.
-3. Copy the **Manifest URL** shown on the profile dashboard.
-4. Add that manifest URL to AIOStreams.
+**4. Connect Trakt and AIOStreams**
 
-Treat the manifest URL as a credential.
+1. Visit `https://your-domain/setup?key=<ADMIN_KEY>` over HTTPS and authorize your Trakt profile.
+2. Open the authenticated dashboard and copy the profile-specific **Manifest URL**.
+3. Add that Manifest URL to AIOStreams, then allow an initial authoritative sync.
+4. Verify actual watched/resume behavior in a connected Jellyfin-compatible client.
 
-For clients that also use native Trakt directly, the recommended setting is:
+**Treat both the setup URL and profile Manifest URL as credentials.** Do not publish them in issues, screenshots or logs.
 
-```env
-PULL_IDENTITY_MODE=trakt
-```
+[Detailed setup](docs/SETUP.md) · [Environment reference](docs/CONFIGURATION.md) · [Common problems](docs/TROUBLESHOOTING.md)
 
-If AIOMetadata is also part of the stack, use **Trackers = This server only** for the Jellyfin user so Trakt remains the single external watched/resume read authority.
+## Safe operation and updates
+
+- **One writer:** never run two Bridge instances sharing `/app/data`, a SQLite database or Trakt OAuth credentials.
+- **Back up together:** a consistent SQLite **online backup** of `/app/data/bridge.db`, private `.env`, Compose files (including `compose.gateway.yml` if present), and relevant reverse-proxy configuration. The `BRIDGE_SECRET_KEY` is necessary to decrypt stored OAuth tokens after restore.
+- **Pin the Bridge:** use an immutable GHCR digest in long-lived production installs. AIOStreams is an **independent upstream** and may follow its own rolling `latest` policy; do not silently update or pin AIOStreams as part of a Bridge-only change.
+- **Use scoped updates:** change **only** the Bridge service under its real Compose owner. Avoid generic whole-stack redeploys or `docker compose down -v`.
+- **Verify separately:** Bridge `/health` and `/readiness`, actual container image ID, Trakt identity/watched/resume, Gateway effective state and **real authorized client routing** are distinct checks.
+- **Keep rollback assets:** protect previous known-good image and corresponding SQLite/Compose snapshot. Do not prune unknown untagged images or volumes solely to reclaim a small amount of disk space.
+
+For HomeDocker, the old RC2 → v1.4.0 guarded helper is a **one-time, RC2-specific cutover**, **not** a maintenance command to re-run on stable production. Read [v1.4 Stable operations](docs/STABLE-V1.4-OPERATIONS.md) before considering a rollout.
 
 ## Documentation
 
-- **[Getting started](docs/SETUP.md)** — install, connect Trakt and add the manifest to AIOStreams
-- **[Configuration](docs/CONFIGURATION.md)** — image pinning, identity mode, freshness and reverse proxy settings
-- **[Operations](docs/OPERATIONS.md)** — health, backup, update, rollback and logs
-- **[HomeDocker stable upgrade](docs/STABLE-DEPLOYMENT.md)** — verified v1.3.0 release, RC6 preflight, Bridge-only deployment, protected Compose backup and rollback
-- **[Integrations](docs/INTEGRATIONS.md)** — AIOMetadata and native-Trakt coexistence
-- **[Troubleshooting](docs/TROUBLESHOOTING.md)** — common sync and identity problems
-- **[Documentation index](docs/README.md)** — advanced and maintainer documentation
-- **[RC7 phase closure / cleanup](docs/RC7-CLOSURE-AND-CLEANUP.md)** — archived experimental PRs, GitHub branch cleanup and Docker inventory policy
+| Guide | Start here when… |
+| --- | --- |
+| [Documentation index](docs/README.md) | You need the current guide vs. historical archive map |
+| [Setup](docs/SETUP.md) | Installing and connecting Trakt + AIOStreams |
+| [Configuration](docs/CONFIGURATION.md) | Tuning identity, freshness, optional reconciler and Gateway |
+| [v1.4 Stable operations](docs/STABLE-V1.4-OPERATIONS.md) | Checking HomeDocker runtime, safe upgrades and rollback |
+| [Operations](docs/OPERATIONS.md) | Health, backups, logs, updates and recovery |
+| [Architecture](docs/ARCHITECTURE.md) | Reviewing authority, trust boundaries and read/write paths |
+| [Integrations](docs/INTEGRATIONS.md) | Connecting AIOStreams, AIOMetadata and native-Trakt clients |
+| [Troubleshooting](docs/TROUBLESHOOTING.md) | Diagnosing duplicate history, NextUp, auth and rate limits |
+| [Release notes](docs/releases/v1.4.0.md) / [Changelog](CHANGELOG.md) | What's shipped in v1.4 and earlier |
 
-## Contributing
+Historical v1.3 runbooks, RC qualification records and R23D security experiments are retained for **audit and rollback**. Their old version/HOLD checkpoints are not the current published release status; see the [documentation index](docs/README.md).
 
-Bug reports, feature requests and pull requests are welcome. See **[CONTRIBUTING.md](CONTRIBUTING.md)** before opening a change, and never include live credentials or manifest URLs in public issues.
+<details>
+<summary>Historical dashboard preview (sanitized v1.0-era screenshot)</summary>
 
-## Security
+![Historical sanitized HomeDocker Trakt Bridge dashboard](docs/assets/dashboard-v1-public.png)
 
-- Keep `ADMIN_KEY`, `BRIDGE_SECRET_KEY`, Trakt OAuth material and profile manifest URLs private.
-- Do not expose container port `7000` directly to the Internet.
-- Terminate HTTPS at a reverse proxy and forward only to `127.0.0.1:7000`.
-- Back up `.env` and `/app/data/bridge.db` together.
+This archival image is **not** a depiction of the v1.4 unified Gateway dashboard. Do not publish live OAuth credentials, profile Manifest URLs or private endpoints in screenshots.
 
-For sensitive vulnerabilities, follow **[SECURITY.md](SECURITY.md)** instead of opening a public issue.
+</details>
 
-## Project status
+## Security, contributing and license
 
-**Latest published stable release:** [`v1.3.0`](https://github.com/olivergiangvu/homedocker-trakt-bridge/releases/tag/v1.3.0), published 2026-10-14 from immutable tag commit `8c505089e0c5ad2e7ce1514bd9c1acf1722bea95`. This promotes production-proven RC6 with **no application behavior or database-schema changes** after RC6. Release published is not proof of installation on any HomeDocker host.
+- **Do not expose** Bridge `7000` or internal NextUp Gateway `7101` directly to the Internet. Use a controlled HTTPS reverse proxy and least-privilege access.
+- Keep `.env`, `ADMIN_KEY`, `BRIDGE_SECRET_KEY`, Trakt OAuth tokens, database backups and Manifest URLs private.
+- Never treat an identity mismatch as permission to delete watched-state data or bulk replay Trakt history.
+- Report security issues through [SECURITY.md](SECURITY.md); for bugs/features and PR guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-**Last independently attested HomeDocker runtime (2026-10-13):** Bridge `v1.3.0-rc.6` pinned by digest. `main` contains the separately reviewed post-tag **operator-only deployment helper fix** (`ef336f4b730ec14bf995fa83cf170f034dc382a1`), which supports root-protected Compose `.env` and checks the existing RC7 dual-IMDb mitigation before/after a Bridge-only cutover. The published `v1.3.0` application image is not rebuilt by these operator fixes. The current [guarded deployment runbook](docs/STABLE-DEPLOYMENT.md) additionally pins the CI-published stable GHCR digest to prevent mutable tag drift.
-
-**HomeDocker stable upgrade:** use the guarded [v1.3 deployment runbook](docs/STABLE-DEPLOYMENT.md) and host preflight. The runbook requires RC6 baseline, exact image provenance, SQLite online backup, Compose rollback and post-deploy health/identity acceptance. Until actual host output confirms success, do **not** state that HomeDocker is running v1.3 stable.
-
-**AIOStreams:** independent upstream `ghcr.io/viren070/aiostreams:latest` (no forced pin or update during a Bridge-only deployment). `AIO_RECONCILER_MODE=compare` on the qualified HomeDocker is non-writing; recovery writeback remains excluded (Issue #70). Canonical Trakt identity and existing RC6 settings are preserved.
-
-**v1.4 R23D research:** remains a **Draft/unsafe-for-production gateway-only branch** ([PR #95](https://github.com/olivergiangvu/homedocker-trakt-bridge/pull/95)). The isolated GitHub runner nft/guardian lease experiments do not establish HomeDocker boot-time fencing or an independent live watchdog. No v1.4 stable tag, image rollout, or authenticated gateway relay is authorized.
-
-See [v1.3 release notes](docs/releases/v1.3.0.md), [release qualification](docs/design/v1.3-stable-qualification.md) and [documentation index](docs/README.md).
-
-The v1.2 line keeps native-Trakt coexistence safeguards, direct provider-ID playback transport, family-scoped rate-limit recovery, semantic history dedupe, and the optional read-only AIO local-state reconciler. The reconciler remains **disabled by default**; when enabled in `detect` mode it never writes Trakt or AIOStreams, persists pending candidates across restart, coalesces newer same-item local rows, waits for the configured quiet window, and correlates final state only with an equivalent delivered HomeDocker playback position.
-
-DB schema remains `1`; no database migration or pull-cache purge is required from v1.1.
-
-License: [MIT](LICENSE).
+**License:** [MIT](LICENSE).

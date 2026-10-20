@@ -18,7 +18,7 @@ curl -fsS http://127.0.0.1:7000/readiness
 
 A configured instance should report `ready=true` and at least one connected profile.
 
-The web dashboard is the preferred human-readable view for connection status, sync health, recent events and current errors.
+The web dashboard is the preferred human-readable view for connection status, sync health, recent events and current errors. In v1.4, the unified dashboard can also report a separately provisioned Gateway listener and the effective AUTO ON/manual OFF Identity Filter; these indicators alone do not verify actual client ingress.
 
 ## Dashboard states
 
@@ -44,6 +44,7 @@ Back up these items together:
 /app/data/bridge.db
 .env
 compose.yml
+compose.gateway.yml (when a Gateway overlay is configured)
 reverse-proxy configuration
 ```
 
@@ -51,44 +52,28 @@ reverse-proxy configuration
 
 For a live SQLite database, prefer SQLite's online backup mechanism instead of blindly copying a WAL-active database.
 
-## Update
+## Update — v1.4.0 Stable
 
-**Qualified HomeDocker RC6 → published v1.3.0 Stable:** follow the [exact-SHA, Bridge-only rollout runbook](STABLE-DEPLOYMENT.md). The public v1.3.0 GitHub release exists, but source publication does not prove that the HomeDocker host has been upgraded. The guarded helper requires exact RC6 image identity, root-protected Compose project validation, online SQLite backup and verification of the existing RC7 identity mitigation. It recreates **only `trakt-bridge`** and does not pull or restart AIOStreams. If any preflight check fails, stop instead of issuing generic full-stack Compose commands.
+**Latest published stable:** [v1.4.0](https://github.com/olivergiangvu/homedocker-trakt-bridge/releases/tag/v1.4.0). Use the [v1.4 production operator guide](STABLE-V1.4-OPERATIONS.md), not the historic v1.3 RC6 upgrade helper. The original guarded v1.4 cutover script is **RC2-specific** and should not be re-applied after a successful stable cutover.
 
-The generic instructions below are for *other explicitly managed installations*, not a substitute for the HomeDocker qualified production runbook.
+For each production change:
 
-The GHCR package is public and supports anonymous pulls.
+1. Read the target release notes and verify the exact immutable image digest.
+2. Check which Compose project owns the live Bridge; preserve its Compose overlays, `.env`, Gateway source/user mapping and permissions.
+3. Confirm one running Bridge writer and save the old image reference, image ID and restorable SQLite online backup.
+4. Recreate **only** the Bridge service through the owner's qualified procedure (no full-stack `up -d`, `down`, Portainer redeploy or `-v`).
+5. Verify health/readiness, Trakt identity, watched/resume and AIOStreams continuity. Gateway listener/filter state and any real client NextUp route must be checked **separately**.
+6. Keep previous known-good image and backup until acceptance/rollback window closes.
 
-If you intentionally follow `latest`:
-
-```bash
-docker compose pull
-docker compose up -d
-```
-
-For predictable production updates, pin `TRAKT_BRIDGE_IMAGE` to a release tag or immutable digest before pulling.
-
-Recommended update flow:
-
-1. Confirm `/health` and `/readiness` are healthy.
-2. Back up the database and configuration.
-3. Record the currently running image reference and image ID.
-4. Change the image tag or digest.
-5. Pull the new image while the old container is still running.
-6. Recreate the service without a local source build.
-7. Re-check `/health`, `/readiness`, dashboard connection state and sync counts.
-8. Restart the container once and confirm readiness remains healthy.
-9. Confirm the client still shows the expected watched/resume state.
-
-To verify an exact-digest deployment:
+For read-only image confirmation:
 
 ```bash
 docker inspect trakt-bridge --format '{{.Config.Image}}'
+curl -fsS http://127.0.0.1:7000/health
+curl -fsS http://127.0.0.1:7000/readiness
 ```
 
-The result should be the immutable `ghcr.io/...@sha256:...` reference you intended to deploy.
-
-Do not purge Bridge or AIOStreams state unless the release notes explicitly require it.
+A public release or passing CI is not live HomeDocker evidence. Do not purge state or force Trakt resync during an image update.
 
 ## AIOStreams upstream updates — independent rolling policy
 
@@ -106,20 +91,13 @@ Stable Bridge certification is **contract-based**. No exact AIO digest is a prer
 
 ## Rollback
 
-Set `TRAKT_BRIDGE_IMAGE` back to the previous known-good tag or digest, then:
+Use the **previous verified image** and the matching protected Compose/`.env` (including `compose.gateway.yml` where applicable). Prefer a qualified **Bridge-only** recreate under the original Compose project; never start a second Bridge with the same `/app/data` and Trakt OAuth credentials.
 
-```bash
-docker compose pull
-docker compose up -d
-```
+The original v1.4 RC2 fallback and exact image ID are documented in [v1.4 production operations](STABLE-V1.4-OPERATIONS.md). Verify `/health`, `/readiness`, configured image ID, single-writer status and ordinary watched/resume behavior after rollback. A schema-compatible binary rollback does not automatically require a database restore; if restoration is necessary, use an intentionally selected matching SQLite online backup.
 
-If a future release changes the database schema, restore the matching pre-upgrade database before running an older binary.
+## Historical RC7 housekeeping (safe, non-destructive)
 
-For schema-compatible releases, still verify `/readiness`, profile connection state and client watched/resume state after rollback instead of assuming image replacement alone is sufficient.
-
-## RC7 phase housekeeping (safe, non-destructive)
-
-The RC7 rolling compatibility phase passed its HomeDocker API contract checks on 2026-10-13 and experimental PRs #83 and #85 were closed **without merge**. The canonical read-only monitors are in main via PR #86; Bridge production stays RC6 and AIOStreams continues upstream `latest`. This is **not** a v1.3 Stable promotion.
+The RC7 rolling compatibility phase passed its HomeDocker API contract checks on 2026-10-13 and experimental PRs #83 and #85 were closed **without merge**. The canonical read-only monitors are in main via PR #86; The production Bridge was on RC6 at the date of that RC7 qualification; this **historical** observation must not be read as the current v1.4 runtime. AIOStreams continues its independent rolling-upstream policy.
 
 - Run `scripts/audit-homedocker-docker-cleanup.sh` to enumerate Docker CPU/RAM/disk, stopped containers, build cache, dangling volumes/images and RC7 local scratch filenames **without deleting anything**.
 - Run `scripts/cleanup-github-branches.py` under an authenticated `gh` CLI for a dry-run list of historical merged branches and documented closed RC7 experiments. Use `--apply` only after inspecting the candidates; it never removes tags, active PR branches, Dependabot branches or main.

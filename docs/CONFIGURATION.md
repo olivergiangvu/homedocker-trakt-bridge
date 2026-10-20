@@ -26,16 +26,16 @@ Keep `.env`, `bridge.db`, `BRIDGE_SECRET_KEY`, `ADMIN_KEY`, and the generated pr
 
 The public GHCR package can be pulled anonymously.
 
-For the easiest install:
+For a simple development install (mutable; **not necessarily the latest published stable release**):
 
 ```env
 TRAKT_BRIDGE_IMAGE=ghcr.io/olivergiangvu/homedocker-trakt-bridge:latest
 ```
 
-For reproducible production deployments, pin a release tag:
+For reproducible installs, a stable tag can be selected:
 
 ```env
-TRAKT_BRIDGE_IMAGE=ghcr.io/olivergiangvu/homedocker-trakt-bridge:1.2.0
+TRAKT_BRIDGE_IMAGE=ghcr.io/olivergiangvu/homedocker-trakt-bridge:1.4.0
 ```
 
 or an immutable digest:
@@ -44,7 +44,7 @@ or an immutable digest:
 TRAKT_BRIDGE_IMAGE=ghcr.io/olivergiangvu/homedocker-trakt-bridge@sha256:<digest>
 ```
 
-An immutable digest gives the strongest rollback and release-verification guarantee because it cannot move to a different image later.
+For production, prefer the [published v1.4 immutable digest documented in the guarded HomeDocker operator guide](STABLE-V1.4-OPERATIONS.md). A digest gives a stronger rollback and release-verification guarantee than a mutable tag. Changing the image for an existing production stack requires a qualified Bridge-only procedure, not an unscoped full-stack Compose update.
 
 ## Identity mode
 
@@ -229,6 +229,23 @@ The guard covers both:
 An opposite state transition is never suppressed, so `played -> unplayed -> played` remains valid. A same-state event outside the configured window is also processed normally, preserving legitimate later rewatches. The marker uses the existing SQLite cache and requires no database migration.
 
 Set `HISTORY_DEDUPE_SECONDS=0` only when diagnosing raw upstream behavior. This guard cannot see writes made directly by another Trakt client, so native Trakt integrations can still be a separate duplicate-history writer.
+
+## v1.4 Gateway listener and Identity Filter (opt-in)
+
+The Unified Gateway is **integrated into the Bridge process** but **disabled by default**. It is a read-only, same-user `GET /Shows/NextUp` filter, not a second Trakt writer or a general Jellyfin reverse proxy.
+
+Public example defaults include:
+
+```env
+JELLYFIN_GATEWAY_ENABLED=false
+JELLYFIN_GATEWAY_LEGACY_IMPORT=off
+JELLYFIN_GATEWAY_RESUME_PASSTHROUGH=false
+JELLYFIN_GATEWAY_FIRST_PAGE_MODE=short_first_page_only
+```
+
+A real deployment requires an operator-provisioned `JELLYFIN_GATEWAY_SOURCE_KIND`, exact upstream Jellyfin API URL, mapped Jellyfin user ID and connected Bridge profile. Consult [`.env.example`](../.env.example) and [v1.4 operator guide](STABLE-V1.4-OPERATIONS.md); do not copy live IDs, tokens or upstream addresses into public docs.
+
+With a valid mapping, the effective Identity Filter starts **AUTO ON**; the authenticated dashboard can persist a per-source manual **OFF** override. The listener being ready/filter active does not establish client routing. Unsupported query shapes or full/paginated NextUp responses are passed through. Never expose `7101` on a public interface, repoint a whole Jellyfin client to the Gateway or claim Resume/movies/other endpoints are normalized.
 
 ## Reverse proxy
 
