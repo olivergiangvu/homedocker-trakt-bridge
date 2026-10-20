@@ -274,6 +274,27 @@ Caveats:
 - After the operator's real RC3-N3 result, qualify a tiny bounded authenticated SeriesId probe **only where an existing real Jellyfin ID can be independently obtained**. Never invent /Shows/{SeriesId}/Episodes path IDs from s|series_keys, never fan out to 661 unresolved candidates and never promote the Redirect Integrity result into a global shelf claim.
 
 
+## RC3-N3 Live PASS -> RC3-N4 existing hashed SeriesId coverage (2026-10-20)
+
+HomeDocker RC3-N3 live read-only redirect graph:
+- Matched user, two consistent source/anchor snapshots, Filter OFF, no DB writes or media/catalog requests.
+- Parseable self-match **90**; **118** syntactic cross-namespace redirect edges from beyond raw rank 200 (zero redirected raw keys in top200). **91** distinct destination keys.
+- Targets: **107** also among raw 861 recent candidates (16 ranked top200, 91 ranked beyond200); **7** only in full history; **4** absent from the full observed watch-state history.
+- **11 destinations** with multiple inbound edges; collectively **38** edges, maximum **6** sources at one destination. **0** multi-hop and **0** directed cycles in the examined graph.
+- These are **syntactic source-key edges**, not canonical show equivalence. No global NextUp, playback, backend series ID, or independent mapped-user access rights have been proven. Four absent targets are especially unsafe to extrapolate into new shows.
+
+Pinned AIO ID mapping in packages/core/src/jellyfin/ids.ts:
+- Some 32-hex a1 content IDs are directly unpackable and **not persisted** in the hashed ID table.
+- For descriptors that cannot be packed, AIO uses 32-hex b2 hashed IDs and stores id, payload and seen_at in jellyfin_id_map (packages/core/src/db/repositories/jellyfin.ts), pruning old rows. The stored payload carries a content descriptor including k=series, media type and base id, but **NO user UUID/persona**: this is an *instance-global map*, not proof that the current mapped Jellyfin user saw or can fetch the ID.
+- Therefore a missing entry in jellyfin_id_map does **not** prove an existing a1 series ID cannot be decoded; a matching persisted b2 entry does **not** prove a client-visible or playable series, nor authorize endpoint requests by itself.
+
+RC3-N4 read-only preflight scripts/audit-v140-rc3-existing-series-id-map-homedocker.py:
+- Reuses exactly scoped/verified source inventory + anchor/drop two-pass audits and mapped-user /Users/Me and Filter OFF; then reads **the instance-global** jellyfin_id_map twice through SQLite mode=ro/query_only. Maximum **20,000** rows, stop on invalid schema, unexpected payload shape, drift or over-budget. No IDs/payloads are printed.
+- Matches existing b2 series descriptors by literal baseId only to raw series keys and known syntactic redirect destination keys. Only aggregate counters (global hashed SeriesId bases, source/history/beyond200 matches, mapping duplication, and missing-history destinations with a mapping) are emitted.
+- This is an **availability/coverage heuristic only**. The script never reconstructs or issues Jellyfin IDs, does not perform any Jellyfin item/series/catalog/NextUp GET, and does not modify AIO, Bridge, Trakt, Odin, nginx, production Gateway or client responses.
+- Next canary still requires an independently established **existing series ID tied to the mapped user**, an authenticated bounded GET and exact one-series metadata/catalog response. Do not fan out to all 861 candidates, and do not enable production Filter from raw graph or hashed map counts.
+
+
 ## What would make it a safe *usable* feature
 
 **Gate A (implemented, CI):** Pure source-agnostic adapter and synthetic tests for 20/20, 50/50, AIO offset-ignored, native-offset, wrong users, partial metadata, two active resumes, replay drift and no injected watch writes. It is deliberately not linked into the Gateway.
