@@ -110,6 +110,7 @@ class StableCutoverSafetyTests(unittest.TestCase):
             "aio": {"Id": "synthetic-aio-id", "Image": "synthetic-aio-image"}
         }
         new = {
+            "Id": "synthetic-bridge-id",
             "Config": {"Image": ops.STABLE_REF,
                        "Env": [
                            "TRAKT_BRIDGE_IMAGE=" + ops.STABLE_REF,
