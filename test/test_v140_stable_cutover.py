@@ -63,6 +63,84 @@ class StableCutoverSafetyTests(unittest.TestCase):
             with self.assertRaisesRegex(ops.Stop, "COMPOSE_DIFF"):
                 ops.verify_composed_diff(source)
 
+    def test_compose_env_file_image_key_follows_pinned_image_only(self):
+        """An actual .env edit changes both service.image and env_file image key."""
+        import copy
+        old = {
+            "services": {"trakt-bridge": {
+                "image": ops.PREVIOUS_REF,
+                "environment": {
+                    "TRAKT_BRIDGE_IMAGE": ops.PREVIOUS_REF,
+                    "JELLYFIN_GATEWAY_ENABLED": "true",
+                    "TRAKT_CLIENT_SECRET": "synthetic-secret-never-log",
+                },
+                "networks": ["default", "media_core"],
+            }},
+            "networks": {"default": {}, "media_core": {"external": True}},
+        }
+        expected = copy.deepcopy(old)
+        expected["services"]["trakt-bridge"]["image"] = ops.STABLE_REF
+        expected["services"]["trakt-bridge"]["environment"]["TRAKT_BRIDGE_IMAGE"] = ops.STABLE_REF
+        self.assertEqual(ops.expected_composed_image_change(old), expected)
+        self.assertEqual(old["services"]["trakt-bridge"]["environment"]["TRAKT_BRIDGE_IMAGE"],
+                         ops.PREVIOUS_REF)
+        with patch.object(ops, "rendered", return_value=expected):
+            self.assertEqual(ops.verify_composed_diff(old), expected)
+        changed = copy.deepcopy(expected)
+        changed["services"]["trakt-bridge"]["environment"]["JELLYFIN_GATEWAY_ENABLED"] = "false"
+        with patch.object(ops, "rendered", return_value=changed):
+            with self.assertRaisesRegex(ops.Stop, "COMPOSE_DIFF"):
+                ops.verify_composed_diff(old)
+        tampered_baseline = copy.deepcopy(old)
+        tampered_baseline["services"]["trakt-bridge"]["environment"]["TRAKT_BRIDGE_IMAGE"] = "evil"
+        with self.assertRaisesRegex(ops.Stop, "COMPOSE_ENV_IMAGE_BASELINE_DRIFT"):
+            ops.expected_composed_image_change(tampered_baseline)
+
+    def test_runtime_own_image_env_can_change_but_other_bridge_env_cannot(self):
+        stable_id = "sha256:" + "e" * 64
+        baseline = {
+            "source": "/synthetic/bridge-data",
+            "networks": {"homedocker-trakt-bridge_default", "media_core_net"},
+            "settings": {
+                "TRAKT_BRIDGE_IMAGE": ops.PREVIOUS_REF,
+                "TRAKT_CLIENT_ID": "synthetic-profile",
+                "JELLYFIN_GATEWAY_ENABLED": "true",
+                "JELLYFIN_GATEWAY_FIRST_PAGE_MODE": "short_first_page_only",
+            },
+            "aio": {"Id": "synthetic-aio-id", "Image": "synthetic-aio-image"}
+        }
+        new = {
+            "Id": "synthetic-bridge-id",
+            "Config": {"Image": ops.STABLE_REF,
+                       "Env": [
+                           "TRAKT_BRIDGE_IMAGE=" + ops.STABLE_REF,
+                           "TRAKT_CLIENT_ID=synthetic-profile",
+                           "JELLYFIN_GATEWAY_ENABLED=true",
+                           "JELLYFIN_GATEWAY_FIRST_PAGE_MODE=short_first_page_only",
+                       ]},
+            "Image": stable_id,
+            "State": {"Running": True, "Health": {"Status": "healthy"}},
+            "NetworkSettings": {"Networks": {
+                "homedocker-trakt-bridge_default": {},
+                "media_core_net": {},
+            }, "Ports": {"7000/tcp": [], "7101/tcp": None}},
+            "Mounts": [{"Destination": "/app/data", "Source": "/synthetic/bridge-data"}],
+        }
+        with patch.object(ops, "assert_http") as http, \
+             patch.object(ops, "inspect", side_effect=lambda name:
+                          new if name == ops.APP else baseline["aio"]), \
+             patch.object(ops, "no_other_writer") as single:
+            self.assertIs(ops.verify_new(baseline, stable_id, version="1.4.0",
+                                         image_ref=ops.STABLE_REF, retries=1), new)
+            http.assert_called_once()
+            single.assert_called_once()
+        new["Config"]["Env"][0] = "TRAKT_BRIDGE_IMAGE=unrelated-image"
+        with patch.object(ops, "assert_http"), \
+             patch.object(ops, "inspect", return_value=new):
+            with self.assertRaisesRegex(ops.Stop, "IMAGE_ENV_NOT_EXPECTED_REF"):
+                ops.verify_new(baseline, stable_id, version="1.4.0",
+                               image_ref=ops.STABLE_REF, retries=1)
+
     def test_apply_auto_rolls_back_old_env_after_compose_failure(self):
         import json
         image_id = "sha256:" + "a" * 64

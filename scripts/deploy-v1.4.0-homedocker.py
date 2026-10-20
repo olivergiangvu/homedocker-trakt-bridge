@@ -240,12 +240,32 @@ def set_image(ref):
     replace_env_bytes(changed)
 
 
+def expected_composed_image_change(old):
+    """Only allow image ref and the identical env_file-backed image variable.
+
+    Docker Compose resolves TRAKT_BRIDGE_IMAGE from .env for interpolation and
+    may *also* inject that exact key into service.environment via env_file.
+    A shell-only image override does not model an actual .env update.
+    """
+    expected = json.loads(json.dumps(old))
+    service = expected["services"][APP]
+    if service.get("image") != PREVIOUS_REF:
+        raise Stop("COMPOSE_BASE_IMAGE_DRIFT")
+    service["image"] = STABLE_REF
+    env = service.get("environment") or {}
+    if "TRAKT_BRIDGE_IMAGE" in env:
+        if env["TRAKT_BRIDGE_IMAGE"] != PREVIOUS_REF:
+            raise Stop("COMPOSE_ENV_IMAGE_BASELINE_DRIFT")
+        env["TRAKT_BRIDGE_IMAGE"] = STABLE_REF
+    return expected
+
+
 def verify_composed_diff(old):
     candidate = rendered()
-    before = json.loads(json.dumps(old))
-    before["services"][APP]["image"] = STABLE_REF
-    if candidate != before:
-        raise Stop("COMPOSE_DIFF_BEYOND_BRIDGE_IMAGE")
+    expected = expected_composed_image_change(old)
+    if candidate != expected:
+        # Never print rendered Compose (it contains injected .env secrets).
+        raise Stop("COMPOSE_DIFF_BEYOND_IMAGE_AND_OWN_IMAGE_ENV")
     return candidate
 
 
@@ -273,11 +293,20 @@ def verify_new(state, image_id, *, version, image_ref, retries=35):
     if any("7101" in port and binding
            for port, binding in new["NetworkSettings"].get("Ports", {}).items()):
         raise Stop("GATEWAY_PORT_EXPOSED")
-    if any(env_pairs(new).get(key) != value
-           for key, value in state["settings"].items()
-           if key.startswith(("JELLYFIN_GATEWAY_", "TRAKT_", "BRIDGE_",
-                              "PULL_IDENTITY_MODE", "AIO_RECONCILER_MODE",
-                              "CANONICAL_ON_DEMAND_VERIFY"))):
+    new_env = env_pairs(new)
+    prior_env = state["settings"]
+    if "TRAKT_BRIDGE_IMAGE" in prior_env:
+        if (prior_env["TRAKT_BRIDGE_IMAGE"] != PREVIOUS_REF
+                or new_env.get("TRAKT_BRIDGE_IMAGE") != image_ref):
+            raise Stop("IMAGE_ENV_NOT_EXPECTED_REF")
+    elif "TRAKT_BRIDGE_IMAGE" in new_env:
+        raise Stop("IMAGE_ENV_UNEXPECTEDLY_ADDED")
+    if any(new_env.get(key) != value
+           for key, value in prior_env.items()
+           if key != "TRAKT_BRIDGE_IMAGE"
+           and key.startswith(("JELLYFIN_GATEWAY_", "TRAKT_", "BRIDGE_",
+                               "PULL_IDENTITY_MODE", "AIO_RECONCILER_MODE",
+                               "CANONICAL_ON_DEMAND_VERIFY"))):
         raise Stop("BRIDGE_ENV_CHANGED")
     aio = inspect("aiostreams")
     if aio["Id"] != state["aio"]["Id"] or aio["Image"] != state["aio"]["Image"]:
@@ -302,14 +331,22 @@ def apply(state):
     print("PRIVATE_ROLLBACK_DIR=" + str(folder), flush=True)
     state = preflight()  # recheck before any production modification
     edited = False
+    stage = "IMAGE_ENV_UPDATE"
     try:
         set_image(STABLE_REF)
         edited = True
+        stage = "COMPOSE_RENDERED_DIFF"
         verify_composed_diff(state["config"])
+        stage = "DOCKER_COMPOSE_RECREATE"
         run(*compose_command(), "up", "-d", "--no-deps", "--no-build",
             "--pull", "never", "--force-recreate", APP, timeout=180)
+        stage = "RUNTIME_HEALTH_AND_INVARIANTS"
         verify_new(state, stable_id, version="1.4.0", image_ref=STABLE_REF)
     except Exception as original:
+        print("STABLE_FAILED_STAGE=" + stage, flush=True)
+        print("STABLE_FAILED_CODE=" +
+              (str(original) if isinstance(original, Stop)
+               else type(original).__name__), flush=True)
         if edited:
             print("STABLE_CUTOVER=FAILED_ATTEMPT_RC2_ROLLBACK", flush=True)
             try:
