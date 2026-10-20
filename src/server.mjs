@@ -4,6 +4,9 @@ import { APP_NAME, APP_VERSION } from './config.mjs';
 import { deriveProfileKey, randomToken, safeEqual } from './crypto.mjs';
 import { BridgeError } from './errors.mjs';
 import { page, escapeHtml } from './html.mjs';
+import { buildGatewayDashboardStatus } from './gateway-dashboard.mjs';
+import { renderUnifiedGatewayPanel } from './unified-gateway-panel.mjs';
+import { gatewayFilterControlAvailable, setGatewayFilteringEnabled } from './gateway-control.mjs';
 import { buildManifest, planEvent, validatePushEvent } from './watch-state.mjs';
 import { formatEventTime, summarizeRecentEvents } from './diagnostics.mjs';
 import { cachedPullPayload, makePullCacheEntry, stalePullPayload } from './pull-cache.mjs';
@@ -22,11 +25,11 @@ const pullInflight = new Map();
 const pullCache = new Map();
 const PULL_CACHE_PREFIX = 'pull-state:v5:';
 
-export function createServer({ config, db, trakt }) {
+export function createServer({ config, db, trakt, gateway = null }) {
   return http.createServer(async (req, res) => {
     const started = Date.now();
     try {
-      await route(req, res, { config, db, trakt });
+      await route(req, res, { config, db, trakt, gateway });
     } catch (err) {
       const e = err instanceof BridgeError ? err : new BridgeError(err?.message || 'Internal error', { status: 500, cause: err });
       if (!res.headersSent) {
@@ -73,6 +76,9 @@ async function route(req, res, ctx) {
     return sendJson(res, 200, {
       readiness: buildReadiness({ db }),
       profiles,
+      gateway: buildGatewayDashboardStatus({
+        db, config, profileId: config.jellyfinGatewayProfileId, gateway: ctx.gateway,
+      }),
     });
   }
 
@@ -84,6 +90,23 @@ async function route(req, res, ctx) {
         <div class="row"><span class="badge">v${APP_VERSION}</span><span class="badge">production hardening</span></div>
       </div>
     `));
+  }
+
+  // Authenticated UI changes only this gateway's filtering preference.
+  if (path === '/setup/gateway/filter') {
+    requireAdmin(url, config);
+    if (req.method !== 'POST') return methodNotAllowed(res);
+    requireSameOriginForm(req, config);
+    const profileId = config.jellyfinGatewayProfileId;
+    const state = await parseGatewayForm(req);
+    if (!gatewayFilterControlAvailable({ config, gateway: ctx.gateway, profileId })) {
+      throw new BridgeError('Gateway source/listener must be configured first', {
+        status: 409, code: 'gateway_not_provisioned',
+      });
+    }
+    setGatewayFilteringEnabled({ db, config, gateway: ctx.gateway, profileId,
+      enabled: state === 'on' });
+    return redirect(res, '/setup?key=' + encodeURIComponent(url.searchParams.get('key')) + '#aio-identity-gateway');
   }
 
   if (path === '/setup') {
@@ -110,6 +133,36 @@ async function route(req, res, ctx) {
     const setupKey = deriveProfileKey(config.bridgeSecret, 'setup', profileId);
     redirect(res, `/u/${profileId}/setup?key=${encodeURIComponent(setupKey)}&connected=1`);
     return;
+  }
+
+  // Same profile setup-key authorization as the existing dashboard. No tokens,
+  // user IDs or raw identity registry rows leave this aggregate-only endpoint.
+  const gatewayStatusMatch = path.match(/^\/u\/([a-f0-9]{24})\/gateway\/status\.json$/);
+  if (gatewayStatusMatch) {
+    const profileId = gatewayStatusMatch[1];
+    requireSetupKey(url, config, db, profileId);
+    if (req.method !== 'GET') return methodNotAllowed(res);
+    return sendJson(res, 200, buildGatewayDashboardStatus({
+      db, config, profileId, gateway: ctx.gateway,
+    }));
+  }
+
+  const filterMatch = path.match(/^\/u\/([a-f0-9]{24})\/gateway\/filter$/);
+  if (filterMatch) {
+    const profileId = filterMatch[1];
+    requireSetupKey(url, config, db, profileId);
+    if (req.method !== 'POST') return methodNotAllowed(res);
+    requireSameOriginForm(req, config);
+    const state = await parseGatewayForm(req);
+    if (!gatewayFilterControlAvailable({ config, gateway: ctx.gateway, profileId })) {
+      throw new BridgeError('Gateway source/listener must be configured first', {
+        status: 409, code: 'gateway_not_provisioned',
+      });
+    }
+    setGatewayFilteringEnabled({ db, config, gateway: ctx.gateway, profileId,
+      enabled: state === 'on' });
+    return redirect(res, '/u/' + profileId + '/setup?key='
+      + encodeURIComponent(url.searchParams.get('key')) + '#aio-identity-gateway');
   }
 
   const setupMatch = path.match(/^\/u\/([a-f0-9]{24})\/setup$/);
@@ -403,6 +456,43 @@ export function invalidatesPullCache(result) {
   return ['history:add', 'history:remove', 'history:bulk-add', 'history:bulk-remove', 'watchlist:add', 'watchlist:remove', 'scrobble:pause', 'scrobble:stop'].includes(result?.action);
 }
 
+// Same-origin POST is mandatory even for a bearer-authorized dashboard.
+// Safari/WebKit may omit Origin on a same-origin form navigation. Only when
+// Origin is ABSENT do we accept an exact-origin Referer, never a blank/"null"
+// or mismatched Origin. Do not trust Host/X-Forwarded-* or a same-site suffix.
+// The authenticated setup key and form content-type checks remain mandatory.
+function requireSameOriginForm(req, config) {
+  const origin = req.headers.origin;
+  const expected = new URL(config.publicBaseUrl).origin;
+  const type = String(req.headers['content-type'] || '').split(';', 1)[0].trim().toLowerCase();
+  let sameOrigin = origin === expected;
+  if (origin === undefined) {
+    try {
+      const referer = new URL(req.headers.referer || '');
+      sameOrigin = referer.origin === expected && !referer.username && !referer.password;
+    } catch {
+      sameOrigin = false;
+    }
+  }
+  if (!sameOrigin || type !== 'application/x-www-form-urlencoded'
+      || req.headers['sec-fetch-site'] === 'cross-site') {
+    // Never log Origin, Referer, setup keys or any full client URL.
+    throw new BridgeError('Invalid gateway control origin', {
+      status: 403, code: 'gateway_control_origin_denied',
+    });
+  }
+}
+
+async function parseGatewayForm(req) {
+  const form = await readForm(req);
+  if (form.getAll('state').length !== 1
+      || [...form.keys()].some(key => key !== 'state')
+      || !['on', 'off'].includes(form.get('state'))) {
+    throw new BridgeError('Invalid filter state', { status: 400, code: 'gateway_filter_invalid' });
+  }
+  return form.get('state');
+}
+
 function requireAdmin(url, config) {
   const key = url.searchParams.get('key');
   if (!key || !safeEqual(key, config.adminKey)) throw new BridgeError('Not found', { status: 404, code: 'not_found' });
@@ -421,25 +511,36 @@ function requireAddonKey(config, db, profileId, candidate) {
   if (!safeEqual(candidate, expected)) throw new BridgeError('Not found', { status: 404, code: 'not_found' });
 }
 
-function renderAdmin(res, { config, db }, adminKey) {
+function renderAdmin(res, { config, db, gateway }, adminKey) {
   const readiness = buildReadiness({ db });
+  const gatewayStatus = buildGatewayDashboardStatus({
+    db, config, profileId: config.jellyfinGatewayProfileId, gateway,
+  });
   const profiles = db.listProfiles();
   const rows = profiles.map((p) => {
     const setupKey = deriveProfileKey(config.bridgeSecret, 'setup', p.id);
     return `<tr><td>${escapeHtml(p.name)}</td><td>${p.connected_at ? '<span class="ok">Connected</span>' : '<span class="bad">Not connected</span>'}</td><td><a class="btn secondary" href="/u/${p.id}/setup?key=${encodeURIComponent(setupKey)}">Open</a></td></tr>`;
   }).join('') || '<tr><td colspan="3" class="muted">No profiles yet.</td></tr>';
+  // Same-origin Safari fallback needs only origin, never the ?key= bearer.
+  // All non-setup responses keep global Referrer-Policy: no-referrer.
+  res.setHeader('Referrer-Policy', 'strict-origin');
   return sendHtml(res, 200, page('Bridge setup', `
     <div class="card">
       <h1>${APP_NAME}</h1>
       <div class="row"><span class="badge">v${APP_VERSION}</span><span class="badge ${readiness.ready ? 'ok' : 'warn'}">${escapeHtml(readiness.status)}</span><span class="badge">DB schema ${escapeHtml(readiness.schemaVersion)}</span></div>
     </div>
     <div class="card"><h2>Profiles</h2><table><thead><tr><th>Name</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
+    ${renderUnifiedGatewayPanel(gatewayStatus, {
+      compact: true,
+      controlUrl: '/setup/gateway/filter?key=' + encodeURIComponent(adminKey),
+    })}
     <div class="card"><h2>Create profile</h2><form method="post" action="/setup?key=${encodeURIComponent(adminKey)}"><label>Name</label><input name="name" value="Trakt" maxlength="80"><button class="btn" type="submit">Create profile</button></form></div>
   `));
 }
 
-function renderProfile(res, { config, db }, profileId, setupKey, eventFilter = 'all') {
+function renderProfile(res, { config, db, gateway }, profileId, setupKey, eventFilter = 'all') {
   const p = db.getProfile(profileId);
+  const gatewayStatus = buildGatewayDashboardStatus({ db, config, profileId, gateway });
   const addonKey = deriveProfileKey(config.bridgeSecret, 'addon', profileId);
   const manifestUrl = `${config.publicBaseUrl}/u/${profileId}/${addonKey}/manifest.json`;
   const operational = buildProfileOperationalStatus({ db, config, profileId });
@@ -480,7 +581,10 @@ function renderProfile(res, { config, db }, profileId, setupKey, eventFilter = '
     ? `${latestPoll.source}${latestPoll.cacheLayer ? `/${latestPoll.cacheLayer}` : ''}`
     : '—';
 
+  // Do not send a profile setup key in Referer; only the origin is needed.
+  res.setHeader('Referrer-Policy', 'strict-origin');
   return sendHtml(res, 200, page(`${p.name} - Trakt Bridge`, `
+    <div class="row unified-nav" aria-label="Profile sections"><a href="#aio-identity-gateway">Gateway</a><a href="#unified-sync-health">Sync health</a><a href="#unified-recent-events">Recent events</a></div>
     <div class="card hero">
       <div class="row"><h1 style="margin-right:auto">${escapeHtml(p.name)}</h1><span class="badge">v${APP_VERSION}</span><span class="badge ${healthy ? 'ok' : 'warn'}">${healthy ? 'Healthy' : 'Attention'}</span></div>
       <div class="hero-meta"><span class="${connected ? 'ok' : 'bad'}">● ${connected ? 'Trakt connected' : 'Trakt disconnected'}</span><span class="muted">·</span><span class="muted">AIOStreams watch_state v2</span></div>
@@ -507,7 +611,11 @@ function renderProfile(res, { config, db }, profileId, setupKey, eventFilter = '
       </div>
     </div>
 
-    <div class="card">
+    ${renderUnifiedGatewayPanel(gatewayStatus, {
+      diagnosticsUrl: `/u/${profileId}/gateway/status.json?key=${encodeURIComponent(setupKey)}`,
+      controlUrl: `/u/${profileId}/gateway/filter?key=${encodeURIComponent(setupKey)}`
+    })}
+    <div class="card" id="unified-sync-health">
       <h2>Sync health</h2>
       <div class="grid">
         <div class="stat"><span class="label">Last authoritative sync</span><span class="value">${escapeHtml(authoritativeTime)}</span></div>
@@ -520,7 +628,7 @@ function renderProfile(res, { config, db }, profileId, setupKey, eventFilter = '
     </div>
 
     <div class="card">
-      <div class="row"><h2 style="margin-right:auto">Recent events</h2><span class="hint">Raw payloads stay collapsed</span></div>
+      <div class="row" id="unified-recent-events"><h2 style="margin-right:auto">Recent events</h2><span class="hint">Raw payloads stay collapsed</span></div>
       <div class="filters">${filterLink('all', 'All')}${filterLink('errors', 'Errors')}${filterLink('pull', 'Pull')}${filterLink('playback', 'Playback')}${filterLink('ignored', 'Ignored')}</div>
       <div class="events-wrap"><table class="events-table"><thead><tr><th class="col-time">Time</th><th class="col-event">Event / ID</th><th class="col-status">Status</th><th>Summary</th></tr></thead><tbody>${events}</tbody></table></div>
     </div>

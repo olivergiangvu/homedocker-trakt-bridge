@@ -15,17 +15,33 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # A tag push would otherwise publish :1.4 / :latest automatically.
-      # Fail before registry login, build or GHCR write until v1.4 release
-      # acceptance and host boot-fence qualification are recorded/reviewed.
-      # Applies to tagged commits that contain this workflow version.
-      - name: Block unqualified v1.4 Gateway publication
+      # v1.4.0 may be published ONLY from the exact reviewed main tip.
+      # Other v1.4 tags remain blocked until independently qualified.
+      # The earlier blanket HOLD was deliberately reviewed for the trusted
+      # HomeDocker root/Docker admin operational threat model. This gate
+      # cannot authorize host deployment or changes to live client routing.
+      - name: Qualify exact v1.4.0 publication before registry login
         if: ${{ startsWith(github.ref_name, 'v1.4') }}
         shell: bash
         run: |
-          echo 'V140_STABLE_RELEASE_HOLD: missing independent host boot fence, continuous watchdog, total nft loss and Docker restart certification.' >&2
-          echo 'Do not publish v1.4 candidates or stable until a separately reviewed release-gate change.' >&2
-          exit 1
+          set -euo pipefail
+          if [[ "$GITHUB_REF_NAME" != "v1.4.0" ]]; then
+            echo 'V140_STABLE_RELEASE_HOLD: v1.4 tag not approved.' >&2
+            exit 1
+          fi
+          git fetch --no-tags --depth=1 origin refs/heads/main
+          if [[ "$(git rev-parse FETCH_HEAD)" != "$GITHUB_SHA" ]]; then
+            echo 'V140_STABLE_RELEASE_HOLD: tag must equal current reviewed main tip.' >&2
+            exit 1
+          fi
+          grep -Fxq '  "version": "1.4.0",' package.json
+          grep -Fxq "export const APP_VERSION = '1.4.0';" src/config.mjs
+          test -s docs/releases/v1.4.0.md
+          test -s docs/releases/v1.4.0-release-qualification.md
+          grep -Fq 'V140_RELEASE_QUALIFICATION=SOURCE_ONLY_APPROVED' docs/releases/v1.4.0-release-qualification.md
+          echo 'V140_STABLE_RELEASE_HOLD=REVIEWED_SOURCE_PUBLICATION_ONLY'
+          echo 'HOME_SERVER_DEPLOYMENT=NOT_AUTHORIZED_BY_TAG'
+
 
       - uses: actions/setup-node@v4
         with:
@@ -46,11 +62,12 @@ jobs:
         id: meta
         with:
           images: ghcr.io/${{ github.repository }}
+          # Do not mutate :latest for v1.4 until post-deployment acceptance.
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha
-            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') && !startsWith(github.ref_name, 'v1.4') }}
 
       - uses: docker/build-push-action@v6
         id: build

@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 export const APP_NAME = 'HomeDocker Trakt Bridge';
-export const APP_VERSION = '1.3.0';
+export const APP_VERSION = '1.4.0';
 
 function requireEnv(name) {
   const value = process.env[name]?.trim();
@@ -77,6 +77,26 @@ export function loadConfig() {
     bulkSingleDedupeSeconds: intEnv('BULK_SINGLE_DEDUPE_SECONDS', 300, 30, 1800),
     historyDedupeSeconds: intEnv('HISTORY_DEDUPE_SECONDS', 300, 0, 1800),
     pullIdentityMode: enumEnv('PULL_IDENTITY_MODE', 'trakt', ['trakt', 'aiostreams']),
+    // Entirely HomeDocker-owned adapter; NO edits, pinning or restart of AIO.
+    // Disabled until explicit nginx location-level canary and user mapping.
+    jellyfinGatewayEnabled: boolEnv('JELLYFIN_GATEWAY_ENABLED', false),
+    jellyfinGatewayPort: intEnv('JELLYFIN_GATEWAY_PORT', 7101, 1024, 65535),
+    // Conservative default; canary-only opt-in after upstream latency measurements.
+    jellyfinGatewayNextUpTimeoutMs: intEnv('JELLYFIN_GATEWAY_NEXTUP_TIMEOUT_MS', 8000, 8000, 20000),
+    // StartIndex=0 may be projected only for a demonstrably short complete page.
+    // Never rewrite full or later pages; AIO pagination remains authoritative.
+    jellyfinGatewayFirstPageMode: enumEnv('JELLYFIN_GATEWAY_FIRST_PAGE_MODE', 'short_first_page_only', ['off', 'short_first_page_only']),
+    // One explicitly mapped Jellyfin-compatible upstream per listener. AIO is primary.
+    // Remux or native Jellyfin may be selected separately after same-user API validation.
+    jellyfinGatewaySourceKind: enumEnv('JELLYFIN_GATEWAY_SOURCE_KIND', 'aiostreams', ['aiostreams', 'remux', 'jellyfin']),
+    jellyfinGatewayUpstreamUrl: (process.env.JELLYFIN_GATEWAY_UPSTREAM_URL || '').trim(),
+    // Generic Jellyfin source user ID; historical AIO-specific env remains an alias.
+    jellyfinGatewayUserId: ((process.env.JELLYFIN_GATEWAY_USER_ID ?? process.env.JELLYFIN_GATEWAY_AIO_USER_ID) || '').trim(),
+    jellyfinGatewayProfileId: (process.env.JELLYFIN_GATEWAY_PROFILE_ID || '').trim(),
+    // Opt-in raw Resume response passthrough; no identity normalization.
+    jellyfinGatewayResumePassThrough: boolEnv('JELLYFIN_GATEWAY_RESUME_PASSTHROUGH', false),
+    // Old RC6 proof import is never automatic in a normal Bridge deploy.
+    jellyfinGatewayLegacyImport: enumEnv('JELLYFIN_GATEWAY_LEGACY_IMPORT', 'off', ['off', 'preview', 'apply']),
     aioReconcilerMode: enumEnv('AIO_RECONCILER_MODE', 'off', ['off', 'detect', 'compare']),
     aioDbPath: (process.env.AIO_DB_PATH || '/aio-data/db.sqlite').trim(),
     aioUnplayedEchoGuard: boolEnv('AIO_UNPLAYED_ECHO_GUARD', false),

@@ -5,18 +5,33 @@ import unittest
 ROOT=Path(__file__).resolve().parents[1]
 
 class V140ReleaseHold(unittest.TestCase):
-    def test_release_ci_blocks_before_registry_and_build(self):
+    def test_v140_publication_gate_allows_only_reviewed_main_tip(self):
         workflow=(ROOT/".github/workflows/release.yml").read_text("utf8")
-        gate=workflow.index("Block unqualified v1.4 Gateway publication")
+        gate=workflow.index("Qualify exact v1.4.0 publication before registry login")
         self.assertIn("startsWith(github.ref_name, 'v1.4')",workflow)
         self.assertIn("V140_STABLE_RELEASE_HOLD",workflow)
+        self.assertIn('"$GITHUB_REF_NAME" != "v1.4.0"',workflow)
+        self.assertIn("git fetch --no-tags --depth=1 origin refs/heads/main",workflow)
+        self.assertIn("git rev-parse FETCH_HEAD",workflow)
+        self.assertIn('test -s docs/releases/v1.4.0-release-qualification.md',workflow)
+        self.assertIn("V140_RELEASE_QUALIFICATION=SOURCE_ONLY_APPROVED",workflow)
         self.assertLess(gate,workflow.index("docker/login-action@v3"))
         self.assertLess(gate,workflow.index("docker/build-push-action@v6"))
         self.assertLess(gate,workflow.index("gh release create"))
         self.assertIn("exit 1",workflow[gate:workflow.index("actions/setup-node@v4")])
+        self.assertIn("!startsWith(github.ref_name, 'v1.4')",workflow)
+        self.assertIn("type=raw,value=latest",workflow)
+
     def test_qualified_stable_history_remains_immutable(self):
         pkg=(ROOT/"package.json").read_text("utf8")
-        self.assertIn('"version": "1.3.0"',pkg)
+        self.assertIn(
+            '"version": "1.4.0"', pkg,
+            "v1.4 stable source preparation remains under the explicit tag HOLD"
+        )
+        self.assertTrue((ROOT/"scripts/publish-v1.3.0-tag.py").is_file())
+        self.assertTrue((ROOT/"scripts/deploy-v1.3.0-homedocker.py").is_file())
+        self.assertIn("V140_STABLE_RELEASE_HOLD",
+                      (ROOT/".github/workflows/release.yml").read_text("utf8"))
         from pathlib import Path
         self.assertTrue((ROOT/"docs/releases/v1.3.0.md").is_file())
         self.assertIn("v1.3.0", (ROOT/"docs/STABLE-DEPLOYMENT.md").read_text("utf8"))
