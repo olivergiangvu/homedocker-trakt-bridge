@@ -77,6 +77,22 @@ PRAGMA query_only via the previously validated root-only N2 helper.
 Only direct /Items, per-series NextUp, catalog and /Users/Me GETs are used.
 No playback or Trakt calls. No docker restarts or API writes.
 
+## One-run diagnostics now distinguish the actual release blocker
+
+The v2 runner tests at most three source candidates and issues two separate,
+unambiguous STOP codes when no real episode has been reached:
+
+- `NO_OFFWINDOW_SERIES_VERIFIED`: no stateless packed a1 candidate returned
+  a **matching Series and ProviderIds.Imdb** under the mapped AIO user.
+- `NO_OFFWINDOW_NEXTUP_AVAILABLE`: one or more candidate Series IDs were
+  validated by AIO, but all verified Series returned **zero per-series NextUp
+  episodes** in that bounded sample.
+
+Either code is a bounded single-sample result, not a global assertion about
+all 661 candidates. If the backend returns a malformed NextUp item, missing
+catalog membership or unsafe user data, a different hard-stop is produced,
+and no further candidates are used.
+
 ## GO/STOP gates
 
 - Both Push and PR CI passing: only an **offline software quality gate**.
