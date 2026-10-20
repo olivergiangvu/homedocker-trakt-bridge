@@ -223,6 +223,30 @@ RC3-N1 (source-only follow-up, no catalog storm):
 - All counters are checked against the independently verified 906/861/661-like RC3-M source totals **as read now**, never hard-coded to the previous run. Raw source-key syntax is a **resolver-planning aid**, not a source of cross-ID canonical mappings, playable Item IDs, global pagination or proof that NextUp contains all candidates.
 - RC3-N2 can be designed only after the above real syntax distribution, then use a bounded representative, authenticated contract probe of source-specific catalog mapping rather than 861 network calls at once.
 
+## RC3-N1 Live PASS -> RC3-N2 bounded anchor / drop source diagnostics (2026-10-20)
+
+HomeDocker live read-only RC3-N1 source namespace classification:
+- Double-read complete matched-user AIO scope identical; source counts **906 history series keys, 861 watched/resume raw candidate keys, 661 raw candidate ranks beyond 200**, zero writes and Filter OFF.
+- Source namespace history/candidate/beyond200:
+  - Canonical IMDb: **756 / 711 / 511**
+  - Kitsu: **113 / 113 / 113**
+  - TMDB: **24 / 24 / 24**
+  - TVDB: **9 / 9 / 9**
+  - Other/opaque: **4 / 4 / 4**
+  - Other known IdParser families: zero in that audited source snapshot.
+- All **150** noncanonical-IMDb candidate keys currently rank beyond 200; this **does not prove 150 valid playable series are missing**. Likewise, 661 raw candidates are NOT yet 661 distinct canonical shows or qualified NextUp card results. Source rank is sorted by MAX(sort_at); upstream NextUp applies match_key/drop, caught-up and full episode/metadata checks after enumeration.
+
+Pinned upstream AIOStreams ID behavior relevant to safe resolver design:
+- `packages/core/src/watch-state/types.ts` uses `seriesKeyOfMatch` only if `match_key` parses as an **episode** address; the source series destination may differ from the row's raw series_key. `recentSeries` uses a per-series anchor and filters effective drops before yielding.
+- `packages/core/src/jellyfin/ids.ts` generates 32-hex Jellyfin descriptor IDs; some non-packed descriptors use a hashed mapping cached/persisted by the live AIO process. **Do not fabricate /Shows/{SeriesId}/Episodes IDs by concatenating `s|kitsu`, `s|tvdb` or the underlying source baseId**.
+- A successful `GET /Items/{ExistingId}` qualifies only a real backend item that was already resolved by a supported authenticated source. It does not establish any reliable external SeriesId for all 661 beyond-rank candidates.
+
+RC3-N2: **strictly no new Jellyfin item requests yet**. New `scripts/audit-v140-rc3-source-anchor-drop-homedocker.py` examines AIO source watch-state with a **bounded one-query-per-snapshot anchor** and bounded dropped flags. It reuses RC3-M2 exact mapped-user, unique AIO watch-sink/profile/graph and two fully consistent source snapshots. It re-reads anchors/drops twice, rejecting drift. All DB reads are SQLite mode=ro + PRAGMA query_only; there is only one authenticated /Users/Me GET. No NextUp, catalog, Items, Trakt, PlaybackInfo or POST traffic.
+- Report only aggregate **TOP_200 versus BEYOND_200** counts: anchors with no match_key, parseable episode match_key, unrecognized key; syntactic source-to-match redirects, destination presence in observed source candidate keys and **potential** effective-drop signals. The parser intentionally handles a conservative subset of IdParser namespaces. Other syntax is left unknown; never invent a show identity.
+- Ranks are the raw source GROUP BY position; this does not reproduce the complete paged upstream recentSeries order in presence of drops and canonicalized show keys. Episode anchor ties may not select the identical upstream row, so metrics are **diagnostic hints**, not a source-matching or fully qualified NextUp guarantee.
+- Current caps: 10,000 candidate anchors and 10,000 scope-local dropped rows; no credentials/source keys, metadata, watch timestamps or private episode positions are emitted. Fail closed on invalid scope, source drift, unsafe drop timestamps, or count mismatches.
+- After RC3-N2 live aggregate results, choose a **tiny capped sample** for further API contract tests only if each sampled source series has an independently proven existing Jellyfin SeriesId. No synthetic API IDs, no bulk 861 metadata requests, no production Gateway integration without explicit further authorization.
+
 ## What would make it a safe *usable* feature
 
 **Gate A (implemented, CI):** Pure source-agnostic adapter and synthetic tests for 20/20, 50/50, AIO offset-ignored, native-offset, wrong users, partial metadata, two active resumes, replay drift and no injected watch writes. It is deliberately not linked into the Gateway.
