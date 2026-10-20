@@ -247,6 +247,33 @@ RC3-N2: **strictly no new Jellyfin item requests yet**. New `scripts/audit-v140-
 - Current caps: 10,000 candidate anchors and 10,000 scope-local dropped rows; no credentials/source keys, metadata, watch timestamps or private episode positions are emitted. Fail closed on invalid scope, source drift, unsafe drop timestamps, or count mismatches.
 - After RC3-N2 live aggregate results, choose a **tiny capped sample** for further API contract tests only if each sampled source series has an independently proven existing Jellyfin SeriesId. No synthetic API IDs, no bulk 861 metadata requests, no production Gateway integration without explicit further authorization.
 
+## RC3-N2 HomeDocker LIVE PASS → RC3-N3 redirect integrity (2026-10-20)
+
+RC3-N2 HomeDocker audit succeeded under exact mapped-user /Users/Me, two identical 861-source candidate/anchor snapshots, unique sink, verified Bridge identity graph, Filter OFF and zero production changes. Scoped dropped rows = 2.
+
+| Source cohort | Top 200 raw keys | Beyond top 200 raw keys |
+| --- | ---: | ---: |
+| Candidate raw source keys | 200 | 661 |
+| Anchor with parseable episode match_key | 14 | 194 |
+| Anchor without match_key | 186 | 467 |
+| Raw source key differs from parsed match destination | 0 | **118** |
+| Parsed match destination also in raw candidate inventory | 14 | 183 |
+| Newer effective drop hint | 2 | 0 |
+
+Caveats:
+- The **118 source-to-destination changes** are based on syntactic episode match_key extraction only. They are not 118 independently verified canonical identities, duplicate series, removable cards, or playable episodes.
+- The **183 destination-in-candidate matches** include matches to one's own source key, so they must NOT be counted as 183 more aliases, nor assumed to be a subset of the 118 changes.
+- Two newer drop hints are NOT a substitute for reproducing upstream recentSeries (match_key, drops, tie ordering, caughtUp and metadata checks) and do not justify deleting series.
+- The per-key rank comes from MAX(sort_at) raw SQL, not actual pagination /StartsIndex semantics of the NextUp response. Unverified Kitsu/TMDB/TVDB identities must remain separate.
+
+**RC3-N3 source-only redirect graph integrity**:
+- script: scripts/audit-v140-rc3-redirect-graph-homedocker.py, depending on already pinned RC3-N2 and RC3-N1 namespace classifiers; only one authenticated GET /Users/Me and independently reverified read-only source/anchor/drop double snapshots.
+- Count *directed* source→target differences for top 200 and outside top 200; whether targets are present in the recent set, history-only set, or absent; whether the syntactic namespaces agree.
+- Check fan-in (multiple sources pointing to the same target), multi-hop chains, and cycles. **All keys stay private in memory**. Only static category names and aggregate integer counts leave the audit. Even an acyclic graph with valid targets is not enough to collapse identities because only one Bridge alias group is verified.
+- Snapshot read is SQLite mode=ro with PRAGMA query_only=ON, full strict uuid+persona scope, fixed 10K caps and no writes, no Jellyfin IDs generated, no catalog, Trakt, playback or NextUp API calls, no Odin/Gateway changes.
+- After the operator's real RC3-N3 result, qualify a tiny bounded authenticated SeriesId probe **only where an existing real Jellyfin ID can be independently obtained**. Never invent /Shows/{SeriesId}/Episodes path IDs from s|series_keys, never fan out to 661 unresolved candidates and never promote the Redirect Integrity result into a global shelf claim.
+
+
 ## What would make it a safe *usable* feature
 
 **Gate A (implemented, CI):** Pure source-agnostic adapter and synthetic tests for 20/20, 50/50, AIO offset-ignored, native-offset, wrong users, partial metadata, two active resumes, replay drift and no injected watch writes. It is deliberately not linked into the Gateway.
