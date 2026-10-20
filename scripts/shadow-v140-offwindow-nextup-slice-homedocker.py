@@ -44,7 +44,8 @@ PHASES=frozenset({"INIT","MAP_USER","SOURCE_SNAPSHOT","PACKED_SERIES_GET",
                   "SOURCE_RECHECK","FINAL_GATE"})
 REASONS=frozenset({
     "SOURCE_NOT_VERIFIED","AUTH_USER_MISMATCH",
-    "NO_SAFE_SOURCE_CANDIDATE","NO_OFFWINDOW_ITEM_VERIFIED",
+    "NO_SAFE_SOURCE_CANDIDATE","NO_OFFWINDOW_SERIES_VERIFIED",
+    "NO_OFFWINDOW_NEXTUP_AVAILABLE",
     "NO_OFFWINDOW_NEXTUP_VERIFIED","NO_VALID_EPISODE_CATALOG",
     "EPISODE_IDENTITY_UNVERIFIED","SOURCE_SNAPSHOT_CHANGED",
     "GET_BUDGET_EXCEEDED","TIME_BUDGET_EXCEEDED",
@@ -139,18 +140,18 @@ def try_episode(get,imdb,series_id):
     global PHASE
     PHASE="PACKED_SERIES_GET"
     obj=get("/Items/"+series_id,missing_ok=True)
-    if obj is None:return None
+    if obj is None:return ("NOT_VERIFIED",None)
     providers=obj.get("ProviderIds")
-    if not isinstance(providers,dict):return None
+    if not isinstance(providers,dict):return ("NOT_VERIFIED",None)
     if obj.get("Type")!="Series" or obj.get("Id")!=series_id \
             or str(providers.get("Imdb","")).lower()!=imdb:
-        return None
+        return ("NOT_VERIFIED",None)
     PHASE="PER_SERIES_NEXTUP"
     nextup=get("/Shows/NextUp?"+urlencode({"SeriesId":series_id,"Limit":"1"}))
     cards=nextup.get("Items")
     if not isinstance(cards,list) or len(cards)>1:
         stop("NO_OFFWINDOW_NEXTUP_VERIFIED")
-    if not cards:return None
+    if not cards:return ("NO_NEXTUP",None)
     card=cards[0]
     if not isinstance(card,dict):stop("NO_OFFWINDOW_NEXTUP_VERIFIED")
     data=card.get("UserData")
@@ -178,7 +179,7 @@ def try_episode(get,imdb,series_id):
     if detail.get("Type")!="Episode" or detail.get("Id")!=ep_id \
             or detail.get("SeriesId")!=series_id:
         stop("EPISODE_IDENTITY_UNVERIFIED")
-    return total
+    return ("VERIFIED_EPISODE",total)
 
 def main():
     global SOURCE,END,PHASE
@@ -195,10 +196,16 @@ def main():
     candidates=select_candidates(index,anchors)
     original=(index,anchors)
     attempts=0
+    verified_series=0
+    empty_nextup=0
     for imdb,series_id in candidates:
         attempts+=1
-        count=try_episode(get,imdb,series_id)
-        if count is None:continue
+        result,count=try_episode(get,imdb,series_id)
+        if result=="NOT_VERIFIED":continue
+        verified_series+=1
+        if result=="NO_NEXTUP":
+            empty_nextup+=1
+            continue
         PHASE="SOURCE_RECHECK"
         if SOURCE.source_gate_and_anchors()!=original:
             stop("SOURCE_SNAPSHOT_CHANGED")
@@ -212,6 +219,7 @@ def main():
         print("R5SLICE_NEXTUP_EPISODE_IN_CATALOG=YES")
         print("R5SLICE_CATALOG_EPISODES="+str(count))
         print("R5SLICE_CANDIDATES_TESTED="+str(attempts))
+        print("R5SLICE_SERIES_BACKEND_VALIDATED="+str(verified_series))
         print("R5SLICE_HTTP_GET_COUNT="+str(CALLS))
         print("R5SLICE_GLOBAL_PAGINATION=NOT_PROVEN")
         print("R5SLICE_PLAYBACK=NOT_PROVEN")
@@ -224,7 +232,9 @@ def main():
     PHASE="SOURCE_RECHECK"
     if SOURCE.source_gate_and_anchors()!=original:
         stop("SOURCE_SNAPSHOT_CHANGED")
-    stop("NO_OFFWINDOW_ITEM_VERIFIED")
+    if verified_series:
+        stop("NO_OFFWINDOW_NEXTUP_AVAILABLE")
+    stop("NO_OFFWINDOW_SERIES_VERIFIED")
 
 if __name__=="__main__":
     try:
