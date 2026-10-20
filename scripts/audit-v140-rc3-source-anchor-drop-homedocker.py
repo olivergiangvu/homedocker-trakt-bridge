@@ -118,10 +118,16 @@ def anchor_snapshot(scope):
 
 
 def source_gate_and_anchors():
+    global PHASE
+    PHASE="FIRST_SOURCE"
     first_index=inventory.snapshot()
+    PHASE="FIRST_ANCHORS"
     first_anchors=anchor_snapshot(first_index["scope"])
+    PHASE="SECOND_SOURCE"
     second_index=inventory.snapshot()
+    PHASE="SECOND_ANCHORS"
     second_anchors=anchor_snapshot(second_index["scope"])
+    PHASE="VERIFY_SCOPE"
     if first_index!=second_index:
         raise shadow.StopAudit("SOURCE_SNAPSHOT_DRIFT")
     if first_index["scope"]!=second_index["scope"]:
@@ -167,8 +173,19 @@ def summarize(index, extra):
     dropped_at={}
     for item,matched,at in extra["drops"]:
         if not isinstance(item,str) or not item or len(item)>512 \
-            or (matched is not None and not isinstance(matched,str)) \
-            or type(at) not in (int,float) or not math.isfinite(at) or at<0:
+            or (matched is not None and not isinstance(matched,str)):
+            raise shadow.StopAudit("DROP_ROW_INVALID")
+        # Upstream Number(dropped_at ?? 0) permits NULL or a numeric
+        # SQLite string. Preserve that interpretation, but never accept
+        # malformed/nonfinite numbers or send their values to stdout.
+        if at is None:
+            at=0
+        elif isinstance(at,str) and 0<len(at)<=32:
+            try:
+                at=float(at)
+            except ValueError:
+                raise shadow.StopAudit("DROP_ROW_INVALID") from None
+        if type(at) not in (int,float) or not math.isfinite(at) or at<0:
             raise shadow.StopAudit("DROP_ROW_INVALID")
         for key in (item,matched):
             if key:
