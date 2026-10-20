@@ -314,6 +314,21 @@ RC3-N5 audit added as `scripts/audit-v140-rc3-source-a1-packability-homedocker.p
 - These counts are **only packable-source-syntax hints**. They are NOT proof that a production `seriesIdOf(row.baseId,row.videoId,row.mediaType)` uses that raw key, that the backend ever issued/decoded the corresponding ID, that the mapped user is authorized to access it, or that metadata/playback resolves. Any absent/mismatched IDs must remain unresolved.
 - Next milestone, after seeing the actual packability distribution, is a bounded, separately authorized read-only API contract test using **IDs actually returned by the AIO server**. No generated/a1-guessed/b2-guessed IDs and no fanout to 661 candidate series, and no Filter enablement.
 
+## RC3-N5 Live PASS -> RC3-N6 source descriptor provenance (2026-10-20)
+
+RC3-N5 operator audit on exact scoped AIO watch-sink, verified same mapped Jellyfin user and two identical read-only source/anchor snapshots:
+- TOP 200 raw candidates: **200/200 canonical numeric source+media syntax hints** for a potentially packable `a1` series descriptor.
+- Beyond 200: **657/661 canonical syntax hints**, **4** noncanonical/opaque source keys, 0 unsupported media types.
+- All **118** syntactic redirected destination source keys also have numeric/canonical packability hints. Do **not** add these 118 to the 857/861 qualified source-syntax hints, and do **not** infer 118 confirmed canonical aliases.
+- No Jellyfin IDs computed, emitted or created; no catalog/Items calls; Filter OFF, production changes zero.
+- This result explains why RC3-N4's **zero matching stored `b2` maps** need not signify a missing backend SeriesId: stateless `a1` IDs are not persisted. However **syntax packability is not the actual decoder's descriptor** and does not qualify user-facing NextUp, playback or identity.
+
+RC3-N6 standalone read-only provenance audit `scripts/audit-v140-rc3-descriptor-provenance-homedocker.py`:
+- From the same unique AIO sink/user/Bridge graph, reuse RC3-N2 stable two-pass raw source/candidate/anchor/drop validation. Read **only** already selected anchor `item_key` values from AIO watch_state in fixed `IN`-query batches of at most **350**, from a read-only SQLite transaction, twice; compare each selected exact `series_key`, `sort_at`, `item_key`, `season`, `episode` and `media_type` to the independently validated anchors. Stop on missing/duplicated source rows, scope mismatch or drift. At most 10,000 anchors; never fan out 861 HTTP calls.
+- The source `base_id` and optional `video_id` are processed **in memory only**, using a conservative reconstruction of pinned AIO `seriesIdOf` (base parser + video token boundaries); this calculates a **Stremio source descriptor base**, NOT a 32-hex Jellyfin `a1`/`b2` ID. Only bounded aggregate counts show when source base differs from raw `series_key`, whether modeled routed descriptor base equals raw, possible special video-token correction, whether the routed base is canonically packable and whether it matches an existing syntactic redirect target.
+- This is provenance evidence about a *modeled* route descriptor, not proof an actual AIO client received, decoded or could play the corresponding SeriesId. It does not request `/Shows/{SeriesId}/Episodes`, `/Items`, `PlaybackInfo` or Trakt; no DB/history changes, Docker restarts, Gateway/Odin modifications or token/series metadata exposed.
+- Even if modeled source descriptors are all canonically packable, one **server-issued, same-user response** is required to qualify a narrow catalog API canary. DO NOT construct a client ID or a 661-card NextUp shelf from the model. Production RC2, Filter OFF and R5 HOLD remain unchanged.
+
 ## What would make it a safe *usable* feature
 
 **Gate A (implemented, CI):** Pure source-agnostic adapter and synthetic tests for 20/20, 50/50, AIO offset-ignored, native-offset, wrong users, partial metadata, two active resumes, replay drift and no injected watch writes. It is deliberately not linked into the Gateway.
