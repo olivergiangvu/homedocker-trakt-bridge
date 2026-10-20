@@ -30,7 +30,7 @@ class SliceTests(unittest.TestCase):
         def bad(path,missing_ok=False):
             routes.append(path)
             return {"Type":"Series","Id":SID,"ProviderIds":{"Imdb":"tt99999999"}}
-        self.assertIsNone(subject.try_episode(bad,IMDB,SID))
+        self.assertEqual(subject.try_episode(bad,IMDB,SID),("NOT_VERIFIED",None))
         self.assertEqual(routes,["/Items/"+SID])
 
     def test_404_is_not_an_existing_server_series(self):
@@ -38,7 +38,7 @@ class SliceTests(unittest.TestCase):
         def missing(path,missing_ok=False):
             routes.append((path,missing_ok))
             return None
-        self.assertIsNone(subject.try_episode(missing,IMDB,SID))
+        self.assertEqual(subject.try_episode(missing,IMDB,SID),("NOT_VERIFIED",None))
         self.assertEqual(routes,[("/Items/"+SID,True)])
 
     def test_real_backend_series_id_to_nextup_catalog_episode(self):
@@ -58,7 +58,7 @@ class SliceTests(unittest.TestCase):
             if path=="/Items/"+EP:
                 return {"Type":"Episode","Id":EP,"SeriesId":SID}
             raise AssertionError("Unexpected endpoint")
-        self.assertEqual(subject.try_episode(get,IMDB,SID),1)
+        self.assertEqual(subject.try_episode(get,IMDB,SID),("VERIFIED_EPISODE",1))
         self.assertEqual(len(routes),4)
         self.assertIn("Season=1",routes[2])
 
@@ -70,7 +70,7 @@ class SliceTests(unittest.TestCase):
             if path.startswith("/Shows/NextUp?"):
                 return {"Items":[]}
             raise AssertionError("no other GET allowed")
-        self.assertIsNone(subject.try_episode(empty,IMDB,SID))
+        self.assertEqual(subject.try_episode(empty,IMDB,SID),("NO_NEXTUP",None))
         def failed(path,missing_ok=False):
             if path=="/Items/"+SID:
                 return {"Type":"Series","Id":SID,"ProviderIds":{"Imdb":IMDB}}
