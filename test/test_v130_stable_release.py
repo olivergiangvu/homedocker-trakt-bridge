@@ -28,7 +28,7 @@ class StablePromotionRegressionTests(unittest.TestCase):
         # Published v1.3.0 remains fixed in the stable deploy/publish scripts.
         # Development source may identify itself as an untagged RC.1 candidate.
         # Keep the list explicit: no implicit authorization for future tags.
-        self.assertIn(pkg["version"], ("1.3.0", "1.4.0-rc.1", "1.4.0-rc.2"))
+        self.assertIn(pkg["version"], ("1.3.0", "1.4.0-rc.1", "1.4.0-rc.2", "1.4.0"))
         self.assertIn(
             "export const APP_VERSION = '" + pkg["version"] + "';", src
         )
