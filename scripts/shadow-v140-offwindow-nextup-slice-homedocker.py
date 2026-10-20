@@ -57,6 +57,7 @@ REASONS=frozenset({
 })
 CALLS=0
 END=None
+n2=None
 
 
 class StopSlice(Exception):
@@ -209,11 +210,12 @@ def verify_search_and_nextup(read, imdb, title):
     if not isinstance(cards,list) or len(cards)!=1:
         stop("NEXTUP_NO_QUALIFIED_EPISODE")
     item=cards[0]
+    userdata=item.get("UserData") if isinstance(item,dict) else None
     if not isinstance(item,dict) or item.get("Type")!="Episode" \
             or item.get("SeriesId")!=sid \
             or not isinstance(item.get("Id"),str) \
             or not JELLYFIN_ID.fullmatch(item["Id"]) \
-            or item.get("UserData",{}).get("Played") is True:
+            or (isinstance(userdata,dict) and userdata.get("Played") is True):
         stop("NEXTUP_NO_QUALIFIED_EPISODE")
     eid=item["Id"]
     catalog=read("/Shows/"+quote(sid,safe="")+"/Episodes?"+
@@ -236,7 +238,7 @@ def verify_search_and_nextup(read, imdb, title):
 
 
 def main():
-    global PHASE,END
+    global PHASE,END,n2
     END=time.monotonic()+MAX_SECONDS
     PHASE="MAP_USER"
     n2=load_proven_source()
@@ -286,6 +288,7 @@ if __name__=="__main__":
         print("R5SLICE_FAILURE_REASON="+(
             reason if reason in REASONS else "SOURCE_OR_RUNTIME_UNQUALIFIED"))
         try:
+            if n2 is None:raise StopSlice("SOURCE_NOT_VERIFIED")
             n2.shadow.bridge_gate()
             print("R5SLICE_GATEWAY_FILTER_ON_STOP=OFF")
         except Exception:
