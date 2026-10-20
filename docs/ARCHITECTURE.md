@@ -36,7 +36,7 @@ HomeDocker Trakt Bridge exists to keep **one canonical watched/resume authority*
 | Component | Responsibility |
 | --- | --- |
 | Trakt | canonical watched/resume history |
-| Trakt Bridge | translate/synchronize AIOStreams watch state and Trakt |
+| Trakt Bridge | translate/synchronize AIOStreams watch state and Trakt; optionally serve a read-only NextUp Gateway in the same process |
 | AIOStreams | Jellyfin-compatible playback/state surface |
 | AIOMetadata | metadata/catalog, local playstate, optional secondary-tracker write fan-out |
 | Clients | playback and presentation |
@@ -121,6 +121,30 @@ This preserves Trakt's provider spelling on pull, allowing clients that also use
 
 The learned-alias implementation and historical regression fixture are developer concerns and are documented in [DEVELOPMENT.md](DEVELOPMENT.md).
 
+## v1.4 read-only NextUp Identity Gateway
+
+The v1.4 Gateway is an **optional read-only HTTP projection within the existing Bridge process**. It is not a second Trakt writer, a second database, an alternate watched/resume read authority or a general Jellyfin proxy.
+
+```text
+authorized client's approved NextUp-only route (requires explicit operator routing)
+             |
+       NextUp Gateway (inside Bridge; listener separately provisioned)
+             |
+    authenticated same-user upstream AIOStreams GET /Shows/NextUp
+             |
+    verified series identity graph + conservative filter
+             |
+    normalized eligible TV alias collision or original response unchanged
+```
+
+- Listener defaults OFF; configure exact upstream/source/user/profile mapping explicitly.
+- When validly provisioned, the Identity Filter defaults AUTO ON. An authenticated per-source manual OFF override persists across restarts.
+- Filter eligibility is limited to verified **TV-series aliases in supported short first-page NextUp responses**. Invalid, full/paginated, ambiguous or unsupported requests pass through unmodified; no speculative hiding or shelf insertion.
+- Movies, `/UserItems/Resume`, general Jellyfin endpoints, playback, Trakt history and AIO SQLite are **not** rewritten.
+- Gateway `7101` is an internal listener, never a public port or a wholesale replacement for Jellyfin/AIOStreams base URLs. Actual client routing is an independent acceptance gate.
+
+Read the [stable operator guide](STABLE-V1.4-OPERATIONS.md) before enabling or routing a Gateway. Historical R23D host-fencing experiments are archived, not bundled as claims of general kernel/boot-time enforcement.
+
 ## Runtime boundary
 
 ```text
@@ -149,7 +173,7 @@ The persistent SQLite database stores:
 - learned identity evidence
 - event history
 
-v0.4.0 uses explicit schema tracking:
+The Bridge uses explicit schema tracking (the initial schema remains version 1):
 
 ```text
 PRAGMA user_version = 1
