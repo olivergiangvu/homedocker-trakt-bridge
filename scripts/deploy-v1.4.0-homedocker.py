@@ -252,11 +252,20 @@ def verify_composed_diff(old):
 
 def verify_new(state, image_id, *, version, image_ref, retries=35):
     assert_http(version, attempts=retries)
-    new = inspect(APP)
-    if (new["Config"]["Image"] != image_ref or new["Image"] != image_id
-            or not new["State"]["Running"]
-            or (new["State"].get("Health") or {}).get("Status") != "healthy"):
-        raise Stop("RUNTIME_IMAGE_OR_HEALTH_UNEXPECTED")
+    new = None
+    # Docker image HEALTHCHECK can remain "starting" for up to its first
+    # 30-second scheduled probe even after HTTP readiness is already 200.
+    for i in range(retries):
+        new = inspect(APP)
+        if (new["Config"]["Image"] != image_ref or new["Image"] != image_id):
+            raise Stop("RUNTIME_IMAGE_ID_UNEXPECTED")
+        if (new["State"]["Running"] and
+                (new["State"].get("Health") or {}).get("Status") == "healthy"):
+            break
+        if i + 1 < retries:
+            time.sleep(2)
+    else:
+        raise Stop("RUNTIME_NOT_HEALTHY_AFTER_TIMEOUT")
     if set(new["NetworkSettings"]["Networks"]) != state["networks"]:
         raise Stop("GATEWAY_NETWORK_REGRESSION")
     if ([m["Source"] for m in new["Mounts"] if m.get("Destination") == "/app/data"]
