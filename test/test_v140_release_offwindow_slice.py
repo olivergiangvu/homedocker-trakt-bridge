@@ -1,159 +1,135 @@
-"""Release Recovery: real server-issued off-window ID E2E shadow contract."""
+"""Release vertical slice: upstream a1 vector and live backend validation gates."""
 import importlib.util
 from pathlib import Path
-import sqlite3
 import unittest
-from unittest.mock import patch
 
 FILE=(Path(__file__).resolve().parents[1]/
       "scripts/shadow-v140-offwindow-nextup-slice-homedocker.py")
-spec=importlib.util.spec_from_file_location("release_slice",FILE)
-slice=importlib.util.module_from_spec(spec)
-spec.loader.exec_module(slice)
-
-SERIES="a1"+"0"*30
-EPISODE="a1"+"1"*30
+spec=importlib.util.spec_from_file_location("r5_slice",FILE)
+subject=importlib.util.module_from_spec(spec)
+spec.loader.exec_module(subject)
 IMDB="tt12345678"
-
+SID="a12102000000bc614effffffff000000"
+EP="a14102000000bc614e00010001000000"
 
 class SliceTests(unittest.TestCase):
-    def test_one_real_server_series_episode_catalog_end_to_end(self):
-        calls=[]
-        responses={
-            "/Search/Hints?SearchTerm=Example+Series&Limit=5&IncludeItemTypes=Series":
-                {"SearchHints":[{"Type":"Series","ItemId":SERIES}]},
-            "/Items/"+SERIES:
-                {"Type":"Series","Id":SERIES,"ProviderIds":{"Imdb":IMDB}},
-            "/Shows/NextUp?SeriesId="+SERIES+"&Limit=1":
-                {"Items":[{"Type":"Episode","Id":EPISODE,
-                           "SeriesId":SERIES,"UserData":{"Played":False}}]},
-            "/Shows/"+SERIES+"/Episodes?StartIndex=0&Limit=100":
-                {"StartIndex":0,"TotalRecordCount":1,"Items":[
-                    {"Type":"Episode","Id":EPISODE,"SeriesId":SERIES}]},
-            "/Items/"+EPISODE:
-                {"Type":"Episode","Id":EPISODE,"SeriesId":SERIES},
-        }
-        def read(path):
-            calls.append(path)
-            return responses[path]
-        result=slice.verify_search_and_nextup(read,IMDB,"Example Series")
-        self.assertTrue(result["series_verified"])
-        self.assertTrue(result["episode_verified"])
-        self.assertEqual(result["catalog_episode_count"],1)
-        self.assertEqual(len(calls),5)
-        self.assertTrue(all(("/Items/" in x or "/Search/" in x or
-                             "/Shows/" in x) for x in calls))
+    def test_exact_16_byte_pinned_a1_series_vector_and_media_code(self):
+        self.assertEqual(subject.packed_series_id(IMDB,"series"),SID)
+        self.assertEqual(subject.packed_series_id(IMDB,"anime")[4:6],"03")
+        self.assertEqual(subject.packed_series_id(IMDB,"tv")[4:6],"04")
+        self.assertEqual(len(bytes.fromhex(SID)),16)
+        self.assertEqual(bytes.fromhex(SID)[9:13],b"\xff"*4)
+        self.assertEqual(bytes.fromhex(SID)[13:],b"\x00"*3)
+        self.assertIsNone(subject.packed_series_id("tt00000001","series"))
+        self.assertIsNone(subject.packed_series_id(IMDB,"movie"))
+        self.assertIsNone(subject.packed_series_id("kitsu:222","anime"))
+        self.assertIsNone(subject.packed_series_id("tt281474976710656","series"))
 
-    def test_never_accept_same_title_wrong_provider_imdb(self):
-        def read(path):
-            if path.startswith("/Search/"):
-                return {"SearchHints":[{"Type":"Series","ItemId":SERIES}]}
-            return {"Type":"Series","Id":SERIES,
-                    "ProviderIds":{"Imdb":"tt99999999"}}
-        with self.assertRaisesRegex(
-            slice.StopSlice,"SERIES_IDENTITY_UNVERIFIED"
-        ):
-            slice.verify_search_and_nextup(read,IMDB,"Example Series")
+    def test_server_must_validate_source_imdb_before_any_nextup_call(self):
+        routes=[]
+        def bad(path,missing_ok=False):
+            routes.append(path)
+            return {"Type":"Series","Id":SID,"ProviderIds":{"Imdb":"tt99999999"}}
+        self.assertIsNone(subject.try_episode(bad,IMDB,SID))
+        self.assertEqual(routes,["/Items/"+SID])
 
-    def test_no_episode_or_no_catalog_match_is_stopped(self):
-        paths=[]
-        def read(path):
-            paths.append(path)
-            if path.startswith("/Search/"):
-                return {"SearchHints":[{"Type":"Series","ItemId":SERIES}]}
-            if path=="/Items/"+SERIES:
-                return {"Type":"Series","Id":SERIES,
+    def test_404_is_not_an_existing_server_series(self):
+        routes=[]
+        def missing(path,missing_ok=False):
+            routes.append((path,missing_ok))
+            return None
+        self.assertIsNone(subject.try_episode(missing,IMDB,SID))
+        self.assertEqual(routes,[("/Items/"+SID,True)])
+
+    def test_real_backend_series_id_to_nextup_catalog_episode(self):
+        routes=[]
+        def get(path,missing_ok=False):
+            routes.append(path)
+            if path=="/Items/"+SID:
+                return {"Type":"Series","Id":SID,
                         "ProviderIds":{"Imdb":IMDB}}
-            if "/NextUp?" in path:
+            if path.startswith("/Shows/NextUp?"):
+                return {"Items":[{"Type":"Episode","Id":EP,
+                                  "SeriesId":SID,"ParentIndexNumber":1,
+                                  "UserData":{"Played":False}}]}
+            if path.startswith("/Shows/"+SID+"/Episodes?"):
+                return {"StartIndex":0,"TotalRecordCount":1,
+                        "Items":[{"Type":"Episode","Id":EP,"SeriesId":SID}]}
+            if path=="/Items/"+EP:
+                return {"Type":"Episode","Id":EP,"SeriesId":SID}
+            raise AssertionError("Unexpected endpoint")
+        self.assertEqual(subject.try_episode(get,IMDB,SID),1)
+        self.assertEqual(len(routes),4)
+        self.assertIn("Season=1",routes[2])
+
+    def test_no_nextup_or_missing_catalog_fails_closed(self):
+        def empty(path,missing_ok=False):
+            if path=="/Items/"+SID:
+                return {"Type":"Series","Id":SID,
+                        "ProviderIds":{"Imdb":IMDB}}
+            if path.startswith("/Shows/NextUp?"):
                 return {"Items":[]}
-            raise AssertionError("catalog should not be read")
-        with self.assertRaisesRegex(
-            slice.StopSlice,"NEXTUP_NO_QUALIFIED_EPISODE"
-        ):
-            slice.verify_search_and_nextup(read,IMDB,"Example Series")
-        self.assertEqual(len(paths),3)
-
-    def test_catalog_missing_real_episode_must_fail_closed(self):
-        def read(path):
-            if path.startswith("/Search/"):
-                return {"SearchHints":[{"Type":"Series","ItemId":SERIES}]}
-            if path=="/Items/"+SERIES:
-                return {"Type":"Series","Id":SERIES,
-                        "ProviderIds":{"Imdb":IMDB}}
-            if "/NextUp?" in path:
-                return {"Items":[{"Type":"Episode","Id":EPISODE,
-                                  "SeriesId":SERIES}]}
+            raise AssertionError("no other GET allowed")
+        self.assertIsNone(subject.try_episode(empty,IMDB,SID))
+        def failed(path,missing_ok=False):
+            if path=="/Items/"+SID:
+                return {"Type":"Series","Id":SID,"ProviderIds":{"Imdb":IMDB}}
+            if path.startswith("/Shows/NextUp?"):
+                return {"Items":[{"Type":"Episode","Id":EP,
+                                  "SeriesId":SID,
+                                  "UserData":{"Played":False}}]}
             if "/Episodes?" in path:
-                return {"Items":[],"TotalRecordCount":0,"StartIndex":0}
-            raise AssertionError("should stop before episode detail")
-        with self.assertRaisesRegex(
-            slice.StopSlice,"NEXTUP_EPISODE_NOT_IN_CATALOG"
+                return {"StartIndex":0,"TotalRecordCount":0,"Items":[]}
+            raise AssertionError("should stop")
+        with self.assertRaisesRegex(subject.StopSlice,"NO_VALID_EPISODE_CATALOG"):
+            subject.try_episode(failed,IMDB,SID)
+
+    def test_wrong_client_user_played_or_ambiguous_nextup_fails(self):
+        def made(played):
+            def get(path,missing_ok=False):
+                if path=="/Items/"+SID:
+                    return {"Type":"Series","Id":SID,"ProviderIds":{"Imdb":IMDB}}
+                if "/NextUp?" in path:
+                    return {"Items":[{"Type":"Episode","Id":EP,
+                                      "SeriesId":SID,
+                                      "UserData":{"Played":played}}]}
+                raise AssertionError("should not call catalog")
+            return get
+        for v in (True,None):
+            with self.assertRaisesRegex(
+                subject.StopSlice,"NO_OFFWINDOW_NEXTUP_VERIFIED"):
+                subject.try_episode(made(v),IMDB,SID)
+
+    def test_outside_top_200_only_three_no_match_redirects(self):
+        keys=["s|tt"+str(70000000+i) for i in range(208)]
+        index={"recent":[(k,208-i) for i,k in enumerate(keys)]}
+        anchors=[(key,None,"series",208-i,1,1,"e|"+str(i))
+                 for i,key in enumerate(keys)]
+        anchors[201]=(keys[201],"e|tt70000000:1:1","series",7,1,1,"e|201")
+        selected=subject.select_candidates(index,{"anchors":anchors})
+        self.assertEqual(len(selected),3)
+        expected=[keys[200],keys[202],keys[203]]
+        self.assertEqual([x[0] for x in selected],[k[2:] for k in expected])
+        self.assertTrue(all(subject.JF_ID.fullmatch(x[1]) for x in selected))
+
+    def test_no_id_guessing_b2_writes_or_production_imports(self):
+        source=FILE.read_text()
+        for phrase in (
+            "UPDATE watch_state","DELETE FROM","INSERT INTO",
+            "encodeItemId(", "Search/Hints?", "docker compose",
+            "print(imdb)", "print(series_id)", "print(ep_id)",
+            'get("/PlaybackInfo', "TraktClient", "gatewayFilteringEnabled(",
         ):
-            slice.verify_search_and_nextup(read,IMDB,"Example Series")
-
-    def test_source_selector_never_draws_from_first_200_or_redirects(self):
-        keys=["s|tt"+str(70000000+i) for i in range(205)]
-        recent=[(k,205-i) for i,k in enumerate(keys)]
-        anchor=[(k,None,"series",205-i,1,1,"e|test-"+str(i))
-                for i,k in enumerate(keys)]
-        anchor[201]=(keys[201],"e|tt70000000:1:2","series",
-                     4,1,1,"e|test-201")
-        selected=slice.take_candidates({"recent":recent},
-                                       {"anchors":anchor})
-        self.assertEqual(selected[0][0],201)
-        self.assertEqual(selected[1][0],203)
-        self.assertTrue(all(x[0]>200 and x[2][1] is None for x in selected))
-
-    def test_real_sqlite_selection_uses_exact_mapped_scope_and_title(self):
-        keys=["s|tt"+str(70000000+i) for i in range(202)]
-        recent=[(k,202-i) for i,k in enumerate(keys)]
-        anchors=[(k,None,"series",202-i,1,1,"e|"+str(i))
-                 for i,k in enumerate(keys)]
-        db=sqlite3.connect(":memory:")
-        db.execute("CREATE TABLE watch_state(uuid TEXT,persona TEXT,"
-                   "item_key TEXT,series_key TEXT,sort_at INTEGER,"
-                   "media_type TEXT,snapshot TEXT)")
-        for rank in (200,201):
-            k=keys[rank]
-            db.execute("INSERT INTO watch_state VALUES(?,?,?,?,?,?,?)",
-                       ("mapped","", "e|"+str(rank),k,202-rank,
-                        "series",'{"seriesName":"Example Series"}'))
-        db.execute("INSERT INTO watch_state VALUES(?,?,?,?,?,?,?)",
-                   ("different","", "e|200",keys[200],999,
-                    "series",'{"seriesName":"Wrong User"}'))
-        db.commit()
-        db.execute("PRAGMA query_only=ON")
-        class FakeIdentity:
-            AIO_DB="known"
-            @staticmethod
-            def ro(path): return db
-        class FakeN2:
-            identity=FakeIdentity()
-        found=slice.selected_snapshot(FakeN2(),{"recent":recent,"scope":("mapped","")},
-                                      {"anchors":anchors})
-        self.assertEqual(found[0],201)
-        self.assertEqual(found[3],"Example Series")
-        db.close()
-
-    def test_recovery_branch_has_no_routing_writes_or_synthetic_ids(self):
-        src=FILE.read_text()
-        for forbidden in (
-            "INSERT INTO", "UPDATE watch_state","DELETE FROM",
-            "encodeItemId","base64.urlsafe_b64encode",
-            "docker compose","gatewayFilteringEnabled(",
-            "print(title)", "print(key)", "print(token)",
-            "print(sid)", "print(eid)","print(issued)",
-            "print(responses)",
-        ):
-            self.assertNotIn(forbidden,src)
-        for required in (
-            "Search/Hints?","/Shows/NextUp?","/Episodes?",
-            "CALLS>=MAX_HTTP","NoRedirect()","ProxyHandler({})",
-            "shadow.bridge_gate()", "SOURCE_RANK_OUTSIDE_200",
+            self.assertNotIn(phrase,source)
+        for phrase in (
+            "SOURCE.source_gate_and_anchors()",
+            'get("/Users/Me")',
+            "SOURCE.shadow.bridge_gate()",
+            "MAX_SAMPLES=3","MAX_GETS=10",
+            "R5SLICE_FILTER_FINAL=OFF",
             "R5SLICE_PRODUCTION_CHANGES=0",
         ):
-            self.assertIn(required,src)
-
+            self.assertIn(phrase,source)
 
 if __name__=="__main__":
     unittest.main()
