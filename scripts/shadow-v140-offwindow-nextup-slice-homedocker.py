@@ -1,281 +1,230 @@
 #!/usr/bin/env python3
-"""Release Recovery / Vertical Slice 1: REAL off-window NextUp item, shadow-only.
+"""Release Recovery: one backend-validated off-window NextUp episode.
 
-Not imported into production. Selects ONE rank>200 canonical IMDb candidate
-from a doubly verified EXACT AIO watch-sink, using existing watch-state title
-snapshot. Search/Hints obtains SeriesId FROM THE SERVER (not synthesized).
-GET /Items/{SeriesId} must confirm exact IMDb. GET /Shows/NextUp?SeriesId=...
-must return an actual Episode ID also found in ONE bounded per-series
-catalog page and resolved again by /Items/{EpisodeId}.
+The pinned AIO packed-a1 SERIES codec is deterministic (not a guessed ID):
+16 bytes: 0xa1, (series kind=2 <<4)|imdb type=1, media code,
+six-byte IMDb numeric, ffff season, ffff episode, three zero bytes.
+A packed address is UNTRUSTED until SAME mapped user GET /Items/{id}
+returns Series and matching ProviderIds.Imdb; then AIO /Shows/NextUp
+must provide an actual Episode also resolved in a real series catalog.
 
-Requires the earlier, root-only RC3-N2 proven runtime dependencies under
-/run/homedocker-r4/; the release branch deliberately does NOT incorporate
-the 90-commit research PR. A failing dependency, unsupported server search,
-missing episode or slow response is a clean STOP, not a fallback to ID minting.
-
-AIO requests ONLY to http://127.0.0.1:3240/jellyfin, authenticated GET,
-proxy/redirects disabled. Never print IDs, titles, search query, token, URLs,
-raw JSON, playback offsets or timestamps. No watched writes. Never serves
-clients. Gateway RC2 / Filter OFF are checked at entry and exit.
+Purely read-only operator shadow. Reuses the existing root-private RC3-N2
+source/snapshot proof. No production imports, history writes, route changes,
+new b2 IDs, title Search/Hints, foreign host, playback or printed identities.
 """
-from contextlib import closing
+from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, HTTPRedirectHandler, ProxyHandler, build_opener
 import importlib.util
 import json
-from pathlib import Path
 import re
 import stat
 import time
-from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode
-from urllib.request import Request, ProxyHandler, build_opener
 
 ROOT=Path("/run/homedocker-r4")
 DEPENDENCY="audit-v140-rc3-source-anchor-drop-homedocker.py"
 AIO="http://127.0.0.1:3240/jellyfin"
-MAX_HTTP=8
-MAX_BYTES=1024*1024
-MAX_SECONDS=135
-CALL_SECONDS=18
-MAX_LOOKUPS=16
-MAX_HINTS=3
-MAX_EPISODES=100
 IMDB=re.compile(r"tt[0-9]{7,12}\Z")
-JELLYFIN_ID=re.compile(r"[0-9a-fA-F]{32}\Z")
-PHASE="INIT"
-ALLOWED=frozenset({"INIT","MAP_USER","SOURCE","SOURCE_TITLE","SEARCH",
-                   "VERIFY_SERIES","SERIES_NEXTUP","SERIES_CATALOG",
-                   "VERIFY_EPISODE","VERIFY_SNAPSHOT","FINAL_GATE"})
-REASONS=frozenset({
-    "NO_VALID_OFFWINDOW_TITLE","SNAPSHOT_CHANGED","SNAPSHOT_ROWS_UNAVAILABLE",
-    "SOURCE_NOT_VERIFIED","AUTH_USER_MISMATCH","API_TIMEOUT_OR_TRANSPORT",
-    "API_STATUS_NOT_200","API_INVALID_JSON","API_BODY_TOO_LARGE",
-    "API_CALL_BUDGET","API_TIME_BUDGET",
-    "SEARCH_NO_SERVER_ISSUED_SERIES_ID",
-    "SERIES_IDENTITY_UNVERIFIED","NEXTUP_NO_QUALIFIED_EPISODE",
-    "CATALOG_NOT_COMPLETE","NEXTUP_EPISODE_NOT_IN_CATALOG",
-    "EPISODE_IDENTITY_UNVERIFIED",
-})
+JF_ID=re.compile(r"[0-9a-f]{32}\Z")
+MEDIA_CODES={"series":2,"anime":3,"tv":4}
+MAX48=(1<<48)-1
+MAX_SAMPLES=3
+MAX_GETS=10
+MAX_SECONDS=125
+CALL_SECONDS=18
+MAX_BYTES=1024*1024
+MAX_EPISODES=200
 CALLS=0
-END=None
-n2=None
+END=0
+SOURCE=None
+PHASE="INIT"
+PHASES=frozenset({"INIT","MAP_USER","SOURCE_SNAPSHOT","PACKED_SERIES_GET",
+                  "PER_SERIES_NEXTUP","EPISODE_CATALOG","EPISODE_DETAIL",
+                  "SOURCE_RECHECK","FINAL_GATE"})
+REASONS=frozenset({
+    "SOURCE_NOT_VERIFIED","AUTH_USER_MISMATCH",
+    "NO_SAFE_SOURCE_CANDIDATE","NO_OFFWINDOW_ITEM_VERIFIED",
+    "NO_OFFWINDOW_NEXTUP_VERIFIED","NO_VALID_EPISODE_CATALOG",
+    "EPISODE_IDENTITY_UNVERIFIED","SOURCE_SNAPSHOT_CHANGED",
+    "GET_BUDGET_EXCEEDED","TIME_BUDGET_EXCEEDED",
+    "HTTP_STATUS_UNEXPECTED","HTTP_TRANSPORT_UNAVAILABLE",
+    "HTTP_INVALID_JSON","HTTP_BODY_TOO_LARGE",
+})
+class StopSlice(Exception):pass
+def stop(reason):raise StopSlice(reason)
 
-
-class StopSlice(Exception):
-    pass
-
-
-def stop(code):
-    raise StopSlice(code)
-
-
-def load_proven_source():
-    # Only preinstalled root-private script and its root-private dependencies.
-    info=ROOT.lstat()
-    if not stat.S_ISDIR(info.st_mode) or info.st_uid!=0 \
-            or stat.S_IMODE(info.st_mode)!=0o700:
+def source_module():
+    folder=ROOT.lstat()
+    if not stat.S_ISDIR(folder.st_mode) or folder.st_uid!=0 \
+            or stat.S_IMODE(folder.st_mode)!=0o700:
         stop("SOURCE_NOT_VERIFIED")
     path=ROOT/DEPENDENCY
     info=path.lstat()
     if not stat.S_ISREG(info.st_mode) or info.st_uid!=0 \
             or stat.S_IMODE(info.st_mode)!=0o600:
         stop("SOURCE_NOT_VERIFIED")
-    spec=importlib.util.spec_from_file_location("recovery_n2",path)
-    if spec is None or spec.loader is None:
-        stop("SOURCE_NOT_VERIFIED")
-    module=importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    spec=importlib.util.spec_from_file_location("release_source",path)
+    if not spec or not spec.loader:stop("SOURCE_NOT_VERIFIED")
+    mod=importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
+def packed_series_id(raw,media):
+    """Exact pinned AIO byte layout for k=series, IMDb-only; verify via GET."""
+    if not isinstance(raw,str) or not IMDB.fullmatch(raw) \
+            or media not in MEDIA_CODES:return None
+    number=int(raw[2:])
+    if number>MAX48 or "tt"+str(number).zfill(7)!=raw:return None
+    buffer=bytearray(16)
+    buffer[0]=0xa1
+    buffer[1]=0x21
+    buffer[2]=MEDIA_CODES[media]
+    buffer[3:9]=number.to_bytes(6,"big")
+    buffer[9:13]=b"\xff\xff\xff\xff"
+    return buffer.hex()
 
-class NoRedirect(__import__("urllib.request",fromlist=["HTTPRedirectHandler"]).HTTPRedirectHandler):
+class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self,req,fp,code,msg,headers,newurl):
         return None
 
-
-def reader_factory(token):
+def reader(token):
     opener=build_opener(ProxyHandler({}),NoRedirect())
-    def read(path):
+    def get(path,missing_ok=False):
         global CALLS
-        if CALLS>=MAX_HTTP:
-            stop("API_CALL_BUDGET")
-        remaining=END-time.monotonic()
-        if remaining<=0:
-            stop("API_TIME_BUDGET")
+        if CALLS>=MAX_GETS:stop("GET_BUDGET_EXCEEDED")
+        remain=END-time.monotonic()
+        if remain<=0:stop("TIME_BUDGET_EXCEEDED")
         CALLS+=1
-        req=Request(AIO+path,headers={
+        req=Request(AIO+path,method="GET",headers={
             "X-Emby-Token":token,"Accept":"application/json",
-            "Accept-Encoding":"identity","User-Agent":"homedocker-release-shadow/1",
-        },method="GET")
+            "Accept-Encoding":"identity","User-Agent":"homedocker-release-slice/2",
+        })
         try:
-            with opener.open(req,timeout=min(CALL_SECONDS,remaining)) as response:
-                if response.status!=200:stop("API_STATUS_NOT_200")
+            with opener.open(req,timeout=min(CALL_SECONDS,remain)) as response:
+                if response.status!=200:stop("HTTP_STATUS_UNEXPECTED")
                 raw=response.read(MAX_BYTES+1)
-                if len(raw)>MAX_BYTES:stop("API_BODY_TOO_LARGE")
-                obj=json.loads(raw)
-                if not isinstance(obj,dict):stop("API_INVALID_JSON")
-                return obj
-        except HTTPError:
-            stop("API_STATUS_NOT_200")
+                if len(raw)>MAX_BYTES:stop("HTTP_BODY_TOO_LARGE")
+                data=json.loads(raw)
+                if not isinstance(data,dict):stop("HTTP_INVALID_JSON")
+                return data
+        except HTTPError as error:
+            if missing_ok and error.code==404:return None
+            stop("HTTP_STATUS_UNEXPECTED")
         except (URLError,TimeoutError,OSError):
-            stop("API_TIMEOUT_OR_TRANSPORT")
+            stop("HTTP_TRANSPORT_UNAVAILABLE")
         except (ValueError,UnicodeError):
-            stop("API_INVALID_JSON")
-    return read
+            stop("HTTP_INVALID_JSON")
+    return get
 
-
-def take_candidates(index,anchor_data):
-    keys=[x for x,_ in index["recent"]]
-    anchors={a[0]:a for a in anchor_data["anchors"]}
-    selected=[]
-    for rank,key in enumerate(keys,1):
-        if rank<=200:continue
-        if not key.startswith("s|") or not IMDB.fullmatch(key[2:]):
+def select_candidates(index,anchors):
+    ranking=[key for key,_ in index["recent"]]
+    pairs={row[0]:row for row in anchors["anchors"]}
+    if len(pairs)!=len(ranking):stop("SOURCE_NOT_VERIFIED")
+    chosen=[]
+    for rank,key in enumerate(ranking,1):
+        if rank<=200 or not isinstance(key,str) or not key.startswith("s|"):
             continue
-        a=anchors.get(key)
-        if a is None:stop("SOURCE_NOT_VERIFIED")
-        # Avoid redirect/drop semantics until an actual justified client test.
-        if a[1] not in (None,""):
-            continue
-        selected.append((rank,key,a))
-        if len(selected)==MAX_LOOKUPS:break
-    return selected
+        row=pairs.get(key)
+        if row is None:stop("SOURCE_NOT_VERIFIED")
+        if row[1] not in (None,""):continue
+        series=packed_series_id(key[2:],row[2])
+        if series:chosen.append((key[2:],series))
+        if len(chosen)>=MAX_SAMPLES:break
+    if not chosen:stop("NO_SAFE_SOURCE_CANDIDATE")
+    return chosen
 
-
-def selected_snapshot(n2,index,anchor_data):
-    # A capped subset of the previously validated candidate rows, no fanout.
-    candidates=take_candidates(index,anchor_data)
-    if not candidates:stop("NO_VALID_OFFWINDOW_TITLE")
-    itemkeys=[x[2][6] for x in candidates]
-    scope=index["scope"]
-    markers=",".join("?" for _ in itemkeys)
-    with closing(n2.identity.ro(n2.identity.AIO_DB)) as db:
-        db.execute("BEGIN")
-        rows=db.execute(
-            "SELECT item_key,series_key,sort_at,media_type,snapshot "
-            "FROM watch_state WHERE uuid=? AND persona=? AND item_key IN ("
-            +markers+")",(*scope,*itemkeys)
-        ).fetchall()
-    if len(rows)!=len(candidates):
-        stop("SNAPSHOT_ROWS_UNAVAILABLE")
-    mapped={row[0]:row for row in rows}
-    if len(mapped)!=len(rows):
-        stop("SNAPSHOT_ROWS_UNAVAILABLE")
-    for rank,key,a in candidates:
-        row=mapped.get(a[6])
-        if row is None or row[1]!=key or row[2]!=a[3] or row[3]!=a[2]:
-            stop("SNAPSHOT_CHANGED")
-        try:
-            payload=json.loads(row[4]) if row[4] and len(row[4])<=16384 else None
-        except (ValueError,TypeError):
-            payload=None
-        if not isinstance(payload,dict):continue
-        title=payload.get("seriesName")
-        if not isinstance(title,str) or not 4<=len(title.strip())<=96:
-            continue
-        if any(ord(c)<32 for c in title):
-            continue
-        return (rank,key,a,title.strip(),tuple(row))
-    stop("NO_VALID_OFFWINDOW_TITLE")
-
-
-def verify_search_and_nextup(read, imdb, title):
-    # ONE source title -> ONE Search/Hints GET -> up to THREE real server IDs.
-    hints=read("/Search/Hints?"+urlencode({
-        "SearchTerm":title,"Limit":"5","IncludeItemTypes":"Series"
-    }))
-    possible=hints.get("SearchHints")
-    if not isinstance(possible,list) or len(possible)>5:
-        stop("SEARCH_NO_SERVER_ISSUED_SERIES_ID")
-    issued=[]
-    for hint in possible:
-        if not isinstance(hint,dict) or hint.get("Type")!="Series":
-            continue
-        ident=hint.get("ItemId") or hint.get("Id")
-        if isinstance(ident,str) and JELLYFIN_ID.fullmatch(ident) and ident not in issued:
-            issued.append(ident)
-        if len(issued)==MAX_HINTS:break
-    if not issued:stop("SEARCH_NO_SERVER_ISSUED_SERIES_ID")
-    sid=None
-    for ident in issued:
-        obj=read("/Items/"+quote(ident,safe=""))
-        ids=obj.get("ProviderIds") if isinstance(obj.get("ProviderIds"),dict) else {}
-        if obj.get("Type")=="Series" and obj.get("Id")==ident \
-                and isinstance(ids.get("Imdb"),str) \
-                and ids["Imdb"].lower()==imdb:
-            sid=ident
-            break
-    if sid is None:stop("SERIES_IDENTITY_UNVERIFIED")
-    page=read("/Shows/NextUp?"+urlencode({"SeriesId":sid,"Limit":"1"}))
-    cards=page.get("Items")
-    if not isinstance(cards,list) or len(cards)!=1:
-        stop("NEXTUP_NO_QUALIFIED_EPISODE")
-    item=cards[0]
-    userdata=item.get("UserData") if isinstance(item,dict) else None
-    if not isinstance(item,dict) or item.get("Type")!="Episode" \
-            or item.get("SeriesId")!=sid \
-            or not isinstance(item.get("Id"),str) \
-            or not JELLYFIN_ID.fullmatch(item["Id"]) \
-            or (isinstance(userdata,dict) and userdata.get("Played") is True):
-        stop("NEXTUP_NO_QUALIFIED_EPISODE")
-    eid=item["Id"]
-    catalog=read("/Shows/"+quote(sid,safe="")+"/Episodes?"+
-                 urlencode({"StartIndex":"0","Limit":str(MAX_EPISODES)}))
+def try_episode(get,imdb,series_id):
+    """Backend identity must match before per-series NextUp/catalog."""
+    global PHASE
+    PHASE="PACKED_SERIES_GET"
+    obj=get("/Items/"+series_id,missing_ok=True)
+    if obj is None:return None
+    providers=obj.get("ProviderIds")
+    if not isinstance(providers,dict):return None
+    if obj.get("Type")!="Series" or obj.get("Id")!=series_id \
+            or str(providers.get("Imdb","")).lower()!=imdb:
+        return None
+    PHASE="PER_SERIES_NEXTUP"
+    nextup=get("/Shows/NextUp?"+urlencode({"SeriesId":series_id,"Limit":"1"}))
+    cards=nextup.get("Items")
+    if not isinstance(cards,list) or len(cards)>1:
+        stop("NO_OFFWINDOW_NEXTUP_VERIFIED")
+    if not cards:return None
+    card=cards[0]
+    if not isinstance(card,dict):stop("NO_OFFWINDOW_NEXTUP_VERIFIED")
+    data=card.get("UserData")
+    ep_id=card.get("Id")
+    if card.get("Type")!="Episode" or card.get("SeriesId")!=series_id \
+            or not isinstance(ep_id,str) or not JF_ID.fullmatch(ep_id) \
+            or not isinstance(data,dict) or data.get("Played") is not False:
+        stop("NO_OFFWINDOW_NEXTUP_VERIFIED")
+    params={"StartIndex":"0","Limit":str(MAX_EPISODES)}
+    season=card.get("ParentIndexNumber")
+    if type(season)==int and 0<=season<65535:params["Season"]=str(season)
+    PHASE="EPISODE_CATALOG"
+    catalog=get("/Shows/"+series_id+"/Episodes?"+urlencode(params))
     rows=catalog.get("Items")
-    count=catalog.get("TotalRecordCount")
-    if not isinstance(rows,list) or type(count)!=int \
-            or count>MAX_EPISODES or count!=len(rows) \
+    total=catalog.get("TotalRecordCount")
+    if not isinstance(rows,list) or type(total)!=int or total<0 \
+            or total>MAX_EPISODES or total!=len(rows) \
             or catalog.get("StartIndex")!=0:
-        stop("CATALOG_NOT_COMPLETE")
-    if not any(isinstance(row,dict) and row.get("Id")==eid
-               and row.get("SeriesId")==sid for row in rows):
-        stop("NEXTUP_EPISODE_NOT_IN_CATALOG")
-    resolved=read("/Items/"+quote(eid,safe=""))
-    if resolved.get("Type")!="Episode" or resolved.get("Id")!=eid \
-            or resolved.get("SeriesId")!=sid:
+        stop("NO_VALID_EPISODE_CATALOG")
+    if not any(isinstance(x,dict) and x.get("Id")==ep_id \
+            and x.get("SeriesId")==series_id for x in rows):
+        stop("NO_VALID_EPISODE_CATALOG")
+    PHASE="EPISODE_DETAIL"
+    detail=get("/Items/"+ep_id)
+    if detail.get("Type")!="Episode" or detail.get("Id")!=ep_id \
+            or detail.get("SeriesId")!=series_id:
         stop("EPISODE_IDENTITY_UNVERIFIED")
-    return {"series_verified":True,"episode_verified":True,
-            "catalog_episode_count":count}
-
+    return total
 
 def main():
-    global PHASE,END,n2
+    global SOURCE,END,PHASE
     END=time.monotonic()+MAX_SECONDS
     PHASE="MAP_USER"
-    n2=load_proven_source()
-    token,mapped=n2.shadow.credential()
-    n2.shadow.bridge_gate()
-    read=reader_factory(token)
-    if read("/Users/Me").get("Id")!=mapped:
-        stop("AUTH_USER_MISMATCH")
-    PHASE="SOURCE"
-    index,anchor_data=n2.source_gate_and_anchors()
-    n2.summarize(index,anchor_data)
-    PHASE="SOURCE_TITLE"
-    rank,key,anchor,title,before=selected_snapshot(n2,index,anchor_data)
-    PHASE="SEARCH"
-    # Server must return the actual ID; never infer a packed ID from key.
-    result=verify_search_and_nextup(read,key[2:],title)
-    PHASE="VERIFY_SNAPSHOT"
-    rank2,key2,a2,title2,after=selected_snapshot(n2,index,anchor_data)
-    if (rank,key,anchor,title,before)!=(rank2,key2,a2,title2,after):
-        stop("SNAPSHOT_CHANGED")
-    PHASE="FINAL_GATE"
-    n2.shadow.bridge_gate()
-    print("R5SLICE_RESULT=REAL_OFFWINDOW_NEXTUP_EPISODE_VERIFIED")
-    print("R5SLICE_SOURCE_RANK_OUTSIDE_200=YES")
-    print("R5SLICE_SERVER_ISSUED_SERIES_ID=VERIFIED")
-    print("R5SLICE_SERIES_NEXTUP_EPISODE=VERIFIED")
-    print("R5SLICE_EPISODE_ID_PRESENT_IN_CATALOG=YES")
-    print("R5SLICE_CATALOG_EPISODE_COUNT="+str(result["catalog_episode_count"]))
-    print("R5SLICE_HTTP_GET_CALLS="+str(CALLS))
-    print("R5SLICE_GLOBAL_NEXTUP_PAGING=UNPROVEN")
-    print("R5SLICE_STREAM_PLAYBACK=UNPROVEN")
-    print("R5SLICE_CLIENT_RESPONSE_CHANGED=NO")
-    print("R5SLICE_GATEWAY_FILTER=OFF")
-    print("R5SLICE_SQLITE=MODE_RO_QUERY_ONLY")
-    print("R5SLICE_PRODUCTION_CHANGES=0")
-    print("R5SLICE_SECRETS_PRINTED=NO")
-
+    SOURCE=source_module()
+    token,mapped=SOURCE.shadow.credential()
+    SOURCE.shadow.bridge_gate()
+    get=reader(token)
+    if get("/Users/Me").get("Id")!=mapped:stop("AUTH_USER_MISMATCH")
+    PHASE="SOURCE_SNAPSHOT"
+    index,anchors=SOURCE.source_gate_and_anchors()
+    SOURCE.summarize(index,anchors)
+    candidates=select_candidates(index,anchors)
+    original=(index,anchors)
+    attempts=0
+    for imdb,series_id in candidates:
+        attempts+=1
+        count=try_episode(get,imdb,series_id)
+        if count is None:continue
+        PHASE="SOURCE_RECHECK"
+        if SOURCE.source_gate_and_anchors()!=original:
+            stop("SOURCE_SNAPSHOT_CHANGED")
+        PHASE="FINAL_GATE"
+        SOURCE.shadow.bridge_gate()
+        print("R5SLICE_RESULT=OFFWINDOW_BACKEND_VALIDATED_EPISODE")
+        print("R5SLICE_RANK_OUTSIDE_200=YES")
+        print("R5SLICE_ID_ORIGIN=PINNED_STATELESS_A1_CODEC")
+        print("R5SLICE_SERIES_ID_BACKEND_VALIDATED=YES")
+        print("R5SLICE_PROVIDER_IMDB_EXACT=YES")
+        print("R5SLICE_NEXTUP_EPISODE_IN_CATALOG=YES")
+        print("R5SLICE_CATALOG_EPISODES="+str(count))
+        print("R5SLICE_CANDIDATES_TESTED="+str(attempts))
+        print("R5SLICE_HTTP_GET_COUNT="+str(CALLS))
+        print("R5SLICE_GLOBAL_PAGINATION=NOT_PROVEN")
+        print("R5SLICE_PLAYBACK=NOT_PROVEN")
+        print("R5SLICE_CLIENT_RESPONSE_CHANGED=NO")
+        print("R5SLICE_FILTER_FINAL=OFF")
+        print("R5SLICE_SQLITE=MODE_RO_QUERY_ONLY")
+        print("R5SLICE_PRODUCTION_CHANGES=0")
+        print("R5SLICE_SECRETS_PRINTED=NO")
+        return
+    PHASE="SOURCE_RECHECK"
+    if SOURCE.source_gate_and_anchors()!=original:
+        stop("SOURCE_SNAPSHOT_CHANGED")
+    stop("NO_OFFWINDOW_ITEM_VERIFIED")
 
 if __name__=="__main__":
     try:
@@ -283,16 +232,16 @@ if __name__=="__main__":
     except Exception as exc:
         reason=str(exc) if isinstance(exc,StopSlice) else ""
         print("R5SLICE_RESULT=STOP")
-        print("R5SLICE_FAILURE_PHASE="+(
-            PHASE if PHASE in ALLOWED else "UNQUALIFIED_PHASE"))
+        print("R5SLICE_FAILURE_PHASE="+(PHASE if PHASE in PHASES else "UNKNOWN"))
         print("R5SLICE_FAILURE_REASON="+(
             reason if reason in REASONS else "SOURCE_OR_RUNTIME_UNQUALIFIED"))
         try:
-            if n2 is None:raise StopSlice("SOURCE_NOT_VERIFIED")
-            n2.shadow.bridge_gate()
-            print("R5SLICE_GATEWAY_FILTER_ON_STOP=OFF")
+            if SOURCE is None:raise StopSlice("SOURCE_NOT_VERIFIED")
+            SOURCE.shadow.bridge_gate()
+            print("R5SLICE_FILTER_ON_STOP=OFF")
         except Exception:
-            print("R5SLICE_GATEWAY_FILTER_ON_STOP=UNVERIFIED")
+            print("R5SLICE_FILTER_ON_STOP=UNVERIFIED")
+        print("R5SLICE_HTTP_GET_COUNT="+str(CALLS))
         print("R5SLICE_PRODUCTION_CHANGES=0")
         print("R5SLICE_SECRETS_PRINTED=NO")
         raise SystemExit(2)
