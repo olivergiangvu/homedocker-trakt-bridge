@@ -45,6 +45,7 @@ REASONS=frozenset({
     "ANCHOR_COUNT_UNVERIFIED","ANCHOR_ROW_INVALID",
     "DROP_ROW_INVALID","SOURCE_CANDIDATE_MISMATCH",
     "SOURCE_RANK_INVALID","DATA_SOURCE_UNAVAILABLE",
+    "ANCHOR_BUCKET_INCONSISTENT",
 })
 MATCH_EPISODE=re.compile(
     r"^e\|(?P<base>(?:tt[0-9]+|imdb[:-]?[0-9]+|tvdb[:-]?[0-9]+|"
@@ -70,8 +71,9 @@ def match_series_key(value):
 def anchor_snapshot(scope):
     """One scoped transaction; upstream-like per-key latest watched anchor.
 
-    Tie between same sort_at and same episode coordinate is flagged in
-    aggregate, not silently treated as a verified AIO generator order.
+    An extra item_key lexical tie-break is used only to make this audit
+    deterministic; it does NOT prove the upstream source's chosen anchor
+    when sort_at, season and episode all tie.
     """
     with closing(identity.ro(identity.AIO_DB)) as aio:
         aio.execute("BEGIN")
@@ -186,11 +188,11 @@ def summarize(index, extra):
             "EFFECTIVE_DROP_HINT":0,
             "MATCH_DESTINATION_HAS_SOURCE_CANDIDATE":0,
         }
+        stats=result[band]
         for key in items:
             row=lookup[key]
             match=row[1]
             target=match_series_key(match)
-            stats=result[band]
             if not match:
                 stats["ANCHOR_NO_MATCH_KEY"]+=1
             else:
@@ -206,9 +208,10 @@ def summarize(index, extra):
             if (dropped_at.get(key,0)>row[3] or
                     (target and dropped_at.get(target,0)>row[3])):
                 stats["EFFECTIVE_DROP_HINT"]+=1
-        assert sum(stats[x] for x in (
+        if sum(stats[x] for x in (
             "ANCHOR_NO_MATCH_KEY","ANCHOR_PARSEABLE_EPISODE_MATCH",
-            "ANCHOR_OTHER_OR_INVALID_MATCH"))==len(items)
+            "ANCHOR_OTHER_OR_INVALID_MATCH"))!=len(items):
+            raise shadow.StopAudit("ANCHOR_BUCKET_INCONSISTENT")
     return result,len(extra["drops"])
 
 
