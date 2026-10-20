@@ -64,7 +64,7 @@ curl -fsS http://127.0.0.1:7000/health
 curl -fsS http://127.0.0.1:7000/readiness
 ```
 
-A long-lived production instance should pin `TRAKT_BRIDGE_IMAGE` to an immutable release digest. **Do not use the generic full-stack Compose commands above for an existing HomeDocker production upgrade.** Use the [v1.4 operations guide](docs/STABLE-V1.4-OPERATIONS.md) and preserve service ownership, backups, AIOStreams and Gateway Compose configuration.
+The example `.env.example` uses a mutable `:latest` reference, which may **not** reflect v1.4.0 Stable. Set the published v1.4 digest explicitly for a reproducible production install; a long-lived instance should never assume `:latest` is the newest reviewed release. **Do not use the generic full-stack Compose commands above for an existing HomeDocker production upgrade.** Use the [v1.4 operations guide](docs/STABLE-V1.4-OPERATIONS.md) and preserve service ownership, backups, AIOStreams and Gateway Compose configuration.
 
 ## Connect Trakt and AIOStreams
 
