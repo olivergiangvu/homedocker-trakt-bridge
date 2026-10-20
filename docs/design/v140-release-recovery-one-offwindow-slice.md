@@ -1,90 +1,93 @@
-# Release Recovery — One real off-window NextUp vertical slice
+# Release Recovery — one off-window real NextUp episode
 
-**Release decision:** RC3-N6 research is CLOSED. Do not continue N7/N8, merge
-research PR #141 wholesale or turn on production Gateway filtering. Keep
-production RC2 SHA `65ced8ab827c79f03bff7a7668c243338e62f317`,
-Odin/nginx, AIO/Trakt watched history, and R5 HOLD unchanged.
+**Release posture:** RC3 deep research stops at N6. NO merge of research PR #141
+(90 commits), no production change, no custom client URL, no routing or Filter
+enablement. RC2 production SHA 65ced8ab827c79f03bff7a7668c243338e62f317
+remains unchanged. Draft release PR #142 is a **one-shot shadow proof**.
 
-## What is already known (live HomeDocker)
+## HomeDocker ground truth
 
-- One exact AIO mapped-user scope: 906 episode-history source keys,
-  861 raw watched/resume candidate source keys, 661 beyond upstream
-  per-request NextUp candidate cap 200.
-- 857/861 candidate raw source descriptors have theoretical packed-a1
-  syntax, and all 861 inspected anchor base IDs match source series keys.
-- 118 directed cross-namespace match_key hints, not validated duplicates.
-- One canonical show's exact 11 history episode positions bind to 12
-  actual AIO catalog episodes. The observed duplicate alias is not co-visible
-  in the current 50-card NextUp window.
-- AIO /Shows/NextUp ignores global StartIndex and returns up to 50 cards;
-  **per-series** /Shows/NextUp?SeriesId and /Shows/{SeriesId}/Episodes
-  are independent endpoints with usable source-side contracts.
-- None of the above is proof that all 661 beyond-200 candidates have a
-  next episode, that streams play, or that a global total can be advertised.
+- One mapped AIO watch-sink has 906 raw history-series keys, 861 raw
+  recentSeries candidate keys, 661 after the 200-candidate NextUp horizon.
+- The source uses raw base_id equal to series_key suffix for all 861 examined
+  anchors. 857 have canonical numeric/packed-a1-compatible syntax, four do not.
+- 118 syntactic cross-namespace match hints are NOT verified equivalent shows.
+- One verified alias show's eleven watched episode coordinates match the
+  real twelve-episode per-series catalog.
+- AIO /Shows/NextUp globally ignores StartIndex, caps 50 cards and considers
+  200 candidates; per-series NextUp and per-series Episode Catalog are separate.
 
-## One vertical slice, not an inventory audit
+## First release approach was tried and FAILED safely
 
-Script: `scripts/shadow-v140-offwindow-nextup-slice-homedocker.py`.
-**This is intentionally a separate tiny PR from RC2**, not stacked atop
-the 90-commit RC3 research PR.
+At SHA 8f307cc780536b971d0798943f14445e91ba2cef on HomeDocker:
+R5SLICE_RESULT=STOP;
+R5SLICE_FAILURE_PHASE=SEARCH;
+R5SLICE_FAILURE_REASON=SEARCH_NO_SERVER_ISSUED_SERIES_ID.
+Search/Hints did not establish an exact same-IMDb server-issued SeriesId for
+ONE cached source-title sample. This result does not prove there is no usable
+SeriesId or NextUp episode. Filter remained OFF and production changes=0.
 
-From the root-only, previously installed and tested RC3-N2 source helper:
-1. Verify mapped AIO user and production Gateway Filter OFF.
-2. Verify exact AIO sink, Bridge graph, two consistent complete SQLite
-   source/anchor snapshots. Choose one raw candidate at rank >=201 with
-   canonical IMDb source key and **no source anchor match_key**.
-3. Inspect at most **16** matching, same-scope watch-state row snapshots,
-   using a single read-only SELECT. Select a cached series title from a
-   snapshot, internally only. No titles or IMDb IDs leave the audit.
-4. Exactly one `Search/Hints` GET with that title. This is a SERVER
-   search, not an algorithm inventing SeriesIds. Examine at most three
-   server-returned 32-hex Series IDs with direct GET /Items/{id}; require
-   exact ProviderIds.Imdb = selected source IMDb and matching returned ID.
-   **Title similarity alone never establishes identity.**
-5. GET per-series /Shows/NextUp?SeriesId=**server-returned** ID;
-   require a single unplayed Episode with an ID returned by AIO, then
-   check one complete <=100-episode /Shows/{SeriesId}/Episodes page and
-   GET /Items/{EpisodeId} identity. Print count-only success/STOP codes.
-6. Recheck the exact source/title sample and Gateway Filter OFF.
-   Never generate an a1/b2 ID, write UserData or mutate Jellyfin client
-   routing.
+## Release Recovery v2: one deterministic a1 protocol address, server-validated
 
-### Bounded resources and known failure conditions
+The **pinned** AIO package core/src/jellyfin/ids.ts implements stateless
+packed-a1 content IDs. For a canonical IMDb series source descriptor, its
+pure deterministic SERIES codec is:
+- 16 bytes / 32 lowercase hex digits.
+- byte 0 = a1; byte 1 = 0x21 (series kind 2, imdb ID type 1)
+- byte 2 = media code (series 2, anime 3, tv 4)
+- bytes 3..8 = 6-byte big-endian numeric IMDb base
+- bytes 9..12 = ff ff ff ff (no season or episode)
+- bytes 13..15 = 00 00 00.
 
-Maximum **8 authenticated local GETs**, each <=18s, overall <=135s;
-1 MiB response limit, redirects/proxy disabled; no foreign hosts;
-fixed 16 source sample rows; a single <=100 episode catalog page.
-If no cached series title, search yields no matching server-issued ID,
-search response is slow, no NextUp, or catalog exceeds 100 episodes,
-the output **STOPs**. It does not search more titles, create an ID,
-interpret a source key as a Jellyfin SeriesId, or silently fabricate a
-next episode.
+The codec is NOT random guessing and does not insert into jellyfin_id_map
+or mutate any API state. BUT an internally constructed address remains
+**untrusted** until the local authenticated AIO server confirms a real Series
+and exact ProviderIds.Imdb match. An ID made by the client is not itself
+proof of server issuance. This relaxes the earlier no-ID-computation research
+guard, ONLY for an exact, source-proven, server-validated stateless codec.
+It is never sent to a client, printed or stored.
 
-The root-only RC3-N2 helper is a verified **operator audit dependency**,
-installed in /run/homedocker-r4 from the previously pinned SHA
-`4cdde72bbd10605911fa95e85faaa5f3895de460`. Neither the
-running Gateway nor this RC2-based release branch imports it. A
-future production module must eliminate this dependency and have its own
-first-party bounded read adapter, separately reviewed.
+One pinned read-only operator script:
+scripts/shadow-v140-offwindow-nextup-slice-homedocker.py
 
-## Definition of done / next decision
+1. Verify mapped Jellyfin /Users/Me, original RC2 Gateway alive and Filter OFF.
+2. Reuse already installed root-only RC3-N2 read-only source audit to verify
+   one exact AIO watch-sink (uuid+persona), Bridge graph, two identical complete
+   raw history/anchor snapshots, no writes.
+3. Select at most THREE canonical IMDb raw candidate series strictly beyond
+   source rank 200, with no syntactic match_key redirect and supported media.
+4. Compute the exact stateless a1 series address privately in memory. GET
+   /Items/{id}, ignoring an expected 404 and requiring Type=Series, exact
+   returned Id and ProviderIds.Imdb equal to the source. NO next request for
+   an unverified address.
+5. For a verified show GET /Shows/NextUp?SeriesId={id}&Limit=1. If empty,
+   try the next bounded source series; if returned, require an unplayed
+   Episode with exact SeriesId. GET /Shows/{id}/Episodes?StartIndex=0&Limit=200
+   optionally scoping to the returned ParentIndexNumber=Season, require the
+   complete returned <=200 rows and episode identity. GET /Items/{episodeId}
+   once to confirm type/ID/parent.
+6. Repeat the source snapshot gate, confirm RC2 Filter OFF, output
+   aggregate-only PASS/STOP. No names, IMDb/Series/Episode IDs, history
+   timestamps, credentials or raw JSON ever leave the script.
 
-- Code/test CI PASS means **shadow vertical slice prepared**, not
-  evidence of a valid off-window episode.
-- Operator STOP with `NO_VALID_OFFWINDOW_TITLE` or
-  `SEARCH_NO_SERVER_ISSUED_SERIES_ID`: title search cannot bootstrap
-  a server-issued ID from the selected small sample. Choose a
-  **different bounded backend issuance strategy**, not an unbounded
-  metadata probe and not another generic identity audit.
-- Operator PASS means **exactly one real off-window NextUp episode** was
-  returned from per-series AIO and found in a same-user catalog. It
-  establishes an actionable vertical slice, **not** global pagination or
-  verified stream playback.
-- Client Canary is a **separate explicit authorization gate**: opt-in
-  exactly one device and a private URI, a bounded feature flag, baseline
-  comparison, zero watched writes, fail-open RC2 passthrough and
-  rollback metrics. Only after PASS and owner approval consider changing
-  an HTTP route. The RC2 production Filter remains OFF now.
+Hard caps: 3 off-window source candidates, 10 authenticated local GETs total,
+18s per call, 125s global, 1MiB HTTP body per call; localhost fixed AIO,
+proxies and redirects disabled. All SQLite operations use mode=ro,
+PRAGMA query_only via the previously validated root-only N2 helper.
+Only direct /Items, per-series NextUp, catalog and /Users/Me GETs are used.
+No playback or Trakt calls. No docker restarts or API writes.
 
-Do not claim a release based solely on green CI, pinned syntax or this
-unrouted shadow test.
+## GO/STOP gates
+
+- Both Push and PR CI passing: only an **offline software quality gate**.
+- HomeDocker PASS with one episode actually present: **proof of a single
+  off-window backend-resolved episode**, not a complete NextUp, global paging
+  or playable stream.
+- STOP (wrong provider, empty NextUp, slow metadata, oversized season):
+  record the safe reason and choose **one bounded shipping strategy**, not
+  another RC3-N7 style general-purpose audit campaign. A failed one-series
+  test must never be advertised as backend-wide impossibility.
+- A later client-facing single-client opt-in canary with RC2 fallback is a
+  different, explicit authorization gate. Do not enable Gateway Filter,
+  change nginx/Odin, restart containers, merge PR #142 or rewrite watched
+  state based solely on a shadow PASS.
