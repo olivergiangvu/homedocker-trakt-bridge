@@ -26,7 +26,7 @@ Keep `.env`, `bridge.db`, `BRIDGE_SECRET_KEY`, `ADMIN_KEY`, and the generated pr
 
 The public GHCR package can be pulled anonymously.
 
-For the easiest install:
+For a simple development install (mutable; **not necessarily the latest published stable release**):
 
 ```env
 TRAKT_BRIDGE_IMAGE=ghcr.io/olivergiangvu/homedocker-trakt-bridge:latest
