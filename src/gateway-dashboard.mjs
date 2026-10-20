@@ -63,7 +63,7 @@ export function buildGatewayDashboardStatus({ db, config, profileId, gateway = n
     listening: Boolean(listening),
     filteringEnabled: mapped && gatewayFilteringEnabled({ db, config, profileId }),
     filterControlAvailable: gatewayFilterControlAvailable({ config, gateway, profileId }),
-    filterControlMode: 'persistent_database_preference',
+    filterControlMode: 'auto_on_with_persistent_source_scoped_off_override',
     sourceKind: config.jellyfinGatewaySourceKind || 'aiostreams',
     // These are configuration indicators, NOT upstream connectivity checks.
     upstreamConfigured: Boolean(config.jellyfinGatewayUpstreamUrl),
