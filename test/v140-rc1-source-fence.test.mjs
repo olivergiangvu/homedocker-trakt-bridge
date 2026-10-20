@@ -11,9 +11,11 @@ test('v1.4.0 source version is consistent, tag publication remains explicitly gu
   assert.equal(version, '1.4.0');
   assert.equal(APP_VERSION, version);
   const release = file('.github/workflows/release.yml');
-  assert.match(release, /Block unqualified v1\.4 Gateway publication/);
+  assert.match(release, /Qualify exact v1\.4\.0 publication before registry login/);
   assert.match(release, /V140_STABLE_RELEASE_HOLD/);
   assert.match(release, /startsWith\(github\.ref_name, 'v1\.4'\)/);
+  assert.match(release, /git rev-parse FETCH_HEAD/);
+  assert.match(release, /!startsWith\(github\.ref_name, 'v1\.4'\)/);
 });
 
 test('RC.1 source exposes one Bridge service with Gateway OFF and no import or Resume normalization', () => {
