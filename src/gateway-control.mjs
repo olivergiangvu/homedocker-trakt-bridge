@@ -1,9 +1,10 @@
 /**
  * Per-profile Gateway *filtering* switch.
- * Listener provisioning and client routing are separate concerns: OFF means
- * authenticated Jellyfin NextUp returns the upstream response unchanged.
- * Uses the existing Bridge media_cache table, never watch-state/event tables.
- * Durable across Bridge restarts without schema migrations.
+ * Validly provisioned sources filter NextUp by default (AUTO ON), but only
+ * exact same-user / safely complete responses can actually be normalized.
+ * An explicit OFF remains a durable, source-scoped operator kill switch.
+ * Listener provisioning and client routing are separate concerns.
+ * Uses Bridge media_cache only, never watch-state/event tables.
  */
 import { createHash } from 'node:crypto';
 
@@ -23,18 +24,25 @@ export function gatewayFilterKey(profileId, config) {
   return 'gateway-filter:v1:' + profileId + ':' + suffix;
 }
 
+function provisionedSourceScope(config, profileId) {
+  return config?.jellyfinGatewayEnabled === true
+    && /^[a-f0-9]{24}$/.test(profileId || '')
+    && config?.jellyfinGatewayProfileId === profileId
+    && /^[A-Za-z0-9_-]{8,128}$/.test(config?.jellyfinGatewayUserId || '')
+    && Boolean(config?.jellyfinGatewayUpstreamUrl);
+}
+
 export function gatewayFilteringEnabled({ db, config, profileId }) {
-  if (config?.jellyfinGatewayEnabled !== true
-      || config?.jellyfinGatewayProfileId !== profileId
+  if (!provisionedSourceScope(config, profileId)
       || typeof db?.cachePeek !== 'function') return false;
-  return db.cachePeek(gatewayFilterKey(profileId, config))?.enabled === true;
+  // No preference yet = AUTO ON. A persisted manual OFF always wins.
+  // Malformed preferences fail OFF; no implicit media_cache writes are made.
+  const preference = db.cachePeek(gatewayFilterKey(profileId, config));
+  return preference == null || preference.enabled === true;
 }
 
 export function gatewayFilterControlAvailable({ config, gateway, profileId }) {
-  return config?.jellyfinGatewayEnabled === true
-    && config?.jellyfinGatewayProfileId === profileId
-    && /^[A-Za-z0-9_-]{8,128}$/.test(config?.jellyfinGatewayUserId || '')
-    && Boolean(config?.jellyfinGatewayUpstreamUrl)
+  return provisionedSourceScope(config, profileId)
     && gateway?.listening === true;
 }
 

@@ -22,7 +22,7 @@ export function renderUnifiedGatewayPanel(status, { diagnosticsUrl = null, contr
     jellyfin: 'Native Jellyfin' })[status.sourceKind] || 'Jellyfin-compatible source';
   const control = controlUrl ? `<div class="gateway-switch" role="group" aria-label="Gateway identity filtering control">
     <div><strong>Identity filter: <span class="${filtering ? 'ok' : 'muted'}">${filtering ? 'ON' : 'OFF'}</span></strong>
-    <p class="hint">Switch applies immediately and persists across Bridge restarts. OFF returns upstream NextUp untouched. This does not change nginx/client routes.</p></div>
+    <p class="hint">AUTO ON for a configured, mapped source unless manually turned OFF. OFF is a persistent per-source kill switch and returns upstream NextUp untouched. Neither state changes nginx/client routes.</p></div>
     <form method="post" action="${escapeHtml(controlUrl)}">
       <button class="btn ${filtering ? 'bad' : ''}" type="submit"
         name="state" value="${filtering ? 'off' : 'on'}"
