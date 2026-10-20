@@ -183,7 +183,7 @@ def classify(index,anchor_data,source_rows):
                 stats["ROUTED_BASE_EQUALS_SERIES_KEY"]+=1
             else:
                 stats["ROUTED_BASE_DIFFERS_FROM_SERIES_KEY"]+=1
-            if how=="VIDEO_TOKEN_DERIVED_BASE":
+            if how=="VIDEO_TOKEN_DERIVED":
                 stats["VIDEO_TOKEN_DERIVED_BASE"]+=1
             if n5.packability_hint("s|"+routed,media)=="CANONICAL_PACKABLE_SYNTAX":
                 stats["ROUTED_BASE_HAS_A1_CANONICAL_SYNTAX_HINT"]+=1
