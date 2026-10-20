@@ -52,7 +52,9 @@ class AnchorDropTests(unittest.TestCase):
         self.assertEqual(result["TOP_200"]["ANCHOR_PARSEABLE_EPISODE_MATCH"],2)
         self.assertEqual(result["BEYOND_200"]["ANCHOR_PARSEABLE_EPISODE_MATCH"],1)
         self.assertEqual(result["TOP_200"]["EFFECTIVE_DROP_HINT"],1)
-        self.assertEqual(result["BEYOND_200"]["EFFECTIVE_DROP_HINT"],0)
+        # The beyond-200 anchor points syntactically at top candidate 1,
+        # whose effective drop is newer, so the source-level hint is 1.
+        self.assertEqual(result["BEYOND_200"]["EFFECTIVE_DROP_HINT"],1)
         self.assertEqual(
             result["BEYOND_200"]["SOURCE_KEY_DIFFERS_FROM_PARSED_MATCH"],1)
         self.assertEqual(
@@ -131,8 +133,11 @@ class AnchorDropTests(unittest.TestCase):
         for s in ["UPDATE watch_state","INSERT INTO watch_state",
                   "DELETE FROM watch_state",
                   'reader("/Shows/', 'reader("/Items/',"docker compose",
-                  "TraktClient","/PlaybackInfo","createServer("]:
+                  "TraktClient","createServer("]:
             self.assertNotIn(s,source)
+        # A docstring can name the forbidden endpoint. No real API calls.
+        self.assertNotIn('reader("/PlaybackInfo',source)
+        self.assertNotIn('reader("/Items/',source)
 
 
 if __name__=="__main__":
