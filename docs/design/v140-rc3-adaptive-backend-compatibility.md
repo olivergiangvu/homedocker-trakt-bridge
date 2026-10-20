@@ -295,6 +295,25 @@ RC3-N4 read-only preflight scripts/audit-v140-rc3-existing-series-id-map-homedoc
 - Next canary still requires an independently established **existing series ID tied to the mapped user**, an authenticated bounded GET and exact one-series metadata/catalog response. Do not fan out to all 861 candidates, and do not enable production Filter from raw graph or hashed map counts.
 
 
+## RC3-N4 HomeDocker PASS -> RC3-N5 packed a1 source feasibility (2026-10-20)
+
+HomeDocker real RC3-N4 read-only mapped-user + double SQLite snapshot:
+- Global jellyfin_id_map **2,167 rows**: **1,369** distinct existing `b2` series descriptors, **798** other descriptors. Zero duplicate descriptor bases.
+- Exact source-key-base correlation against **906 history keys** and **861 watched/resume recent source candidates** was **zero**, including top 200 and beyond 200. Exact redirect destination correlation for all **91 syntactically distinct redirected destination keys** was also **zero**.
+- `jellyfin_id_map` is AIO **instance-global**, not scoped to Jellyfin user. A null exact-match result does **not** prove missing playable or readable SeriesIds: AIO's `a1` packed series IDs do not enter the hashed mapping table, and descriptor `baseId` may differ from watch_state series_key. No reindex/rebuild or new IDs are authorized from this evidence.
+- No real AIO item/catalog requests were made; Filter OFF, no writes/route changes.
+
+Additional pinned upstream contract:
+- `packages/core/src/jellyfin/ids.ts` supports packed `a1` for `k=series` with supported `mediaType`, a canonical numeric source `baseId` (IMDb, TVDB, TMDB, Kitsu, MAL, AniList, AniDB, Simkl), and numeric base <=2^48-1. Such IDs are **stateless**, not in `jellyfin_id_map`.
+- `packages/server/src/routes/jellyfin/library.ts` has an `/Items` history filter for IsPlayed, but `WatchStateRepository.listPlayed` caps results at 500 rows and the handler resolves source rows via metadata; it is **not** a globally complete, cheap and verified paged NextUp alternative.
+- `/Shows/NextUp` remains bound to at most 200 candidate checks and 50 emitted cards, without global pagination.
+
+RC3-N5 audit added as `scripts/audit-v140-rc3-source-a1-packability-homedocker.py`, a strictly source-only preflight:
+- Reuses exact mapped-user /Users/Me GET, verified Bridge/AIO sink scope, N2 two stable read-only SQLite inventory/anchor/drop snapshots and Filter OFF.
+- Classifies *raw source key plus that anchor's mediaType* by the **pinned AIO numeric/canonical packability preconditions**, in separate top200 and beyond200 bands; tests redirect target keys against the same syntax. Never computes, stores or prints an actual Jellyfin ID; never calls catalog/Items/Trakt/PlaybackInfo.
+- These counts are **only packable-source-syntax hints**. They are NOT proof that a production `seriesIdOf(row.baseId,row.videoId,row.mediaType)` uses that raw key, that the backend ever issued/decoded the corresponding ID, that the mapped user is authorized to access it, or that metadata/playback resolves. Any absent/mismatched IDs must remain unresolved.
+- Next milestone, after seeing the actual packability distribution, is a bounded, separately authorized read-only API contract test using **IDs actually returned by the AIO server**. No generated/a1-guessed/b2-guessed IDs and no fanout to 661 candidate series, and no Filter enablement.
+
 ## What would make it a safe *usable* feature
 
 **Gate A (implemented, CI):** Pure source-agnostic adapter and synthetic tests for 20/20, 50/50, AIO offset-ignored, native-offset, wrong users, partial metadata, two active resumes, replay drift and no injected watch writes. It is deliberately not linked into the Gateway.
