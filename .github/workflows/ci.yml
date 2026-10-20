@@ -10,8 +10,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
       - run: npm run check
@@ -132,7 +132,7 @@ jobs:
 
       - name: Upload 7-day RC.2 unified CI image artifact, never GHCR
         if: ${{ github.event_name == 'pull_request' && (github.head_ref == 'feat/v140-rc2-unified-gateway-ui-20261019' || github.head_ref == 'feat/v140-rc2-safe-complete-nextup-ui-20261019') }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: v140-rc2-ci-image-${{ github.run_id }}
           path: /tmp/v140-rc2-ci-image/
