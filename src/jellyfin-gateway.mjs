@@ -524,6 +524,9 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
     metadataPeakActive: limiter.snapshot().peakActive,
     metadataCacheEntries: seriesCache.size,
   });
+  // Notify only for an AIO-backed Gateway, never Remux or native Jellyfin.
+  if (config.jellyfinGatewayWsNotifyEnabled && config.jellyfinGatewaySourceKind !== 'aiostreams')
+    throw new Error('watch refresh relay requires AIOStreams upstream');
   // WebSocket upgrade is a separate exact route; NextUp/Resume HTTP remain unchanged.
   server.stopWatchRefreshRelay = installWatchRefreshRelay(server, {
     enabled: config.jellyfinGatewayWsNotifyEnabled === true,
