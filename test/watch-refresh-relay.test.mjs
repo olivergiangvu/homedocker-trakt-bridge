@@ -66,9 +66,9 @@ function makeWsUpstream(t) {
     }
     const key = String(req.headers['sec-websocket-key'] || '');
     const accept = createHash('sha1').update(key + GUID).digest('base64');
-    socket.write('HTTP/1.1 101 Switching Protocols\\r\\n'
-      + 'Upgrade: websocket\\r\\nConnection: Upgrade\\r\\n'
-      + 'Sec-WebSocket-Accept: ' + accept + '\\r\\n\\r\\n');
+    socket.write('HTTP/1.1 101 Switching Protocols\r\n'
+      + 'Upgrade: websocket\r\nConnection: Upgrade\r\n'
+      + 'Sec-WebSocket-Accept: ' + accept + '\r\n\r\n');
     active.add(socket);
     socket.on('close', () => active.delete(socket));
   });
