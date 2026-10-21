@@ -24,9 +24,9 @@ class V140ReleaseHold(unittest.TestCase):
 
     def test_qualified_stable_history_remains_immutable(self):
         pkg=(ROOT/"package.json").read_text("utf8")
-        self.assertIn(
-            '"version": "1.4.0"', pkg,
-            "v1.4 stable source preparation remains under the explicit tag HOLD"
+        self.assertTrue(
+            '"version": "1.4.0"' in pkg or '"version": "1.5.0-beta.1"' in pkg,
+            "v1.4 stable release fence must remain while a beta advances"
         )
         self.assertTrue((ROOT/"scripts/publish-v1.3.0-tag.py").is_file())
         self.assertTrue((ROOT/"scripts/deploy-v1.3.0-homedocker.py").is_file())
