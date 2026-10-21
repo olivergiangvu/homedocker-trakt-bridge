@@ -15,6 +15,7 @@ import { Buffer } from 'node:buffer';
 import { loadVerifiedIdentityGraph } from './identity-continuity.mjs';
 import { filterNextUpForVerifiedAliases } from './jellyfin-nextup-filter.mjs';
 import { gatewayFilteringEnabled } from './gateway-control.mjs';
+import { attachWatchRefreshRelay } from './watch-refresh-relay.mjs';
 
 const MAX_NEXTUP_BYTES = 2 * 1024 * 1024;
 const MAX_METADATA_SERIES = 50;
@@ -516,8 +517,14 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
 
   // Admin/profile dashboard accesses this method from the owning Bridge
   // process only; it is NOT a public HTTP endpoint on the gateway.
+  const watchRefreshRelay = attachWatchRefreshRelay({
+    gateway: server, config, userId: options.userId,
+    upstreamBase: options.base, fetchImpl,
+  });
+
   server.gatewayMetricsSnapshot = () => ({
     ...metrics,
+    ...(watchRefreshRelay ? { watchRefreshRelay: watchRefreshRelay.snapshot() } : {}),
     metadataActive: limiter.snapshot().active,
     metadataQueued: limiter.snapshot().queued,
     metadataPeakActive: limiter.snapshot().peakActive,
