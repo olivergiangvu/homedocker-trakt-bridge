@@ -42,6 +42,10 @@ test('witness isolates one active Bridge sink and notices only imports after bas
       assert.equal(importedChangeCount(witnessDb, sink, 2000, 2500).changes, 2);
       assert.throws(() => witnessDb.exec('DELETE FROM watch_state'), /readonly|read-only|SQLITE_READONLY/i);
     } finally { witnessDb.close(); }
+    // No updated row remains for an unwatch; the count drop still triggers refresh.
+    db.exec("DELETE FROM watch_state WHERE item_key='new'");
+    now = 4000;
+    assert.deepEqual(watcher.sample(), {status:'IMPORT_OBSERVED', changes:1, latestMs:null});
   } finally { db.close(); rmSync(dir,{recursive:true,force:true}); }
 });
 
