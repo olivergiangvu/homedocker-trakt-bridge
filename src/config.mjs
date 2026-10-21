@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 export const APP_NAME = 'HomeDocker Trakt Bridge';
-export const APP_VERSION = '1.4.0';
+export const APP_VERSION = '1.5.0-beta.1';
 
 function requireEnv(name) {
   const value = process.env[name]?.trim();
@@ -95,6 +95,8 @@ export function loadConfig() {
     jellyfinGatewayProfileId: (process.env.JELLYFIN_GATEWAY_PROFILE_ID || '').trim(),
     // Opt-in raw Resume response passthrough; no identity normalization.
     jellyfinGatewayResumePassThrough: boolEnv('JELLYFIN_GATEWAY_RESUME_PASSTHROUGH', false),
+    // v1.5: one opt-in WS route on the EXISTING Gateway listener, no new writer.
+    jellyfinGatewayWsNotifyEnabled: boolEnv('JELLYFIN_GATEWAY_WS_NOTIFY_ENABLED', false),
     // Old RC6 proof import is never automatic in a normal Bridge deploy.
     jellyfinGatewayLegacyImport: enumEnv('JELLYFIN_GATEWAY_LEGACY_IMPORT', 'off', ['off', 'preview', 'apply']),
     aioReconcilerMode: enumEnv('AIO_RECONCILER_MODE', 'off', ['off', 'detect', 'compare']),
