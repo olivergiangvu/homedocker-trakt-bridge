@@ -67,6 +67,7 @@ export function createImportWitness({ dbPath, addonName = 'homedocker-trakt-brid
     throw new Error('invalid_witness_lookback');
   const seen = new Map();
   let initialized = false;
+  let lastCount = null;
   return {
     sample() {
       const db = openImportWitnessDb(dbPath);
@@ -97,6 +98,15 @@ export function createImportWitness({ dbPath, addonName = 'homedocker-trakt-brid
             latestMs = Math.max(latestMs ?? 0, at);
           }
         }
+        // A Trakt unwatch/remove may DELETE an import without a changed row.
+        // Watch only the count of imports from this exact Bridge sink.
+        const total = Number(db.prepare(`
+          SELECT COUNT(*) AS n FROM watch_state
+          WHERE uuid=? AND persona=? AND sink_id=? AND origin='import'
+        `).get(sink.uuid, sink.persona, sink.id).n);
+        if (initialized && lastCount !== null && total !== lastCount)
+          changes = Math.max(changes, 1);
+        lastCount = total;
         if (!initialized) {
           initialized = true;
           return { status: 'BASELINE', changes: 0, latestMs: null };
