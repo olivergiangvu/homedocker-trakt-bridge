@@ -13,24 +13,28 @@ test('witness isolates one active Bridge sink and notices only imports after bas
   try {
     db.exec(`
       CREATE TABLE watch_sinks (id TEXT, addon_name TEXT, uuid TEXT, persona TEXT, retired_at INTEGER);
-      CREATE TABLE watch_state (uuid TEXT, persona TEXT, sink_id TEXT, origin TEXT, updated_at INTEGER);
+      CREATE TABLE watch_state (uuid TEXT, persona TEXT, sink_id TEXT, origin TEXT, updated_at INTEGER, item_key TEXT);
       INSERT INTO watch_sinks VALUES ('trakt','homedocker-trakt-bridge','u1','','NULL');
       UPDATE watch_sinks SET retired_at=NULL;
       INSERT INTO watch_sinks VALUES ('aiom','AIOMetadata SH','u1','',NULL);
-      INSERT INTO watch_state VALUES ('u1','','trakt','import',1000);
+      INSERT INTO watch_state VALUES ('u1','','trakt','import',1000,'old');
     `);
     let now = 2000;
     const watcher = createImportWitness({ dbPath: path, now: () => now });
     assert.deepEqual(watcher.sample(), { status: 'BASELINE', changes: 0, latestMs: null });
     db.exec(`
-      INSERT INTO watch_state VALUES ('u1','','aiom','import',2100);
-      INSERT INTO watch_state VALUES ('u2','','trakt','import',2200);
-      INSERT INTO watch_state VALUES ('u1','','trakt','local',2300);
-      INSERT INTO watch_state VALUES ('u1','','trakt','import',2400);
+      INSERT INTO watch_state VALUES ('u1','','aiom','import',2100,'aiom');
+      INSERT INTO watch_state VALUES ('u2','','trakt','import',2200,'other');
+      INSERT INTO watch_state VALUES ('u1','','trakt','local',2300,'local');
+      INSERT INTO watch_state VALUES ('u1','','trakt','import',2400,'new');
     `);
     now = 2500;
     assert.deepEqual(watcher.sample(), {status:'IMPORT_OBSERVED', changes:1, latestMs:2400});
+    // Late SQL commit carrying an earlier fetch-start timestamp must NOT be lost.
+    db.exec("INSERT INTO watch_state VALUES ('u1','','trakt','import',2450,'late')");
     now = 3000;
+    assert.deepEqual(watcher.sample(), {status:'IMPORT_OBSERVED', changes:1, latestMs:2450});
+    now = 3500;
     assert.deepEqual(watcher.sample(), {status:'UNCHANGED', changes:0, latestMs:null});
     const witnessDb = openImportWitnessDb(path);
     try {
@@ -48,7 +52,7 @@ test('fails closed when no unique active Bridge sink', () => {
   try {
     db.exec(`
       CREATE TABLE watch_sinks (id TEXT,addon_name TEXT,uuid TEXT,persona TEXT,retired_at INTEGER);
-      CREATE TABLE watch_state (uuid TEXT,persona TEXT,sink_id TEXT,origin TEXT,updated_at INTEGER);
+      CREATE TABLE watch_state (uuid TEXT,persona TEXT,sink_id TEXT,origin TEXT,updated_at INTEGER,item_key TEXT);
       INSERT INTO watch_sinks VALUES ('a','homedocker-trakt-bridge','u1','',NULL);
       INSERT INTO watch_sinks VALUES ('b','homedocker-trakt-bridge','u2','',NULL);
     `);
