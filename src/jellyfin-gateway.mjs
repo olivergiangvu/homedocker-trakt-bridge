@@ -11,6 +11,7 @@
  * Never use another user's graph. Requests lacking credentials pass through.
  */
 import http from 'node:http';
+import { installWatchRefreshRelay } from './ws-refresh-relay.mjs';
 import { Buffer } from 'node:buffer';
 import { loadVerifiedIdentityGraph } from './identity-continuity.mjs';
 import { filterNextUpForVerifiedAliases } from './jellyfin-nextup-filter.mjs';
@@ -522,6 +523,12 @@ export function createJellyfinGateway({ config, db, fetchImpl = fetch, now = Dat
     metadataQueued: limiter.snapshot().queued,
     metadataPeakActive: limiter.snapshot().peakActive,
     metadataCacheEntries: seriesCache.size,
+  });
+  // WebSocket upgrade is a separate exact route; NextUp/Resume HTTP remain unchanged.
+  server.stopWatchRefreshRelay = installWatchRefreshRelay(server, {
+    enabled: config.jellyfinGatewayWsNotifyEnabled === true,
+    options,
+    dbPath: config.aioDbPath,
   });
   return server;
 }
