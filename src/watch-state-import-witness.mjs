@@ -20,7 +20,7 @@ export function openImportWitnessDb(dbPath) {
     db.exec('PRAGMA query_only=ON');
     for (const [table, required] of [
       ['watch_sinks', ['id', 'addon_name', 'uuid', 'persona', 'retired_at']],
-      ['watch_state', ['uuid', 'persona', 'sink_id', 'origin', 'updated_at']],
+      ['watch_state', ['uuid', 'persona', 'sink_id', 'origin', 'updated_at', 'item_key']],
     ]) {
       const available = columns(db, table);
       if (required.some(name => !available.has(name))) throw new Error('aio_schema_incompatible');
@@ -61,8 +61,12 @@ export function importedChangeCount(db, sink, afterMs, throughMs = Date.now()) {
  * witness is intentionally not a notification relay; zero updates is not
  * evidence of Trakt availability or of successful UI invalidation.
  */
-export function createImportWitness({ dbPath, addonName = 'homedocker-trakt-bridge', now = Date.now }) {
-  let lastAt = null;
+export function createImportWitness({ dbPath, addonName = 'homedocker-trakt-bridge',
+  now = Date.now, lookbackMs = 180_000 }) {
+  if (!Number.isSafeInteger(lookbackMs) || lookbackMs < 30_000 || lookbackMs > 600_000)
+    throw new Error('invalid_witness_lookback');
+  const seen = new Map();
+  let initialized = false;
   return {
     sample() {
       const db = openImportWitnessDb(dbPath);
@@ -70,19 +74,35 @@ export function createImportWitness({ dbPath, addonName = 'homedocker-trakt-brid
         const sink = exactBridgeSink(db, { addonName });
         const current = now();
         if (!Number.isSafeInteger(current) || current < 0) throw new Error('invalid_clock');
-        if (lastAt === null) {
-          lastAt = current;
+        const cutoff = Math.max(0, current - lookbackMs);
+        // AIO stores the fetch START time in updated_at; a slow response may
+        // commit AFTER that timestamp. Overlap + per-key dedupe avoids missing it.
+        const rows = db.prepare(`
+          SELECT item_key, updated_at FROM watch_state
+          WHERE uuid=? AND persona=? AND sink_id=? AND origin='import'
+            AND updated_at>=? AND updated_at<=?
+          ORDER BY updated_at DESC LIMIT 20001
+        `).all(sink.uuid, sink.persona, sink.id, cutoff, current);
+        if (rows.length > 20000) throw new Error('witness_window_too_large');
+        for (const [key, stamp] of seen) if (stamp < cutoff) seen.delete(key);
+        let changes = 0;
+        let latestMs = null;
+        for (const row of rows) {
+          const at = Number(row.updated_at);
+          const signature = `${row.item_key}\x1f${at}`;
+          if (seen.has(signature)) continue;
+          seen.set(signature, at);
+          if (initialized) {
+            changes++;
+            latestMs = Math.max(latestMs ?? 0, at);
+          }
+        }
+        if (!initialized) {
+          initialized = true;
           return { status: 'BASELINE', changes: 0, latestMs: null };
         }
-        const from = lastAt;
-        // Keep the previous cursor when the clock goes backwards.
-        if (current < from) return { status: 'CLOCK_REGRESSED', changes: 0, latestMs: null };
-        const summary = importedChangeCount(db, sink, from, current);
-        lastAt = current;
-        return { status: summary.changes ? 'IMPORT_OBSERVED' : 'UNCHANGED', ...summary };
-      } finally {
-        db.close();
-      }
+        return { status: changes ? 'IMPORT_OBSERVED' : 'UNCHANGED', changes, latestMs };
+      } finally { db.close(); }
     },
   };
 }
