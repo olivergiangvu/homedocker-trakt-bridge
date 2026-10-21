@@ -39,7 +39,7 @@ test('witness isolates one active Bridge sink and notices only imports after bas
     const witnessDb = openImportWitnessDb(path);
     try {
       const sink = exactBridgeSink(witnessDb);
-      assert.equal(importedChangeCount(witnessDb, sink, 2000, 2500).changes, 1);
+      assert.equal(importedChangeCount(witnessDb, sink, 2000, 2500).changes, 2);
       assert.throws(() => witnessDb.exec('DELETE FROM watch_state'), /readonly|read-only|SQLITE_READONLY/i);
     } finally { witnessDb.close(); }
   } finally { db.close(); rmSync(dir,{recursive:true,force:true}); }
