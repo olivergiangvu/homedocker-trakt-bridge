@@ -77,6 +77,7 @@ function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(JSON.stringify({ level: 'info', message: `received ${signal}, shutting down` }));
+  try { gateway?.stopWatchRefreshRelay?.(); } catch {}
   if (gateway?.listening) gateway.close();
   server.close(() => {
     try { aioReconciler.stop(); } catch {}

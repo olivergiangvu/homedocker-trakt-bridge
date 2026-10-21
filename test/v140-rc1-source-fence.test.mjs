@@ -6,9 +6,9 @@ import { APP_VERSION } from '../src/config.mjs';
 const root = new URL('../', import.meta.url);
 const file = name => readFileSync(new URL(name, root), 'utf8');
 
-test('v1.4.0 source version is consistent, tag publication remains explicitly guarded', () => {
+test('v1.4 tag fence stays intact while beta package version is consistent', () => {
   const version = JSON.parse(file('package.json')).version;
-  assert.equal(version, '1.4.0');
+  assert.match(version, /^(1\.4\.0|1\.5\.0-beta\.1)$/);
   assert.equal(APP_VERSION, version);
   const release = file('.github/workflows/release.yml');
   assert.match(release, /Qualify exact v1\.4\.0 publication before registry login/);
